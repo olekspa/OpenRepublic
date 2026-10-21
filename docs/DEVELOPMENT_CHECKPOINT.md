@@ -181,4 +181,8 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - **VERIFIED — client Release build and CTest:** the application, API tests, protocol tests, and local host built; full client CTest passed 10/10.
 - **VERIFIED — headless Release build and CTest:** the simulation, API tests, protocol tests, and local host built; full headless CTest passed 9/9. The first headless CTest attempt used an older host executable and failed because it lacked the new field; rebuilding the headless host and rerunning the complete suite passed.
 - **VERIFIED — diff hygiene:** `git diff --check` passed. No WRSR game or proprietary files were used or modified; no WRSR formulas or compatibility behavior are claimed.
-- This increment is scoped to OpenRepublic source, synthetic tests, and public documentation. It is ready for final diff review and publication. M1 and the playable-alpha gates remain open.
+- This increment is scoped to OpenRepublic source, synthetic tests, and public documentation. At this checkpoint it was ready for final diff review and publication. M1 and the playable-alpha gates remain open.
+
+**2026-10-21 15:37:51 EDT (19:37:51 UTC) — publication receipt**
+
+- The reviewed production-telemetry increment was committed as `3ada697` (`Expose production telemetry in agent world view`) and pushed to `origin/main`. The source, tests, and all 12 scoped files are published; no WRSR asset or behavior claim is included.
