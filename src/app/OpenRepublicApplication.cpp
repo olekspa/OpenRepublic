@@ -2,6 +2,9 @@
 #include "ModelImporter.h"
 #include "openrepublic/content/glb_container.h"
 #include "openrepublic/content/glb_semantic.h"
+#include "openrepublic/content/mtl_preview_color.h"
+#include "openrepublic/content/mtl_submaterial_binding.h"
+#include "openrepublic/content/mtl_syntax.h"
 #include "openrepublic/content/nmf_geometry.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/content/terrain_preview.h"
@@ -66,6 +69,7 @@ namespace openrepublic
 		constexpr double kMaxTerrainPreviewHeight = 1000.0;
 		constexpr std::size_t kMaxNmfPreviewDisplaySpan = 10;
 		constexpr double kNmfPreviewCenterX = 8.0;
+		constexpr std::uintmax_t kMaxNmfPreviewMtlBytes = 4u * 1024u * 1024u;
 		constexpr XMFLOAT4 kNmfDebugMaterialPalette[] = {
 			XMFLOAT4(0.70f, 0.35f, 0.24f, 1.0f),
 			XMFLOAT4(0.28f, 0.52f, 0.72f, 1.0f),
@@ -82,6 +86,77 @@ namespace openrepublic
 		constexpr char kGlbProbeLimitations[] =
 			"Trusted local inputs only: a bounded embedded-resource profile is checked before importing an exact temporary snapshot; "
 			"the pinned importer and image decoders are not sandboxed, and this is not a licensing assessment.";
+
+		class NmfPreviewCaptureRenderPath final : public wi::RenderPath3D
+		{
+		public:
+			explicit NmfPreviewCaptureRenderPath(std::vector<std::filesystem::path> outputPaths,
+				const XMFLOAT3& cameraTarget, float cameraDistance)
+				: outputPaths(std::move(outputPaths)), cameraTarget(cameraTarget), cameraDistance(cameraDistance)
+			{
+			}
+
+			void SetDiagnosticCameraView(std::size_t index)
+			{
+				if (camera == nullptr)
+				{
+					return;
+				}
+
+				const float distance = std::max(cameraDistance, 12.0f);
+				const XMFLOAT3 eye = index == 0
+					? XMFLOAT3(cameraTarget.x, cameraTarget.y + distance * 0.38f, cameraTarget.z - distance)
+					: XMFLOAT3(cameraTarget.x + distance * 0.65f, cameraTarget.y + distance * 0.42f,
+						cameraTarget.z + distance * 0.65f);
+				camera->Eye = eye;
+				XMStoreFloat3(&camera->At,
+					XMVector3Normalize(XMLoadFloat3(&cameraTarget) - XMLoadFloat3(&eye)));
+				camera->Up = XMFLOAT3(0.0f, 1.0f, 0.0f);
+				camera->UpdateCamera();
+			}
+
+			void PostRender() override
+			{
+				// The first render callback can run while the device is still presenting
+				// its initialization frame. Let a few complete frames settle before readback.
+				if (warmupFramesRemaining > 0)
+				{
+					--warmupFramesRemaining;
+					return;
+				}
+				if (nextCapture >= outputPaths.size())
+				{
+					return;
+				}
+
+				const auto& outputPath = outputPaths[nextCapture];
+				const std::string filename = outputPath.string();
+				if (!wi::helper::saveTextureToFile(GetRenderResult3D(), filename))
+				{
+					wilog("[OpenRepublic] NMF preview capture failed for %s", outputPath.filename().string().c_str());
+					PostQuitMessage(1);
+					nextCapture = outputPaths.size();
+					return;
+				}
+
+				wilog("[OpenRepublic] NMF preview capture saved: %s (3D render output; GUI excluded)",
+					outputPath.filename().string().c_str());
+				++nextCapture;
+				if (nextCapture < outputPaths.size())
+				{
+					SetDiagnosticCameraView(nextCapture);
+					return;
+				}
+				PostQuitMessage(0);
+			}
+
+		private:
+			std::vector<std::filesystem::path> outputPaths;
+			XMFLOAT3 cameraTarget{};
+			float cameraDistance = 12.0f;
+			std::uint32_t warmupFramesRemaining = 3;
+			std::size_t nextCapture = 0;
+		};
 
 		std::string PendingTruckPlanCommandLabel(const openrepublic::agent_api::AgentApi& api,
 			std::uint64_t simulationCommandId)
@@ -153,6 +228,57 @@ namespace openrepublic
 		const XMFLOAT4& NmfDebugMaterialColor(std::size_t index)
 		{
 			return kNmfDebugMaterialPalette[index % std::size(kNmfDebugMaterialPalette)];
+		}
+
+		bool LoadSiblingNmfMtl(const std::filesystem::path& nmfPath,
+			openrepublic::content::MtlDocument& document, std::string& status)
+		{
+			std::filesystem::path mtlPath = nmfPath;
+			mtlPath.replace_extension(".mtl");
+			std::error_code fileSizeError;
+			const std::uintmax_t fileBytes = std::filesystem::file_size(mtlPath, fileSizeError);
+			if (fileSizeError)
+			{
+				status = "sibling MTL is unavailable; diagnostic colors are used";
+				return false;
+			}
+			if (fileBytes > kMaxNmfPreviewMtlBytes)
+			{
+				status = "sibling MTL exceeds the 4 MiB syntax profile; diagnostic colors are used";
+				return false;
+			}
+
+			std::ifstream input(mtlPath, std::ios::binary);
+			if (!input)
+			{
+				status = "sibling MTL could not be read; diagnostic colors are used";
+				return false;
+			}
+
+			std::string bytes(static_cast<std::size_t>(fileBytes), '\0');
+			if (!bytes.empty())
+			{
+				input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+				if (!input || input.gcount() != static_cast<std::streamsize>(bytes.size()))
+				{
+					status = "sibling MTL changed or failed during the bounded read; diagnostic colors are used";
+					return false;
+				}
+			}
+			if (input.peek() != std::char_traits<char>::eof() || input.bad())
+			{
+				status = "sibling MTL changed during the bounded read; diagnostic colors are used";
+				return false;
+			}
+
+			std::string parseError;
+			if (!openrepublic::content::ParseMtlSyntax(bytes, document, &parseError))
+			{
+				status = "sibling MTL is outside the bounded syntax profile; diagnostic colors are used";
+				return false;
+			}
+			status = "sibling MTL parsed under the bounded syntax profile";
+			return true;
 		}
 
 		bool ValidateEmbeddedGlbProfile(const std::vector<std::uint8_t>& bytes,
@@ -565,12 +691,29 @@ namespace openrepublic
 		}
 
 		bool CreateNmfStaticPreview(wi::scene::Scene& scene, const std::filesystem::path& nmfPath,
-			wi::ecs::Entity& meshEntity, std::string& description, std::string& error)
+			wi::ecs::Entity& meshEntity, XMFLOAT3& previewCameraTarget, float& previewCameraDistance,
+			std::string& description, std::string& error)
 		{
 			openrepublic::content::NmfStaticGeometry geometry;
 			if (!openrepublic::content::LoadNmfStaticGeometry(nmfPath, geometry, &error))
 			{
 				return false;
+			}
+
+			openrepublic::content::MtlDocument mtlDocument;
+			std::vector<openrepublic::content::MtlSubmaterialBinding> mtlBindings;
+			std::string mtlStatus;
+			bool haveMtlBindings = false;
+			if (LoadSiblingNmfMtl(nmfPath, mtlDocument, mtlStatus))
+			{
+				std::string bindingError;
+				haveMtlBindings = openrepublic::content::BindMtlSubmaterialsByName(
+					geometry.submaterialIdentifiers, mtlDocument, mtlBindings, &bindingError);
+				if (!haveMtlBindings)
+				{
+					mtlDocument = {};
+					mtlStatus = "NMF/MTL identifiers could not be matched within the bounded profile; diagnostic colors are used";
+				}
 			}
 
 			size_t vertexCount = 0;
@@ -581,10 +724,18 @@ namespace openrepublic
 			double maximumX = -std::numeric_limits<double>::infinity();
 			double maximumY = -std::numeric_limits<double>::infinity();
 			double maximumZ = -std::numeric_limits<double>::infinity();
+			std::size_t sourceNormalCount = 0;
 			for (const auto& object : geometry.objects)
 			{
+				if (!object.lod.vertexNormals.empty() &&
+					object.lod.vertexNormals.size() != object.lod.positions.size())
+				{
+					error = "NMF source normal count does not match its vertex positions";
+					return false;
+				}
 				vertexCount += object.lod.positions.size();
 				indexCount += object.lod.indices.size();
+				sourceNormalCount += object.lod.vertexNormals.size();
 				for (const auto& position : object.lod.positions)
 				{
 					minimumX = std::min(minimumX, static_cast<double>(position.x));
@@ -607,6 +758,9 @@ namespace openrepublic
 			const double displayScale = static_cast<double>(kMaxNmfPreviewDisplaySpan) / maximumExtent;
 			const double centerX = (minimumX + maximumX) * 0.5;
 			const double centerZ = (minimumZ + maximumZ) * 0.5;
+			previewCameraTarget = XMFLOAT3(kNmfPreviewCenterX,
+				static_cast<float>((maximumY - minimumY) * displayScale * 0.5), 0.0f);
+			previewCameraDistance = static_cast<float>(kMaxNmfPreviewDisplaySpan * 1.65);
 			struct PreviewDrawRange
 			{
 				std::uint32_t indexOffset{};
@@ -615,9 +769,14 @@ namespace openrepublic
 			};
 			std::vector<PreviewDrawRange> drawRanges;
 			std::vector<XMFLOAT3> positions;
+			std::vector<XMFLOAT3> sourceNormals;
+			std::vector<std::uint8_t> sourceNormalMask;
 			std::vector<std::uint32_t> indices;
 			positions.reserve(vertexCount);
+			sourceNormals.reserve(vertexCount);
+			sourceNormalMask.reserve(vertexCount);
 			indices.reserve(indexCount);
+			std::size_t ignoredSubsetIndexCount = 0;
 			for (const auto& object : geometry.objects)
 			{
 				if (positions.size() > std::numeric_limits<std::uint32_t>::max() - object.lod.positions.size())
@@ -627,12 +786,24 @@ namespace openrepublic
 				}
 				const auto baseVertex = static_cast<std::uint32_t>(positions.size());
 				const auto baseIndex = static_cast<std::uint32_t>(indices.size());
-				for (const auto& position : object.lod.positions)
+				for (std::size_t vertexIndex = 0; vertexIndex < object.lod.positions.size(); ++vertexIndex)
 				{
+					const auto& position = object.lod.positions[vertexIndex];
 					positions.emplace_back(
 						static_cast<float>(kNmfPreviewCenterX + (position.x - centerX) * displayScale),
 						static_cast<float>((position.y - minimumY) * displayScale),
 						static_cast<float>((position.z - centerZ) * displayScale));
+					if (object.lod.vertexNormals.empty())
+					{
+						sourceNormals.emplace_back(0.0f, 0.0f, 0.0f);
+						sourceNormalMask.push_back(0);
+					}
+					else
+					{
+						const auto& normal = object.lod.vertexNormals[vertexIndex];
+						sourceNormals.emplace_back(normal.x, normal.y, normal.z);
+						sourceNormalMask.push_back(1);
+					}
 				}
 				for (const std::uint32_t index : object.lod.indices)
 				{
@@ -656,6 +827,7 @@ namespace openrepublic
 					{
 						// Each subset is a separate indexed draw: preserve its start offset,
 						// and match the observed renderer's indexCount / 3 triangle count.
+						ignoredSubsetIndexCount += subset.indexCount % 3;
 						const std::uint32_t renderIndexCount = (subset.indexCount / 3) * 3;
 						if (renderIndexCount == 0)
 						{
@@ -687,6 +859,19 @@ namespace openrepublic
 				{
 					error = "Wicked Engine rejected the normalized NMF triangle data";
 					return false;
+				}
+				if (mesh->vertex_normals.size() != positions.size() ||
+					sourceNormals.size() != positions.size() || sourceNormalMask.size() != positions.size())
+				{
+					error = "Wicked Engine generated-normal fallback does not match the NMF vertex count";
+					return false;
+				}
+				for (std::size_t vertexIndex = 0; vertexIndex < sourceNormalMask.size(); ++vertexIndex)
+				{
+					if (sourceNormalMask[vertexIndex] != 0)
+					{
+						mesh->vertex_normals[vertexIndex] = sourceNormals[vertexIndex];
+					}
 				}
 				mesh->subsets.clear();
 				for (const PreviewDrawRange& drawRange : drawRanges)
@@ -725,6 +910,13 @@ namespace openrepublic
 				error = "Wicked Engine did not create the NMF mesh component";
 				return false;
 			}
+			std::size_t mappedSubmaterialCount = 0;
+			std::size_t exactMtlMatchCount = 0;
+			std::size_t diffuseColorCount = 0;
+			std::size_t absentDiffuseColorCount = 0;
+			std::size_t invalidDiffuseColorCount = 0;
+			std::size_t missingMtlMatchCount = 0;
+			std::size_t ambiguousMtlMatchCount = 0;
 			for (std::size_t materialIndex = 0; materialIndex < submaterialEntities.size(); ++materialIndex)
 			{
 				const wi::ecs::Entity materialEntity = submaterialEntities[materialIndex];
@@ -738,7 +930,57 @@ namespace openrepublic
 					error = "Wicked Engine did not create an NMF submaterial debug component";
 					return false;
 				}
-				material->SetBaseColor(NmfDebugMaterialColor(materialIndex));
+				++mappedSubmaterialCount;
+				if (haveMtlBindings && materialIndex < mtlBindings.size() &&
+					mtlBindings[materialIndex].status ==
+						openrepublic::content::MtlSubmaterialBindingStatus::Matched &&
+					mtlBindings[materialIndex].sectionIndex < mtlDocument.submaterials.size())
+				{
+					++exactMtlMatchCount;
+					const auto diffuseColor = openrepublic::content::ExtractMtlDiffuseColorForPreview(
+						mtlDocument.submaterials[mtlBindings[materialIndex].sectionIndex]);
+					if (diffuseColor.status ==
+						openrepublic::content::MtlPreviewDiffuseColorStatus::Valid)
+					{
+						// This is an approximate preview adapter from the observed source
+						// four-float value to Wicked's PBR base color, not shader parity.
+						material->SetBaseColor(XMFLOAT4(
+							diffuseColor.value[0], diffuseColor.value[1],
+							diffuseColor.value[2], diffuseColor.value[3]));
+						++diffuseColorCount;
+					}
+					else if (diffuseColor.status ==
+						openrepublic::content::MtlPreviewDiffuseColorStatus::Absent)
+					{
+						// The inspected loader initializes all four DiffuseColor values to
+						// 1.0 before reading optional section directives.
+						material->SetBaseColor(XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f));
+						++absentDiffuseColorCount;
+					}
+					else
+					{
+						// A syntax-valid double can exceed float range. Keep it diagnostic
+						// instead of presenting the observed default as source data.
+						material->SetBaseColor(NmfDebugMaterialColor(materialIndex));
+						++invalidDiffuseColorCount;
+					}
+				}
+				else
+				{
+					material->SetBaseColor(NmfDebugMaterialColor(materialIndex));
+					if (haveMtlBindings && materialIndex < mtlBindings.size() &&
+						mtlBindings[materialIndex].status ==
+							openrepublic::content::MtlSubmaterialBindingStatus::Ambiguous)
+					{
+						++ambiguousMtlMatchCount;
+					}
+					else if (haveMtlBindings && materialIndex < mtlBindings.size() &&
+						mtlBindings[materialIndex].status ==
+							openrepublic::content::MtlSubmaterialBindingStatus::Missing)
+					{
+						++missingMtlMatchCount;
+					}
+				}
 				material->CreateRenderData(true);
 			}
 			if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(meshEntity))
@@ -757,17 +999,40 @@ namespace openrepublic
 			std::size_t triangleCount = 0;
 			for (const PreviewDrawRange& drawRange : drawRanges)
 				triangleCount += drawRange.indexCount / 3;
-			const std::size_t mappedSubmaterialCount = static_cast<std::size_t>(std::count_if(
-				submaterialEntities.begin(), submaterialEntities.end(), [](wi::ecs::Entity entity) {
-					return entity != wi::ecs::INVALID_ENTITY;
-				}));
+			std::string mtlBindingSummary;
+			if (haveMtlBindings)
+			{
+				mtlBindingSummary = std::to_string(exactMtlMatchCount) +
+					" exact-name MTL matches; " + std::to_string(diffuseColorCount) +
+					" parseable $DIFFUSECOLOR values shown approximately as Wicked base colors; " +
+					std::to_string(absentDiffuseColorCount) +
+					" absent diffuse directives use the observed all-ones source default; " +
+					std::to_string(invalidDiffuseColorCount) +
+					" float-unrepresentable diffuse values, " + std::to_string(missingMtlMatchCount) +
+					" missing names, and " + std::to_string(ambiguousMtlMatchCount) +
+					" ambiguous names remain diagnostic";
+			}
+			else
+			{
+				mtlBindingSummary =
+					"sibling MTL binding was unavailable, so name matches were not checked and referenced entries remain diagnostic";
+			}
 			description = "Bounded static NMF geometry preview: " +
 				std::to_string(geometry.objects.size()) + " objects (one LOD each), " +
 				std::to_string(vertexCount) + " vertices, " +
 				std::to_string(triangleCount) + " rendered triangles in " +
 				std::to_string(drawRanges.size()) + " index-range groups. Geometry is uniformly normalized to a 10-unit display span at x=8; " +
-				std::to_string(mappedSubmaterialCount) + " observed submaterial-table entries use a deterministic debug-color palette. " +
-				"This is not original MTL shading or texture binding. Auxiliary subset indices are retained but not rendered. If present, the flagged 0x8 vec3 stream is not applied; Wicked Engine generates smooth normals. Source placement, game units, original material values, texture semantics, and visual fidelity remain unverified.";
+				std::to_string(mappedSubmaterialCount) + " referenced submaterial-table entries, " +
+				mtlBindingSummary + ". " +
+				mtlStatus + ". Textures are not loaded; their slot and path semantics remain unsupported. " +
+				"Build 23935965 identifies flag 0x8 as the _NRM FLOAT3 stream; " +
+				std::to_string(sourceNormalCount) + " source normals are preserved as-is and other vertices use Wicked smooth-normal fallback. " +
+				"This does not apply the original loader's optional coordinate-reflection mode or establish shading parity. " +
+				"The Wicked base-color mapping is approximate and does not establish source color-space, alpha, lighting, or shader parity. " +
+				"Auxiliary subset indices are retained but not rendered. " +
+				(ignoredSubsetIndexCount == 0 ? std::string() :
+					std::to_string(ignoredSubsetIndexCount) + " trailing subset indices are ignored by the observed indexCount/3 draw rule. ") +
+				"Source placement, game units, texture fidelity, and target-matched visual acceptance remain unverified.";
 			error.clear();
 			return true;
 		}
@@ -844,6 +1109,12 @@ namespace openrepublic
 		nmfProbePath = std::move(path);
 	}
 
+	void OpenRepublicApplication::SetNmfCapturePaths(std::vector<std::filesystem::path> paths)
+	{
+		nmfCaptureMode = !paths.empty();
+		nmfCapturePaths = std::move(paths);
+	}
+
 	void OpenRepublicApplication::SetTerrainProbePath(std::filesystem::path path)
 	{
 		terrainProbePath = std::move(path);
@@ -859,8 +1130,11 @@ namespace openrepublic
 	void OpenRepublicApplication::Initialize()
 	{
 		wi::Application::Initialize();
+		const bool capturePreview = !nmfCapturePaths.empty();
 		bool terrainPreviewLoaded = false;
 		bool nmfPreviewLoaded = false;
+		XMFLOAT3 nmfPreviewCameraTarget(kNmfPreviewCenterX, kMaxNmfPreviewDisplaySpan * 0.5f, 0.0f);
+		float nmfPreviewCameraDistance = static_cast<float>(kMaxNmfPreviewDisplaySpan * 1.65);
 
 		#ifdef OPENREPUBLIC_WITH_LUA_RULES
 		{
@@ -882,34 +1156,37 @@ namespace openrepublic
 
 		// Synthetic OpenRepublic-authored content only. The view follows snapshots;
 		// no Wicked Engine scene object owns or changes simulation state.
-		const wi::ecs::Entity ground = previewWorld.Entity_CreatePlane("OpenRepublic synthetic construction ground");
-		if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(ground))
+		if (!capturePreview)
 		{
-			// The buildable area and visible synthetic ground use the same finite grid bounds.
-			const float groundHalfExtent = std::max(kPlacementGridHalfExtent, kRoadGridHalfExtent);
-			transform->Scale(XMFLOAT3(groundHalfExtent, 1.0f, groundHalfExtent));
-			transform->UpdateTransform();
-		}
-		SetEntityColor(ground, XMFLOAT4(0.20f, 0.27f, 0.20f, 1.0f));
-
-		auto createBlock = [this](const char* name, float x, float y, const XMFLOAT3& scale, const XMFLOAT4& color)
-		{
-			const wi::ecs::Entity entity = previewWorld.Entity_CreateCube(name);
-			if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(entity))
+			const wi::ecs::Entity ground = previewWorld.Entity_CreatePlane("OpenRepublic synthetic construction ground");
+			if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(ground))
 			{
-				transform->Scale(scale);
-				transform->Translate(XMFLOAT3(x, y, 0));
+				// The buildable area and visible synthetic ground use the same finite grid bounds.
+				const float groundHalfExtent = std::max(kPlacementGridHalfExtent, kRoadGridHalfExtent);
+				transform->Scale(XMFLOAT3(groundHalfExtent, 1.0f, groundHalfExtent));
 				transform->UpdateTransform();
 			}
-			SetEntityColor(entity, color);
-			return entity;
-		};
+			SetEntityColor(ground, XMFLOAT4(0.20f, 0.27f, 0.20f, 1.0f));
 
-		farmBuilding = createBlock("OpenRepublic synthetic farm", -4.0f, 0.72f, XMFLOAT3(0.62f, 0.72f, 0.62f), kFarmColor);
-		millBuilding = createBlock("OpenRepublic synthetic mill", 0.0f, 0.82f, XMFLOAT3(0.82f, 0.82f, 0.82f), kMillColor);
-		warehouseBuilding = createBlock("OpenRepublic synthetic warehouse", 4.0f, 0.72f, XMFLOAT3(0.72f, 0.72f, 0.72f), kWarehouseColor);
+			auto createBlock = [this](const char* name, float x, float y, const XMFLOAT3& scale, const XMFLOAT4& color)
+			{
+				const wi::ecs::Entity entity = previewWorld.Entity_CreateCube(name);
+				if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(entity))
+				{
+					transform->Scale(scale);
+					transform->Translate(XMFLOAT3(x, y, 0));
+					transform->UpdateTransform();
+				}
+				SetEntityColor(entity, color);
+				return entity;
+			};
 
-		truckEntity = createBlock("OpenRepublic synthetic truck", -4.0f, 0.28f, XMFLOAT3(0.25f, 0.25f, 0.25f), XMFLOAT4(0.85f, 0.72f, 0.18f, 1.0f));
+			farmBuilding = createBlock("OpenRepublic synthetic farm", -4.0f, 0.72f, XMFLOAT3(0.62f, 0.72f, 0.62f), kFarmColor);
+			millBuilding = createBlock("OpenRepublic synthetic mill", 0.0f, 0.82f, XMFLOAT3(0.82f, 0.82f, 0.82f), kMillColor);
+			warehouseBuilding = createBlock("OpenRepublic synthetic warehouse", 4.0f, 0.72f, XMFLOAT3(0.72f, 0.72f, 0.72f), kWarehouseColor);
+
+			truckEntity = createBlock("OpenRepublic synthetic truck", -4.0f, 0.28f, XMFLOAT3(0.25f, 0.25f, 0.25f), XMFLOAT4(0.85f, 0.72f, 0.18f, 1.0f));
+		}
 
 		const wi::ecs::Entity sun = previewWorld.Entity_CreateLight(
 			"OpenRepublic preview light", XMFLOAT3(0, 0, 0), XMFLOAT3(1.0f, 0.88f, 0.72f),
@@ -1073,7 +1350,8 @@ namespace openrepublic
 				wi::ecs::Entity meshEntity = wi::ecs::INVALID_ENTITY;
 				std::string description;
 				std::string error;
-				if (CreateNmfStaticPreview(previewWorld, nmfProbePath, meshEntity, description, error))
+				if (CreateNmfStaticPreview(previewWorld, nmfProbePath, meshEntity,
+					nmfPreviewCameraTarget, nmfPreviewCameraDistance, description, error))
 				{
 					nmfPreviewLoaded = true;
 					uiNotice = description;
@@ -1103,7 +1381,20 @@ namespace openrepublic
 			wilog("[OpenRepublic] Terrain probe: %s", uiNotice.c_str());
 		}
 
-		renderPath = std::make_unique<wi::RenderPath3D>();
+		if (capturePreview && nmfPreviewLoaded)
+		{
+			renderPath = std::make_unique<NmfPreviewCaptureRenderPath>(std::move(nmfCapturePaths),
+				nmfPreviewCameraTarget, nmfPreviewCameraDistance);
+		}
+		else
+		{
+			renderPath = std::make_unique<wi::RenderPath3D>();
+			if (capturePreview)
+			{
+				wilog("[OpenRepublic] NMF preview capture skipped because no supported NMF model was loaded");
+				PostQuitMessage(2);
+			}
+		}
 		renderPath->scene = &previewWorld;
 		renderPath->setBloomEnabled(false);
 		renderPath->setDepthOfFieldEnabled(false);
@@ -1289,21 +1580,35 @@ namespace openrepublic
 		simulationStatus.SetWrapEnabled(true);
 		gui.AddWidget(&simulationStatus);
 
-		wi::scene::TransformComponent cameraTransform;
-		cameraTransform.Translate(terrainPreviewLoaded ? XMFLOAT3(0, 18.0f, -27.0f) :
-			(nmfPreviewLoaded ? XMFLOAT3(8.0f, 8.0f, -17.0f) : XMFLOAT3(0, 6.5f, -11.5f)));
-		cameraTransform.RotateRollPitchYaw(XMFLOAT3(terrainPreviewLoaded ? 0.52f : (nmfPreviewLoaded ? 0.38f : 0.43f), 0, 0));
-		cameraTransform.UpdateTransform();
-		renderPath->camera->TransformCamera(cameraTransform);
-		renderPath->camera->UpdateCamera();
+		if (!capturePreview)
+		{
+			wi::scene::TransformComponent cameraTransform;
+			cameraTransform.Translate(terrainPreviewLoaded ? XMFLOAT3(0, 18.0f, -27.0f) :
+				(nmfPreviewLoaded ? XMFLOAT3(8.0f, 8.0f, -17.0f) : XMFLOAT3(0, 6.5f, -11.5f)));
+			cameraTransform.RotateRollPitchYaw(XMFLOAT3(terrainPreviewLoaded ? 0.52f : (nmfPreviewLoaded ? 0.38f : 0.43f), 0, 0));
+			cameraTransform.UpdateTransform();
+			renderPath->camera->TransformCamera(cameraTransform);
+			renderPath->camera->UpdateCamera();
+		}
 
 		ActivatePath(renderPath.get());
-		UpdateSimulationPresentation();
+		if (capturePreview && nmfPreviewLoaded)
+		{
+			static_cast<NmfPreviewCaptureRenderPath*>(renderPath.get())->SetDiagnosticCameraView(0);
+		}
+		if (!capturePreview)
+		{
+			UpdateSimulationPresentation();
+		}
 	}
 
 	void OpenRepublicApplication::Update(float dt)
 	{
 		wi::Application::Update(dt);
+		if (nmfCaptureMode)
+		{
+			return;
+		}
 
 		if (simulationPaused)
 		{

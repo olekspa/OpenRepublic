@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cwchar>
+#include <cwctype>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -79,9 +80,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::filesystem::path sceneProbePath;
 	std::filesystem::path glbProbePath;
 	std::filesystem::path nmfProbePath;
+	std::vector<std::filesystem::path> nmfCapturePaths;
 	std::filesystem::path terrainProbePath;
 	std::optional<openrepublic::content::TerrainTransform> terrainProbeTransform;
 	std::string terrainProbeTransformError;
+	std::string nmfCaptureArgumentError;
 	bool terrainTransformArgumentSeen = false;
 	if (arguments != nullptr)
 	{
@@ -98,6 +101,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			else if (std::wstring_view(arguments[i]) == L"--nmf-probe" && i + 1 < argumentCount)
 			{
 				nmfProbePath = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--capture-preview")
+			{
+				if (i + 1 >= argumentCount)
+				{
+					nmfCaptureArgumentError = "--capture-preview requires an absolute output .png path";
+					continue;
+				}
+				if (nmfCapturePaths.size() >= 2)
+				{
+					nmfCaptureArgumentError = "--capture-preview may be supplied at most twice";
+					++i;
+					continue;
+				}
+				nmfCapturePaths.emplace_back(arguments[++i]);
 			}
 			else if (std::wstring_view(arguments[i]) == L"--terrain-probe" && i + 1 < argumentCount)
 			{
@@ -161,9 +179,64 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		terrainProbeTransformError = "--terrain-transform requires --terrain-probe <heightmap.dds>";
 	}
+	if (!nmfCapturePaths.empty() && nmfCaptureArgumentError.empty())
+	{
+		if (nmfProbePath.empty())
+		{
+			nmfCaptureArgumentError = "--capture-preview requires --nmf-probe <local.nmf>";
+		}
+		else if (!terrainProbePath.empty())
+		{
+			nmfCaptureArgumentError = "--capture-preview cannot be combined with --terrain-probe";
+		}
+		for (std::size_t i = 0; i < nmfCapturePaths.size() && nmfCaptureArgumentError.empty(); ++i)
+		{
+			const auto& path = nmfCapturePaths[i];
+			std::wstring extension = path.extension().wstring();
+			std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t value) {
+				return static_cast<wchar_t>(std::towlower(value));
+			});
+			if (!path.is_absolute() || extension != L".png" || path.parent_path().empty())
+			{
+				nmfCaptureArgumentError = "--capture-preview requires an absolute output path ending in .png";
+				break;
+			}
+			for (std::size_t earlier = 0; earlier < i; ++earlier)
+			{
+				if (path.lexically_normal() == nmfCapturePaths[earlier].lexically_normal())
+				{
+					nmfCaptureArgumentError = "--capture-preview output paths must be distinct";
+					break;
+				}
+			}
+			if (!nmfCaptureArgumentError.empty())
+			{
+				break;
+			}
+			std::error_code fileError;
+			if (std::filesystem::exists(path, fileError) || fileError)
+			{
+				nmfCaptureArgumentError = "--capture-preview refuses to overwrite an existing or inaccessible output file";
+				break;
+			}
+			std::filesystem::create_directories(path.parent_path(), fileError);
+			if (fileError || !std::filesystem::is_directory(path.parent_path(), fileError) || fileError)
+			{
+				nmfCaptureArgumentError = "--capture-preview could not create or inspect the output directory";
+				break;
+			}
+		}
+	}
+	if (!nmfCaptureArgumentError.empty())
+	{
+		MessageBoxA(nullptr, nmfCaptureArgumentError.c_str(), "OpenRepublic NMF preview capture", MB_OK | MB_ICONERROR);
+		return 2;
+	}
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));
 	application.SetNmfProbePath(std::move(nmfProbePath));
+	const bool nmfCaptureMode = !nmfCapturePaths.empty();
+	application.SetNmfCapturePaths(std::move(nmfCapturePaths));
 	application.SetTerrainProbePath(std::move(terrainProbePath));
 	application.SetTerrainProbeTransform(std::move(terrainProbeTransform), std::move(terrainProbeTransformError));
 
@@ -193,7 +266,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 
 	application.SetWindow(window);
-	ShowWindow(window, showCommand);
+	if (nmfCaptureMode)
+	{
+		ShowWindow(window, SW_HIDE);
+	}
+	else
+	{
+		ShowWindow(window, showCommand);
+	}
 	UpdateWindow(window);
 
 	MSG message{};

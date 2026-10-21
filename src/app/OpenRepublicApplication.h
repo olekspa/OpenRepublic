@@ -22,6 +22,7 @@ namespace openrepublic
 		void SetSceneProbePath(std::filesystem::path path);
 		void SetGlbProbePath(std::filesystem::path path);
 		void SetNmfProbePath(std::filesystem::path path);
+		void SetNmfCapturePaths(std::vector<std::filesystem::path> paths);
 		void SetTerrainProbePath(std::filesystem::path path);
 		void SetTerrainProbeTransform(std::optional<openrepublic::content::TerrainTransform> transform,
 			std::string error = {});
@@ -63,6 +64,8 @@ namespace openrepublic
 		std::filesystem::path sceneProbePath;
 		std::filesystem::path glbProbePath;
 		std::filesystem::path nmfProbePath;
+		std::vector<std::filesystem::path> nmfCapturePaths;
+		bool nmfCaptureMode = false;
 		std::filesystem::path terrainProbePath;
 		std::optional<openrepublic::content::TerrainTransform> terrainProbeTransform;
 		std::string terrainProbeTransformError;

@@ -12,6 +12,20 @@ target_link_libraries(OpenRepublicMtlSyntaxTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicMtlSyntaxTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicMtlSyntaxTests COMMAND OpenRepublicMtlSyntaxTests)
 
+add_executable(OpenRepublicMtlSubmaterialBindingTests
+    mtl_submaterial_binding_tests.cpp
+)
+target_link_libraries(OpenRepublicMtlSubmaterialBindingTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicMtlSubmaterialBindingTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicMtlSubmaterialBindingTests COMMAND OpenRepublicMtlSubmaterialBindingTests)
+
+add_executable(OpenRepublicMtlPreviewColorTests
+    mtl_preview_color_tests.cpp
+)
+target_link_libraries(OpenRepublicMtlPreviewColorTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicMtlPreviewColorTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicMtlPreviewColorTests COMMAND OpenRepublicMtlPreviewColorTests)
+
 add_executable(OpenRepublicMtlDependencyTests
     mtl_dependency_tests.cpp
 )

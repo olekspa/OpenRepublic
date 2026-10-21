@@ -21,7 +21,7 @@ struct NmfPosition {
     float z{};
 };
 
-struct NmfVec3Attribute {
+struct NmfNormal {
     float x{};
     float y{};
     float z{};
@@ -49,8 +49,9 @@ struct NmfStaticLod {
     std::uint32_t vertexFlags{};
     std::uint32_t headerField0x18{};
     std::vector<NmfPosition> positions;
-    // Flag 0x8 has a 12-byte per-vertex stream branch; its meaning is inferred.
-    std::vector<NmfVec3Attribute> attribute0x8;
+    // In build 23935965, flag 0x8 is loaded as the _NRM FLOAT3 vertex semantic.
+    // Preserve its source values as-is; other builds and shading parity remain unknown.
+    std::vector<NmfNormal> vertexNormals;
     std::vector<std::uint32_t> indices;
     std::vector<NmfGeometrySubset> subsets;
 };
@@ -86,8 +87,9 @@ struct NmfStaticGeometry {
 // auxiliary vertex streams are bounds-checked then discarded. Subset draw
 // ranges and their submaterial-table indices are retained based on the
 // build-scoped loader/render evidence; auxiliary subset indices remain opaque.
-// The flagged 0x8 vec3 stream is retained without assigning meaning; MTL value
-// and texture semantics remain unsupported.
+// In build 23935965, flag 0x8 is the loader's _NRM FLOAT3 stream. Raw values are
+// retained without applying the loader's optional coordinate-reflection mode.
+// Other builds and MTL value/texture semantics remain unsupported.
 // On failure, output is unchanged.
 bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output,
                             std::string* error = nullptr);

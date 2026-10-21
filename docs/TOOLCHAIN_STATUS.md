@@ -155,3 +155,11 @@ The app was launched against one **copied local save** heightmap in the separate
 - [Wicked Engine Windows build instructions](https://github.com/turanszkij/WickedEngine)
 - [REA installation](https://github.com/morluto/rea/blob/main/docs/installation.md)
 - [REA Windows Ghidra P0](https://github.com/morluto/rea/blob/main/docs/windows-ghidra-p0.md)
+
+## Application-owned direct NMF render capture — 21 October 2026
+
+The Release/x64 app now supports an opt-in `--capture-preview <absolute-output.png>` option alongside `--nmf-probe`. The capture-only path hides the app window, skips synthetic scene objects and simulation presentation, allows three warm-up render frames, aims at the normalized NMF bounds, and saves the app's 3D render target from `RenderPath3D::PostRender()` via Wicked Engine's `saveTextureToFile()`. It does not capture desktop content, compose the GUI, or use the clipboard.
+
+A private research copy within the bounded NMF type-0 profile loaded and produced two valid 1260x748 PNG captures from front and three-quarter diagnostic views. The captured geometry is visible, but it reads as a dark, elongated form; the same model was not open in ModelViewer, so recognizability, axes, winding, exact dimensions, node placement, and submaterial boundaries remain unverified. The copied sample has no sibling MTL in its research directory; original build/hash provenance is unknown, and this run therefore does not verify runtime MTL binding or diffuse-color presentation. The application-owned run left the foreground window unchanged. Captures remain in private visualization storage; no model, MTL, capture, or log was added to Git. No WRSR game or ModelViewer process was launched, and source files were only read.
+
+The capture API is verified for this local sample and render path. The final Windows Release client build and CTest passed 14/14; the headless Release build and CTest passed 13/13, run sequentially. Visual comparison against a same-model trusted reference remains **UNKNOWN**; no source-axis, winding, reflection, shading, or material correction is justified without that comparison. The asset-reading runtime remains local under decision D-005.

@@ -51,7 +51,7 @@ void AppendFloat(std::string& b, float f) {
 struct LodSpec {
     std::vector<NmfPosition> positions{{-1, 0, -1}, {1, 0, -1}, {0, 1, 1}};
     std::vector<std::uint16_t> indices{0, 1, 2};
-    std::vector<NmfVec3Attribute> vec3Stream;
+    std::vector<NmfNormal> vec3Stream;
     std::uint32_t flags{};
     std::uint32_t field0x10{};
     std::uint32_t field0x18{};
@@ -255,7 +255,7 @@ void TestMetadataAndSingleLodProfile() {
     ExpectFailure(Fixture({hasChildren}), "node with children outside preview profile");
 }
 
-void TestFlaggedVec3StreamAndAlignment() {
+void TestFlaggedNormalStreamAndAlignment() {
     ObjectSpec a;
     auto& l = a.lods[0];
     l.flags = 0x8 | 0x10 | 0x20 | 0x100;
@@ -266,28 +266,28 @@ void TestFlaggedVec3StreamAndAlignment() {
     NmfStaticGeometry out;
     std::string error;
     Check(ParseNmfStaticGeometry(bytes, out, &error),
-          "flagged vec3 and later auxiliary streams parse");
-    Check(out.objects.size() == 2 && out.objects[0].lod.attribute0x8.size() == 3,
-          "flagged stream is retained vertex-aligned");
+          "flagged normal and later auxiliary streams parse");
+    Check(out.objects.size() == 2 && out.objects[0].lod.vertexNormals.size() == 3,
+          "build-scoped flag 0x8 normals are retained vertex-aligned");
     if (out.objects.size() == 2) {
-        const auto& v = out.objects[0].lod.attribute0x8;
+        const auto& v = out.objects[0].lod.vertexNormals;
         Check(v[0].x == .25f && v[0].y == -.5f && v[0].z == .75f && v[1].x == -.25f && v[2].x == 1,
-              "vec3 values preserve source order");
+              "raw normal values preserve source order");
         Check(out.objects[1].lod.positions[0].x == 29 && out.objects[1].lod.positions[0].y == -37 &&
                   out.objects[1].lod.positions[0].z == 41,
-              "following object alignment accounts for flagged streams");
+              "following object alignment accounts for the normal stream");
     }
     auto trunc = Fixture({a});
     trunc.resize(FirstVec3Stream(l) + l.vec3Stream.size() * 12 - 1);
     UpdateLength(trunc);
-    ExpectFailure(std::move(trunc), "truncated vec3 stream");
+    ExpectFailure(std::move(trunc), "truncated normal stream");
     auto nan = Fixture({a});
     WriteU32(nan, FirstVec3Stream(l) + 4, 0x7fc00000);
-    ExpectFailure(std::move(nan), "nonfinite flagged vec3 value");
+    ExpectFailure(std::move(nan), "nonfinite flagged normal value");
     ObjectSpec noFlag;
     Check(ParseNmfStaticGeometry(Fixture({noFlag}), out, &error) &&
-              out.objects[0].lod.attribute0x8.empty(),
-          "unflagged vec3 data is absent");
+              out.objects[0].lod.vertexNormals.empty(),
+          "unflagged source normals are absent");
 }
 
 void TestUnknownBitOneDoesNotAdvanceTheStream() {
@@ -357,14 +357,24 @@ void TestAllAuxiliaryBranchesAndTruncation() {
               out.objects[0].lod.subsets.size() == 1 &&
               out.objects[0].lod.subsets[0].indexOffset == 1,
           "subset start index is preserved without assuming top-level triangle alignment");
-    auto badSubset = Fixture({withSubset});
+    auto opaqueAuxiliary = withSubset;
+    opaqueAuxiliary.lods[0].subsets[0].auxiliaryIndices = {65535};
+    Check(ParseNmfStaticGeometry(Fixture({opaqueAuxiliary}), out, &error) &&
+              out.objects[0].lod.subsets[0].auxiliaryIndices ==
+                  std::vector<std::uint16_t>{65535},
+          "opaque auxiliary subset values are retained without assuming vertex-index semantics");
     // LOD header + base indices + positions reaches the first 12-byte subset record.
     const auto subsetHeader = FirstLodData(true) + 3 * 2 + 3 * 12;
-    WriteU16(badSubset, subsetHeader + 12 + 4, 3);
-    ExpectFailure(std::move(badSubset), "subset index outside vertex array");
     auto badSubsetRange = Fixture({withSubset});
     WriteU32(badSubsetRange, subsetHeader, 1);
     ExpectFailure(std::move(badSubsetRange), "subset draw range outside index array");
+    auto partialTriangleRange = withSubset;
+    partialTriangleRange.lods[0].indices = {0, 1, 2, 2, 1, 0};
+    partialTriangleRange.lods[0].subsets = {{1, 4, 0, {}}};
+    Check(ParseNmfStaticGeometry(Fixture({partialTriangleRange}), out, &error) &&
+              out.objects[0].lod.subsets[0].indexOffset == 1 &&
+              out.objects[0].lod.subsets[0].indexCount == 4,
+          "unaligned subset range and trailing native-ignored index are preserved exactly");
     auto missingSubmaterial = Fixture({withSubset});
     WriteU16(missingSubmaterial, subsetHeader + 8, 1);
     ExpectFailure(std::move(missingSubmaterial), "subset references missing submaterial");
@@ -449,7 +459,7 @@ void TestMalformedInputs() {
 
 int main() {
     TestMetadataAndSingleLodProfile();
-    TestFlaggedVec3StreamAndAlignment();
+    TestFlaggedNormalStreamAndAlignment();
     TestUnknownBitOneDoesNotAdvanceTheStream();
     TestAllAuxiliaryBranchesAndTruncation();
     TestMalformedInputs();

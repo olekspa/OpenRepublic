@@ -95,14 +95,14 @@ bool Skip(std::string_view bytes, std::size_t& cursor, std::size_t limit, std::s
 }
 
 bool ReadVector3Array(std::string_view bytes, std::size_t& cursor, std::size_t limit,
-                      std::uint32_t count, std::vector<NmfVec3Attribute>& output) {
+                      std::uint32_t count, std::vector<NmfNormal>& output) {
     std::size_t byteCount = 0;
     if (!CheckedMultiply(count, 12, byteCount) || !CanRead(bytes, cursor, byteCount, limit))
         return false;
     output.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto at = cursor + static_cast<std::size_t>(i) * 12;
-        NmfVec3Attribute value;
+        NmfNormal value;
         if (!ReadFloatLE(bytes, at, limit, value.x) ||
             !ReadFloatLE(bytes, at + 4, limit, value.y) ||
             !ReadFloatLE(bytes, at + 8, limit, value.z) || !std::isfinite(value.x) ||
@@ -284,8 +284,8 @@ bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output, s
         }
         cursor += positionBytes;
         if ((lod.vertexFlags & kFlagAttribute0x8) != 0 &&
-            !ReadVector3Array(bytes, cursor, bytes.size(), vertexCount, lod.attribute0x8))
-            return Fail(error, "NMF flagged vec3 stream is truncated or non-finite");
+            !ReadVector3Array(bytes, cursor, bytes.size(), vertexCount, lod.vertexNormals))
+            return Fail(error, "NMF flagged normal stream is truncated or non-finite");
         if (!SkipAuxiliaryVertexStreams(bytes, cursor, bytes.size(), vertexCount, lod.vertexFlags))
             return Fail(error, "NMF auxiliary vertex stream is truncated");
         if ((lod.vertexFlags & kFlagStream0x40000) != 0) {
@@ -329,9 +329,8 @@ bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output, s
             for (std::uint16_t j = 0; j < subset.auxiliaryIndexCount; ++j) {
                 std::uint16_t index = 0;
                 if (!ReadU16LE(bytes, cursor + static_cast<std::size_t>(j) * 2, bytes.size(),
-                               index) ||
-                    index >= vertexCount)
-                    return Fail(error, "NMF subset index is outside its vertex array");
+                               index))
+                    return Fail(error, "NMF subset auxiliary index stream is truncated");
                 subset.auxiliaryIndices.push_back(index);
             }
             if (subset.auxiliaryIndexCount > kMaxPartitionIndices - totalPartitionIndices)
