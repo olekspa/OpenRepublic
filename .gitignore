@@ -1,0 +1,38 @@
+# Build and IDE output
+/build/
+/out/
+/bin/
+/obj/
+/.vs/
+/.idea/
+/CMakeFiles/
+/CMakeCache.txt
+/Testing/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+
+# Local configuration, credentials, and private research
+.env
+.env.*
+!.env.example
+/local-research/
+/private-research/
+/research-private/
+/local-config.*
+/game-path.*
+
+# Local game and extracted content must not enter this repository
+/game-install/
+/original-content/
+/extracted-assets/
+/wrsr-assets/
+*.sav
+*.nmf
+*.mtl
+*.dds
+
+# Crash dumps and local logs
+*.dmp
+*.log
