@@ -157,7 +157,7 @@ Implement a directed road graph with validated intersections and connectivity. A
 
 **Exit:** a vehicle traverses a player-built route, picks up and delivers one resource, inventory totals reconcile, broken edges invalidate/recompute its route, and the result survives OpenRepublic save/reload.
 
-**Current checkpoint (21 October 2026):** The simulation now has a bounded synthetic orthogonal grid graph, tick-boundary road-segment commands, a deterministic route search over player-added segments, v6 graph persistence, and v1–v5 migration. Simulation tests build a detour around seed edge 202, deliver cargo over it, and compare saved/reloaded continuation. This is a simulation-only sub-slice; the full Stage B exit remains open until broken-edge invalidation/recomputation is covered and the new viewer road tool is exercised at runtime. The graph and lattice are OpenRepublic examples, not recovered WRSR topology or scale.
+**Current checkpoint (21 October 2026):** The simulation has a bounded synthetic orthogonal grid graph, tick-boundary road-segment commands, deterministic routing over player-added segments, v6 graph persistence, and v1–v5 migration. Simulation tests build a detour around seed edge 202, deliver cargo over it, and compare saved/reloaded continuation. Closing an edge ahead of the truck replans from its current node to the same destination when a deterministic alternate path exists; when no alternate exists, the close is rejected without changing state. This remains a simulation API check; the new viewer road tool still needs runtime input acceptance. The graph and lattice are OpenRepublic examples, not recovered WRSR topology or scale.
 
 ### Stage C — One measured economic loop (overlapping weeks 6–12)
 

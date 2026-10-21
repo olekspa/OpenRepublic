@@ -691,6 +691,62 @@ int main() {
     passedRoadRestored.Step(80);
     Check(passedRoadRestored.Save() == passedRoad.Save(), "reloaded truck keeps deterministic behavior with a closed road behind it");
 
+    // Closing an edge still ahead of the truck replans from its current node
+    // to the same destination. Build a bypass before dispatch, then close edge
+    // 202 after the truck has reached node 2 on [1, 2, 3].
+    Simulation reroute;
+    Check(reroute.QueueRoadSegment(-1, 0, -1, 1) == 1 &&
+        reroute.QueueRoadSegment(-1, 1, 0, 1) == 2 &&
+        reroute.QueueRoadSegment(0, 1, 0, 0) == 3,
+        "alternate path segments queue for the active-route closure test");
+    reroute.Step(3); // Apply the segments, dispatch grain, and move truck to node 2.
+    auto rerouteBefore = reroute.GetSnapshot();
+    Check(rerouteBefore.truckNode == 2 && rerouteBefore.routeCursor == 1 &&
+        rerouteBefore.activeRoute == std::vector<openrepublic::sim::EntityId>({1, 2, 3}),
+        "truck reaches the node immediately before the edge to close");
+    Check(reroute.SetRoadEnabled(202, false), "active edge closure is accepted when an alternate path exists");
+    auto rerouted = reroute.GetSnapshot();
+    bool rerouteUsesClosedEdge = false;
+    for (std::size_t i = 1; i < rerouted.activeRoute.size(); ++i) {
+        if ((rerouted.activeRoute[i - 1] == 2 && rerouted.activeRoute[i] == 3) ||
+            (rerouted.activeRoute[i - 1] == 3 && rerouted.activeRoute[i] == 2))
+            rerouteUsesClosedEdge = true;
+    }
+    Check(rerouted.routeCursor == 0 && !rerouted.activeRoute.empty() &&
+        rerouted.activeRoute.front() == rerouted.truckNode && rerouted.activeRoute.back() == Simulation::MillNodeId,
+        "reroute resets its cursor at the truck node and retains the delivery destination");
+    Check(!rerouteUsesClosedEdge && rerouted.activeRoute.size() == 4,
+        "deterministic alternate route excludes the closed edge");
+    const auto rerouteAtStartSave = reroute.Save();
+    Simulation rerouteAtStartRestored;
+    Check(rerouteAtStartRestored.Load(rerouteAtStartSave, &error),
+        "save/load accepts an alternate route immediately after rerouting");
+    Check(rerouteAtStartRestored.Save() == rerouteAtStartSave,
+        "cursor-zero rerouted route round-trips canonically");
+    reroute.Step();
+    const auto progressedReroute = reroute.GetSnapshot();
+    Check(progressedReroute.routeCursor == 1 && progressedReroute.routeCursor < progressedReroute.activeRoute.size() &&
+        progressedReroute.truckNode == progressedReroute.activeRoute[progressedReroute.routeCursor],
+        "truck advances onto the rerouted path before the regression save");
+    const auto rerouteSave = reroute.Save();
+    Simulation rerouteRestored;
+    Check(rerouteRestored.Load(rerouteSave, &error),
+        "save/load accepts a progressed alternate route with an intermediate route origin");
+    reroute.Step(220);
+    rerouteRestored.Step(220);
+    Check(rerouteRestored.Save() == reroute.Save(), "rerouted delivery continues identically after save/load");
+    const auto rerouteDelivered = reroute.GetSnapshot();
+    Check(rerouteDelivered.deliveredFlourTotal > 0 && rerouteDelivered.warehouse.flour > 0,
+        "truck completes delivery after rerouting around an edge closed ahead");
+
+    // If the active route has no alternate, reject without changing either the
+    // enabled graph edge or any truck/cargo/route state.
+    Simulation noAlternate;
+    noAlternate.Step(3);
+    const auto noAlternateBefore = noAlternate.Save();
+    Check(!noAlternate.SetRoadEnabled(202, false), "active route closure is rejected when no alternate path exists");
+    Check(noAlternate.Save() == noAlternateBefore, "rejected active-route closure is fully transactional");
+
     // Invalid loads must not partially mutate the existing object.
     const auto beforeBadLoad = restored.Save();
     auto badVersion = bytes;
@@ -724,12 +780,15 @@ int main() {
     terminalTick.Step();
     Check(terminalTick.Save() == terminalBeforeQueue, "terminal tick does not advance or mutate state");
 
-    // The save parser must not accept delivery states the simulation cannot
-    // produce, even when every listed road segment is individually valid.
+    // The save parser must reject a route whose cursor does not identify the
+    // current truck node, even when every listed road segment is valid.
     const auto activeRouteBytes = passedRoadBytes;
-    const auto wrongOrigin = WithTruckRecord(activeRouteBytes, "TRUCK 2 1 1 2 0 2 2 3");
-    Check(!restored.Load(wrongOrigin, &error), "grain delivery route with a non-farm origin is rejected");
-    Check(restored.Save() == beforeBadLoad, "wrong-origin route rejection leaves state unchanged");
+    const auto wrongCursor = WithTruckRecord(activeRouteBytes, "TRUCK 2 1 1 2 0 2 4 3");
+    Check(!restored.Load(wrongCursor, &error), "grain delivery route cursor that does not identify the truck node is rejected");
+    Check(restored.Save() == beforeBadLoad, "wrong-cursor route rejection leaves state unchanged");
+    const auto wrongDestination = WithTruckRecord(activeRouteBytes, "TRUCK 2 1 1 2 1 2 1 2");
+    Check(!restored.Load(wrongDestination, &error), "grain delivery route with the wrong destination is rejected");
+    Check(restored.Save() == beforeBadLoad, "wrong-destination route rejection leaves state unchanged");
     const auto loopingRoute = WithTruckRecord(activeRouteBytes, "TRUCK 2 1 1 2 1 5 1 2 1 2 3");
     Check(!restored.Load(loopingRoute, &error), "repeated-node delivery route is rejected");
     Check(restored.Save() == beforeBadLoad, "looping route rejection leaves state unchanged");

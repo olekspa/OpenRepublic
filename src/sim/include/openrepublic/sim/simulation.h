@@ -158,6 +158,8 @@ public:
     bool AcknowledgeFacilityPlacementResult(std::uint64_t commandId);
 
     // Toggle a synthetic road edge for scenario construction and connectivity checks.
+    // Closing an edge on the truck's remaining route replans to the same
+    // destination when a path exists; otherwise the closure is rejected.
     // Edge IDs in the default scenario are 201..204.
     bool SetRoadEnabled(EntityId edgeId, bool enabled);
 

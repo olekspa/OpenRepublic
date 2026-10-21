@@ -85,7 +85,7 @@ struct Simulation::State {
         return std::any_of(nodes.begin(), nodes.end(), [id](const RoadNode& n){ return n.id==id; });
     }
 
-    std::vector<EntityId> FindRoute(EntityId from, EntityId to) const {
+    std::vector<EntityId> FindRoute(EntityId from, EntityId to, EntityId excludedEdgeId = 0) const {
         if (!HasNode(from) || !HasNode(to)) return {};
         std::map<EntityId, EntityId> previous;
         std::queue<EntityId> pending;
@@ -97,7 +97,7 @@ struct Simulation::State {
             if (node == to) break;
             // Stable edge-ID order is the deterministic BFS tie-break.
             for (const auto& edge : edges) {
-                if (!edge.enabled) continue;
+                if (!edge.enabled || edge.id == excludedEdgeId) continue;
                 EntityId next = 0;
                 if (edge.a == node) next = edge.b;
                 else if (edge.b == node) next = edge.a;
@@ -426,7 +426,16 @@ bool Simulation::AcknowledgeFacilityPlacementResult(std::uint64_t commandId) {
 bool Simulation::SetRoadEnabled(EntityId edgeId, bool enabled) {
     const auto it = std::find_if(state_->edges.begin(), state_->edges.end(), [edgeId](const Edge& edge) { return edge.id == edgeId; });
     if (it == state_->edges.end()) return false;
-    if (!enabled && state_->RouteUses(edgeId)) return false;
+    if (!enabled && state_->RouteUses(edgeId)) {
+        // Compute against the graph with this edge excluded before mutating
+        // anything. A rejected closure must preserve both graph and truck state.
+        auto alternate = state_->FindRoute(state_->truckNode, state_->route.back(), edgeId);
+        if (alternate.size() < 2) return false;
+        it->enabled = false;
+        state_->route = std::move(alternate);
+        state_->routeCursor = 0;
+        return true;
+    }
     it->enabled = enabled;
     return true;
 }
@@ -730,18 +739,20 @@ bool Simulation::Load(std::string_view data, std::string* error) {
         break;
     case TruckStage::DeliverGrainToMill:
         if (candidate.cargo != Resource::Grain || candidate.cargoAmount == 0 || candidate.route.empty() ||
-            candidate.route.front() != FarmNodeId || candidate.route.back() != MillNodeId) return fail("invalid grain delivery state");
+            candidate.route.back() != MillNodeId)
+            return fail("invalid grain delivery state");
         break;
     case TruckStage::LoadFlourAtMill:
         if (candidate.truckNode != MillNodeId || candidate.cargoAmount || !candidate.route.empty()) return fail("invalid mill loading state");
         break;
     case TruckStage::DeliverFlourToWarehouse:
         if (candidate.cargo != Resource::Flour || candidate.cargoAmount == 0 || candidate.route.empty() ||
-            candidate.route.front() != MillNodeId || candidate.route.back() != WarehouseNodeId) return fail("invalid flour delivery state");
+            candidate.route.back() != WarehouseNodeId)
+            return fail("invalid flour delivery state");
         break;
     case TruckStage::ReturnToFarm:
         if (candidate.cargoAmount || candidate.cargo != Resource::None) return fail("invalid return state cargo");
-        if (!candidate.route.empty() && (candidate.route.front() != WarehouseNodeId || candidate.route.back() != FarmNodeId)) return fail("invalid return route");
+        if (!candidate.route.empty() && candidate.route.back() != FarmNodeId) return fail("invalid return route");
         if (candidate.route.empty() && candidate.truckNode != WarehouseNodeId && candidate.truckNode != FarmNodeId) return fail("invalid return origin");
         break;
     }
