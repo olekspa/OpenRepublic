@@ -106,3 +106,14 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - This is **VERIFIED structural import evidence** for that one local input. It is not a visual comparison, image decode/material-fidelity result, direct NMF support, broad WRSR compatibility, or asset-distribution permission. No screenshot comparison was performed.
 - The input and its provenance remain private; no model, texture, save, game binary, private path, or asset-derived payload was added to the repository. WRSR was not launched, and no Steam installation or save was modified.
 - A separate post-run cleanup helper emitted an unavailable `System.Windows.Forms.SendKeys` type error after the app had exited; this did not alter the app's exit code or the recorded import result.
+
+# Chronological continuation — bounded MTL syntax reader
+
+**2026-10-21 14:34:02 EDT (18:34:02 UTC)**
+
+- Read-only inspection of three private local MTL text samples (two building, one terrain) found flat sibling `$SUBMATERIAL` blocks and one terminal `$END`. The observed directives had these shapes: `$SUBMATERIAL` with one bare token; `$TEXTURE` with one numeric token and one string token; each of `$DIFFUSECOLOR`, `$SPECULARCOLOR`, and `$AMBIENTCOLOR` with four numeric tokens; `$SPECULARPOWER` with one numeric token; `$END` with no arguments. Texture directives repeated, one section omitted `$SPECULARPOWER`, and no unrecognized directive appeared in this bounded sample. A follow-up checked syntax shapes only; no sample contents, paths, names, or fingerprints were copied into the repository.
+- Added `ParseMtlSyntax`, an OpenRepublic-owned, side-effect-free parser for that narrow observed profile. It keeps raw values and path-like tokens, preserves unknown directives inside sections, allows repeated directives and omitted `$SPECULARPOWER`, enforces a terminal `$END`, and applies input/line/token/section/directive bounds. It does not resolve paths, load images, assign texture-slot meaning, or claim general MTL/WRSR support.
+- Added synthetic fixtures for sibling sections, CRLF and blank lines, repeated texture entries, unknown `$TEXTURE_MTL` preservation, omitted specular power, malformed values/structure, unsupported comments/BOM, NULs, and resource caps.
+- **VERIFIED — client Release application target:** the full OpenRepublic build succeeded; CTest passed 6/6.
+- **VERIFIED — headless Release:** build succeeded; CTest passed 5/5.
+- **UNKNOWN — general MTL grammar and material fidelity:** the three-sample audit does not establish duplicate/order semantics, valid color/power ranges, quoted paths, comment/BOM behavior, alternate roots, or whether other variants use additional directives. Its exact game build and per-file identities were not recorded, so this grammar must be rechecked with private provenance before being treated as version-scoped. No WRSR runtime, save, Steam file, or asset write occurred. No proprietary data was added to Git.
