@@ -1,0 +1,3 @@
+add_library(OpenRepublicSimulation simulation.cpp)
+target_include_directories(OpenRepublicSimulation PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_compile_features(OpenRepublicSimulation PUBLIC cxx_std_17)

@@ -16,6 +16,10 @@ The strongest reusable lessons are:
 - **Simulation design:** the existing Python system provides examples of structured directives, validation, deterministic event logs, checkpoints, and measured optimization. Its AI strategy loop and Python performance results are not a native C++ economy model or a rendering benchmark.
 - **Reverse engineering:** injected plugins and AgentBridge work reveal selected behavior in particular game builds. The evidence is version-sensitive; native addresses, process pointers, hooks, and input recipes do not belong in the standalone OpenRepublic runtime.
 
+## License and provenance boundary
+
+The local Rival Republics checkout did not contain a root license or copying notice when reviewed. Treat its code and generated artifacts as private research; do not copy or adapt them into OpenRepublic until a compatible license and provenance are established. TesmioLoader is separately licensed under GPL-3.0 and remains an external research reference, not an MIT OpenRepublic dependency. Public findings in this document are architectural summaries and do not include source or game payloads.
+
 ## OpenRepublic application
 
 1. Keep game files read-only. Put exact executable fingerprints, private asset paths, Ghidra databases, and REA reports in the private research folder.

@@ -1,0 +1,5 @@
+add_library(OpenRepublicScripting LuaRulesLoader.cpp)
+target_include_directories(OpenRepublicScripting PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(OpenRepublicScripting PRIVATE "${WICKED_ROOT_DIR}/WickedEngine/LUA")
+target_compile_features(OpenRepublicScripting PUBLIC cxx_std_17)
+target_link_libraries(OpenRepublicScripting PUBLIC OpenRepublicSimulation LUA)

@@ -1,6 +1,11 @@
 #include "OpenRepublicApplication.h"
 
 #include <windows.h>
+#include <shellapi.h>
+
+#include <filesystem>
+#include <string_view>
+#include <utility>
 
 namespace
 {
@@ -38,6 +43,28 @@ namespace
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 {
 	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+	int argumentCount = 0;
+	LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+	std::filesystem::path sceneProbePath;
+	std::filesystem::path glbProbePath;
+	if (arguments != nullptr)
+	{
+		for (int i = 1; i < argumentCount; ++i)
+		{
+			if (std::wstring_view(arguments[i]) == L"--scene-probe" && i + 1 < argumentCount)
+			{
+				sceneProbePath = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--glb-probe" && i + 1 < argumentCount)
+			{
+				glbProbePath = arguments[++i];
+			}
+		}
+		LocalFree(arguments);
+	}
+	application.SetSceneProbePath(std::move(sceneProbePath));
+	application.SetGlbProbePath(std::move(glbProbePath));
 
 	WNDCLASSEXW windowClass{};
 	windowClass.cbSize = sizeof(windowClass);

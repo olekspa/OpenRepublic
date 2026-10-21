@@ -1,0 +1,7 @@
+add_executable(OpenRepublicLuaRulesTests lua_rules_loader_tests.cpp)
+target_link_libraries(OpenRepublicLuaRulesTests PRIVATE OpenRepublicScripting)
+target_compile_features(OpenRepublicLuaRulesTests PRIVATE cxx_std_17)
+target_compile_definitions(OpenRepublicLuaRulesTests PRIVATE
+    OPENREPUBLIC_DEMO_RULES_PATH="${PROJECT_SOURCE_DIR}/data/rules/demo_rules.lua"
+)
+add_test(NAME OpenRepublicLuaRulesTests COMMAND OpenRepublicLuaRulesTests)
