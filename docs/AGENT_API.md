@@ -1,15 +1,33 @@
 # OpenRepublic Agent API v0
 
-**Status:** Implemented as an in-process C++ interface; synthetic source/build/test evidence only.
+**Status:** The typed C++ API and local JSONL stdio host are implemented. Current evidence is source, Release builds, CTest, and a synthetic external-controller run only.
 
 `AgentApi` is a typed gateway over the existing authoritative `sim::Simulation`. It is the first contract for structured controllers and future agent access. It does not create a second simulation, expose Wicked Engine entity handles as gameplay IDs, or define a WRSR protocol.
 
 ## Contract
 
 - The C++ structs, enums, and method signatures in `src/agent_api/include/openrepublic/agent_api/agent_api.h` are the v0 internal schema. `ApiVersion` is `0` and describes this OpenRepublic interface only.
-- Calls are in-process. There is no JSON schema, wire encoding, MCP server, local IPC, C# client, or network transport yet. A future adapter must define its own versioned serialization and preserve the same simulation validation and command lifecycle.
+- The typed C++ API is in-process. `OpenRepublicAgentHost` exposes it to a separate local process through newline-delimited JSON on stdin/stdout. Its protocol has a separate `protocolVersion` (`0`); it is not a WRSR protocol. The host calls the same `AgentApi` and authoritative `sim::Simulation`, without creating a second gameplay model.
+- The host uses nlohmann/json 3.12.0 from the pinned Wicked Engine submodule's `Editor/json.hpp` (SPDX MIT). CMake builds the host and its tests when that header is present. Initialize the submodule for this target; a headless checkout without it still builds the simulation/content libraries but omits the host and its tests.
+- The host is local stdio only. It has no listener, network transport, MCP adapter, C# client, or authentication. Each process owns its own in-memory synthetic demo world. `observer` is the default permission profile; `--role controller` enables the simulation step/construction permissions. This role flag is not caller authentication or a security boundary: anyone able to launch the local process can select controller. Keep it trusted-local and off the network.
 - `Permissions` controls queries, fixed-tick advancement, construction, and transport-plan assignment. `DiscoverCapabilities()` exposes the available actions; `QueryWorld` permission also gates entity pages and event reads.
 - The class contains no synchronization. Its owner must serialize calls with simulation work.
+
+## Local JSONL process adapter
+
+Launch `OpenRepublicAgentHost` with no arguments to start as an observer, or pass `--role controller` to enable commands. Each input line must be one UTF-8 JSON object with a non-empty string `id` of at most 128 bytes, integer `protocolVersion: 0`, a string `method`, and only fields supported by that method. The response echoes the ID and contains either `ok: true` with `result`, or `ok: false` with a structured `error` code/message. Diagnostics and command-line usage go to stderr; stdout is reserved for protocol responses.
+
+Implemented methods are `hello`, `capabilities`, `world`, `entity_page`, `events`, `step`, `place_facility`, `place_storage`, `add_road_segment`, `assign_transport_plan`, `command_result`, and `acknowledge`. Mutations still use revision checks, simulation validation, tick-boundary execution, and explicit queued/applied/rejected results. The Python example in `examples/agent_api/drive_logistics.py` exercises the protocol through a child process, including default observer denial and delivery to a player-placed Storage.
+
+The JSON adapter caps a request line at 64 KiB, a process at 8,192 requests, nesting at 16 levels, and parsed structure at 4,096 nodes. An overlong line returns `request_too_large` and terminates the host rather than draining unbounded input. Step, entity-page, and event-page bounds are also reported by `hello`. All `uint64_t` values on the wire use decimal strings; bounded IDs and coordinates use JSON integers. Unknown request fields, duplicate keys, unsupported protocol versions, malformed JSON, and invalid types are rejected before gameplay API calls.
+
+Build with the pinned submodule initialized, then run `ctest`; if Python 3 is available at configure time, CTest also starts the external-controller acceptance. For a direct manual run from the repository root:
+
+```powershell
+python examples/agent_api/drive_logistics.py build/openrepublic-vs2022/src/agent_host/Release/OpenRepublicAgentHost.exe
+```
+
+The example is a local synthetic demonstration, not an unattended service or a production multi-client boundary.
 
 ## Queries and revisions
 
@@ -37,6 +55,6 @@ Events cover successful command submission, command application or rejection, an
 
 ## Validation evidence and limits
 
-On 21 October 2026, the Release client build passed CTest **7/7** and the headless Release build passed **6/6**. The Agent API controller test exercises capability discovery, stable-ID queries, pagination, stale revisions, permission denial, event ordering and cursor retention, command submission/application/rejection/acknowledgement, bounded stepping, overflow-safe road validation, legacy-result adoption, save-v7 compatibility, and a synthetic Farm→Mill→Storage delivery.
+On 21 October 2026, the Release client build passed CTest **10/10** and the headless Release build passed **9/9**. This includes the Agent API tests, JSON protocol tests, the process-level Python controller, bounded MTL resolver tests, and existing simulation/content/scripting suites. Agent API tests cover capability discovery, stable-ID queries, pagination, stale revisions, permission denial, event ordering and cursor retention, command submission/application/rejection/acknowledgement, bounded stepping, overflow-safe road validation, legacy-result adoption, save-v7 compatibility, and a synthetic Farm→Mill→Storage delivery. The process-level controller proves the wire protocol can build roads and player Storage, assign the plan, inspect results/events, and receive flour by tick 17.
 
-These are OpenRepublic source/build/test results. No WRSR runtime, save, binary, asset, formula, or compatibility behavior is verified by this API. The API is not yet a production multi-client security boundary; future transport adapters need explicit caller identity, ownership, schema validation, and lifecycle tests.
+These are OpenRepublic source/build/test results. No WRSR runtime, save, binary, asset, formula, or compatibility behavior is verified by this API. The local role flag is not authentication, and the host must not be exposed over a network. Any future multi-client transport needs explicit caller identity, ownership, schema validation, resource controls, and lifecycle tests.

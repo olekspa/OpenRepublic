@@ -1,5 +1,6 @@
 add_library(OpenRepublicContent STATIC
     glb_container.cpp
+    mtl_dependencies.cpp
     mtl_syntax.cpp
     terrain_dds.cpp
     terrain_preview.cpp

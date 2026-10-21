@@ -14,6 +14,19 @@ add_subdirectory(src/sim)
 add_subdirectory(src/agent_api)
 add_subdirectory(src/content)
 
+# The stdio Agent API adapter reuses the same MIT-licensed JSON header pinned
+# with Wicked Engine's Editor importer. The authoritative API/simulation remain
+# buildable without this optional transport dependency.
+set(OPENREPUBLIC_AGENT_HOST_AVAILABLE FALSE)
+set(OPENREPUBLIC_WICKED_JSON_HEADER
+    "${PROJECT_SOURCE_DIR}/third_party/WickedEngine/Editor/json.hpp")
+if(EXISTS "${OPENREPUBLIC_WICKED_JSON_HEADER}")
+    add_subdirectory(src/agent_host)
+    set(OPENREPUBLIC_AGENT_HOST_AVAILABLE TRUE)
+else()
+    message(STATUS "OpenRepublicAgentHost disabled: pinned nlohmann/json.hpp is unavailable")
+endif()
+
 if(OPENREPUBLIC_BUILD_CLIENT)
     if(NOT WIN32)
         message(FATAL_ERROR "The Wicked Engine desktop client currently targets Windows; configure with -DOPENREPUBLIC_BUILD_CLIENT=OFF to build the headless simulation.")
@@ -47,6 +60,10 @@ if(OPENREPUBLIC_BUILD_TESTS)
     add_subdirectory(tests/sim)
     add_subdirectory(tests/agent_api)
     add_subdirectory(tests/content)
+
+    if(OPENREPUBLIC_AGENT_HOST_AVAILABLE)
+        add_subdirectory(tests/agent_host)
+    endif()
 
     if(OPENREPUBLIC_BUILD_CLIENT AND TARGET LUA)
         add_subdirectory(tests/scripting)

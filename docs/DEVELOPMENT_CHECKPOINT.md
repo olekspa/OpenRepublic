@@ -150,3 +150,18 @@ Only these tracked project files were modified for the current M0 increment: `sr
 
 - The typed Agent API v0 source, tests, and documentation were published to `origin/main` as `2bbc830` (`Add versioned simulation agent API v0`). The checkout was clean after push.
 - M1 remains incomplete: the API is still in-process C++ only. Next, add a bounded local stdio protocol and an external scripted controller so an independent process can inspect and operate the synthetic Farm→Mill→Storage simulation without GUI automation.
+
+## Chronological continuation — external Agent API host and bounded MTL dependency resolver
+
+**2026-10-21 15:29 EDT (19:29 UTC)**
+
+- Added an optional local JSONL stdio process host over Agent API v0 and a Python stdlib controller. The external process can inspect the synthetic world, construct roads and storage, assign a transport plan, inspect command results/events, and verify flour delivery by tick 17. The host is local-only; observer/controller selects a permission profile and is not authentication. This does not establish WRSR control or a network service.
+- The host rejects malformed, oversized, deeply nested, over-node-limit, duplicate-key, wrong-version, and unknown-field requests. `uint64_t` wire values are decimal strings. An unterminated line over 64 KiB receives one `request_too_large` response and exits with status 5. The process-level controller test has a bounded CTest timeout and cleans up child processes on failures.
+- Added an MTL dependency manifest helper for recognized `$TEXTURE` directives against explicit roots. It preserves order and opaque index/path tokens, rejects unsafe path forms, records ambiguous/missing/resolved statuses, and never opens or modifies texture files. A 262,144 aggregate candidate-inspection cap is preflighted across safe references and unique valid canonical roots before per-texture path inspection; over-budget failure leaves caller output unchanged.
+- Independent host and resolver reviews found and drove fixes for a hanging unterminated oversized JSONL input and excessive candidate path probes. Final host review and aggregate-cap follow-up found no remaining actionable issues.
+- **VERIFIED — client Release build and CTest:** build succeeded; 10/10 tests passed, including the external controller and MTL dependency tests.
+- **VERIFIED — headless Release build and CTest:** build succeeded; 9/9 tests passed, including the external controller and MTL dependency tests.
+- **VERIFIED — source/diff hygiene:** `git diff --check` passed after the aggregate-budget implementation.
+- **UNKNOWN — WRSR behavior:** no WRSR process was launched and no original asset, save, Steam file, or Rival Republics data was modified or added. MTL sample provenance remains incomplete; resolver path-base rules, `$TEXTURE_MTL`, texture-slot meanings, material fidelity, and standalone-use rights remain open.
+- This increment is still uncommitted pending final scoped diff review and publication. It advances the external-agent foundation and a metadata-only material dependency stage; it does not complete the playable-slice acceptance criteria or the remaining M0 UI gates.
+- Resume from this checkpoint by inspecting the exact changed file set and docs, then commit/push only the reviewed OpenRepublic paths. Keep the goal active and continue to the next highest-value playable-slice gap after publication.

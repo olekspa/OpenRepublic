@@ -63,4 +63,13 @@ The first OpenRepublic-owned application scene uses only OpenRepublic-created ge
 
 Human UI, tests, Lua-facing tools, and future LLM or external controllers must reach gameplay through the same validated command and query paths over the authoritative C++ simulation. The first implementation is an in-process typed C++ interface with capability discovery, revision-checked entity queries and commands, bounded paging and event reads, permission checks, and distinct queued/applied/rejected results. It does not own a second simulation and does not expose renderer entities as world identity.
 
-**Consequence:** keep command/query types and state revisions explicit, and apply mutations at simulation tick boundaries. Add provider-neutral MCP or local IPC adapters only after the internal contract is stable; any wire schema, transport, and authentication remain separate versioned work. The current API is not a WRSR protocol or compatibility claim.
+**Consequence:** keep command/query types and state revisions explicit, and apply mutations at simulation tick boundaries. The internal API is not a WRSR protocol or compatibility claim. The first local adapter is recorded separately in D-008.
+
+## D-008: Start external-agent access with a bounded local JSONL host
+
+**Date:** 21 October 2026
+**Status:** Accepted for the synthetic Agent API foundation
+
+Expose the typed Agent API through a separate process that reads one versioned JSON request per stdin line and writes one JSON response per stdout line. The host owns a synthetic OpenRepublic simulation and reuses the existing API; it does not attach to WRSR or to the Wicked Engine process. The first controller is a Python stdlib example. The host uses the MIT-licensed nlohmann/json 3.12.0 header already present in the pinned Wicked Engine submodule and remains optional in configurations that do not have that header.
+
+**Consequence:** keep the host local and off the network. Its observer/controller switch selects permissions but does not authenticate callers. C# IPC, MCP, multi-client service, and WRSR control remain separate future work and need their own versioned contracts and security review.

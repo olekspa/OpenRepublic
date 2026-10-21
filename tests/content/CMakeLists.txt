@@ -12,6 +12,13 @@ target_link_libraries(OpenRepublicMtlSyntaxTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicMtlSyntaxTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicMtlSyntaxTests COMMAND OpenRepublicMtlSyntaxTests)
 
+add_executable(OpenRepublicMtlDependencyTests
+    mtl_dependency_tests.cpp
+)
+target_link_libraries(OpenRepublicMtlDependencyTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicMtlDependencyTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicMtlDependencyTests COMMAND OpenRepublicMtlDependencyTests)
+
 add_executable(OpenRepublicGlbContainerTests
     glb_container_tests.cpp
 )
