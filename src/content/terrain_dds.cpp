@@ -1,5 +1,6 @@
 #include "openrepublic/content/terrain_dds.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -245,6 +246,72 @@ bool ParseTerrainMetadata(const std::string& text, const Heightmap& heightmap,
         return Fail(error, "$HEIGHTMAPSIZE does not match the decoded heightmap dimensions");
 
     output = candidate;
+    if (error) error->clear();
+    return true;
+}
+
+bool SampleTerrainHeight(const Heightmap& heightmap, const TerrainTransform& transform,
+                         double worldX, double worldZ, double& output, std::string* error) {
+    if (heightmap.width == 0 || heightmap.height == 0)
+        return Fail(error, "heightmap dimensions must be nonzero");
+    const std::uint64_t sampleCount = static_cast<std::uint64_t>(heightmap.width) * heightmap.height;
+    if (sampleCount > std::numeric_limits<std::size_t>::max() ||
+        heightmap.samples.size() != static_cast<std::size_t>(sampleCount))
+        return Fail(error, "heightmap sample count does not match its dimensions");
+
+    if (!std::isfinite(transform.originX) || !std::isfinite(transform.originZ) ||
+        !std::isfinite(transform.baseHeight) || !std::isfinite(transform.sizeX) ||
+        !std::isfinite(transform.sizeZ) || !std::isfinite(transform.heightScale) ||
+        transform.sizeX <= 0.0 || transform.sizeZ <= 0.0)
+        return Fail(error, "terrain transform must have finite origins/scales and positive horizontal extents");
+    if (transform.rowOrder != RasterRowOrder::FirstRowAtMinZ &&
+        transform.rowOrder != RasterRowOrder::FirstRowAtMaxZ)
+        return Fail(error, "terrain transform has an unknown raster row order");
+    if (!std::isfinite(worldX) || !std::isfinite(worldZ))
+        return Fail(error, "world-space sample coordinates must be finite");
+
+    const double maxX = transform.originX + transform.sizeX;
+    const double maxZ = transform.originZ + transform.sizeZ;
+    if (!std::isfinite(maxX) || !std::isfinite(maxZ))
+        return Fail(error, "terrain transform extent overflows finite world coordinates");
+    if (maxX <= transform.originX || maxZ <= transform.originZ)
+        return Fail(error, "terrain transform extent collapses at its origin due to floating-point precision");
+    if (worldX < transform.originX || worldX > maxX ||
+        worldZ < transform.originZ || worldZ > maxZ)
+        return Fail(error, "world-space sample coordinate is outside the terrain extent");
+
+    const double xFraction = std::clamp((worldX - transform.originX) / transform.sizeX, 0.0, 1.0);
+    const double zFraction = std::clamp((worldZ - transform.originZ) / transform.sizeZ, 0.0, 1.0);
+    const double lastColumn = static_cast<double>(heightmap.width - 1u);
+    const double lastRow = static_cast<double>(heightmap.height - 1u);
+    const double sampleX = std::clamp(xFraction * lastColumn, 0.0, lastColumn);
+    const double sampleZ = std::clamp(zFraction * lastRow, 0.0, lastRow);
+    const double rowCoordinate = std::clamp(transform.rowOrder == RasterRowOrder::FirstRowAtMinZ
+        ? sampleZ
+        : lastRow - sampleZ, 0.0, lastRow);
+    const auto x0 = static_cast<std::uint32_t>(std::floor(sampleX));
+    const auto z0 = static_cast<std::uint32_t>(std::floor(rowCoordinate));
+    const auto x1 = x0 < heightmap.width - 1u ? x0 + 1u : x0;
+    const auto z1 = z0 < heightmap.height - 1u ? z0 + 1u : z0;
+    const auto at = [&heightmap](std::uint32_t x, std::uint32_t row) {
+        return static_cast<double>(heightmap.samples[static_cast<std::size_t>(row) * heightmap.width + x]);
+    };
+    const double v00 = at(x0, z0);
+    const double v10 = at(x1, z0);
+    const double v01 = at(x0, z1);
+    const double v11 = at(x1, z1);
+    if (!std::isfinite(v00) || !std::isfinite(v10) || !std::isfinite(v01) || !std::isfinite(v11))
+        return Fail(error, "heightmap interpolation footprint contains a NaN or infinite sample");
+    const double tx = sampleX - static_cast<double>(x0);
+    const double tz = rowCoordinate - static_cast<double>(z0);
+    const double top = v00 + (v10 - v00) * tx;
+    const double bottom = v01 + (v11 - v01) * tx;
+    const double rawHeight = top + (bottom - top) * tz;
+    const double worldHeight = transform.baseHeight + rawHeight * transform.heightScale;
+    if (!std::isfinite(worldHeight))
+        return Fail(error, "sampled world height is not finite");
+
+    output = worldHeight;
     if (error) error->clear();
     return true;
 }

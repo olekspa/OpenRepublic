@@ -47,11 +47,31 @@ struct FacilityPlacementResult {
     EntityId facilityId{};
 };
 
+enum class ConstructionCommandType : std::uint8_t { FacilityPlacement = 1, RoadSegment = 2 };
+
+struct ConstructionResult {
+    std::uint64_t commandId{};
+    ConstructionCommandType type{ConstructionCommandType::FacilityPlacement};
+    bool accepted{};
+    // Facility ID for FacilityPlacement, road edge ID for RoadSegment; zero on rejection.
+    EntityId entityId{};
+};
+
+struct RoadNodeView {
+    EntityId id{};
+    std::int32_t gridX{};
+    std::int32_t gridZ{};
+};
+
 struct RoadView {
     EntityId id{};
     EntityId a{};
     EntityId b{};
     bool enabled{};
+    std::int32_t aGridX{};
+    std::int32_t aGridZ{};
+    std::int32_t bGridX{};
+    std::int32_t bGridZ{};
 };
 
 struct SimulationRules {
@@ -77,6 +97,8 @@ struct Snapshot {
     // Unacknowledged results, ordered by command ID. A caller should acknowledge
     // results after consuming them; they survive later ticks and save/load.
     std::vector<FacilityPlacementResult> facilityPlacementResults;
+    std::vector<ConstructionResult> constructionResults;
+    std::vector<RoadNodeView> roadNodes;
     std::vector<RoadView> roads;
     SimulationRules rules;
 };
@@ -98,8 +120,12 @@ public:
     static constexpr std::size_t MaxFacilities = 16;
     static constexpr std::size_t MaxQueuedFacilityPlacements = 16;
     static constexpr std::size_t MaxUnacknowledgedFacilityResults = 16;
+    static constexpr std::size_t MaxRoadNodes = 128;
+    static constexpr std::size_t MaxRoadSegments = 256;
     static constexpr std::int32_t PrototypeGridMin = -16;
     static constexpr std::int32_t PrototypeGridMax = 16;
+    // Synthetic road lattice spacing used by the prototype viewer, in world units.
+    static constexpr float RoadCellWorldSize = 2.0f;
 
     Simulation();
     static Simulation CreateSyntheticDemo();
@@ -123,6 +149,11 @@ public:
     // fixed simulation tick. Returns zero if the bounded command/result capacity
     // is full or the simulation has reached its terminal tick.
     std::uint64_t QueueFacilityPlacement(FacilityType type, std::int32_t gridX, std::int32_t gridZ);
+    // Queue one orthogonal segment on the bounded synthetic lattice. Commands
+    // share the facility command ID sequence and apply in submission order.
+    std::uint64_t QueueRoadSegment(std::int32_t aGridX, std::int32_t aGridZ,
+        std::int32_t bGridX, std::int32_t bGridZ);
+    bool AcknowledgeConstructionResult(std::uint64_t commandId);
     // Remove a result after the caller has consumed it. Returns false if unknown.
     bool AcknowledgeFacilityPlacementResult(std::uint64_t commandId);
 

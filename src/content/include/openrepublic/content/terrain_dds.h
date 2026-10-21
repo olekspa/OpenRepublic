@@ -45,4 +45,35 @@ struct TerrainMetadata {
 bool ParseTerrainMetadata(const std::string& text, const Heightmap& heightmap,
                           TerrainMetadata& output, std::string* error = nullptr);
 
+// Caller-supplied interpretation of a decoded raster. The world extent is
+// axis-aligned: originX/originZ are its minimum coordinates and sizeX/sizeZ
+// are positive. Raster samples are treated as nodes spanning both extent
+// endpoints (a dimension of one is constant along that axis). rowOrder makes
+// the otherwise-unknown Z-axis raster orientation explicit.
+enum class RasterRowOrder {
+    FirstRowAtMinZ,
+    FirstRowAtMaxZ,
+};
+
+struct TerrainTransform {
+    double originX = 0.0;
+    double originZ = 0.0;
+    double baseHeight = 0.0;
+    double sizeX = 0.0;
+    double sizeZ = 0.0;
+    double heightScale = 0.0;
+    RasterRowOrder rowOrder = RasterRowOrder::FirstRowAtMinZ;
+};
+
+// Bilinearly samples raw row-major Heightmap values at a world-space XZ
+// coordinate, then computes baseHeight + rawValue*heightScale. The query must
+// lie within the inclusive supplied extent. No metadata is applied or inferred
+// by this function. Only the four samples in the interpolation footprint are
+// checked for finite values, so repeated queries are O(1); callers validating
+// an entire decoded raster should do that once at ingestion. On failure, output
+// is unchanged and error receives a diagnostic when non-null.
+bool SampleTerrainHeight(const Heightmap& heightmap, const TerrainTransform& transform,
+                         double worldX, double worldZ, double& output,
+                         std::string* error = nullptr);
+
 } // namespace openrepublic::content

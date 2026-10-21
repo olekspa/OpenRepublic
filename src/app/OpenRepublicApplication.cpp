@@ -30,6 +30,9 @@ namespace openrepublic
 		constexpr float kPlacementGridSpacing = 1.25f;
 		constexpr float kPlacementGridHalfExtent =
 			(static_cast<float>(openrepublic::sim::Simulation::PrototypeGridMax) + 0.5f) * kPlacementGridSpacing;
+		constexpr float kRoadGridHalfExtent =
+			(static_cast<float>(openrepublic::sim::Simulation::PrototypeGridMax) + 0.5f) *
+			openrepublic::sim::Simulation::RoadCellWorldSize;
 		constexpr XMFLOAT4 kFarmColor(0.24f, 0.52f, 0.28f, 1.0f);
 		constexpr XMFLOAT4 kMillColor(0.72f, 0.43f, 0.20f, 1.0f);
 		constexpr XMFLOAT4 kWarehouseColor(0.43f, 0.50f, 0.58f, 1.0f);
@@ -307,7 +310,8 @@ namespace openrepublic
 		if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(ground))
 		{
 			// The buildable area and visible synthetic ground use the same finite grid bounds.
-			transform->Scale(XMFLOAT3(kPlacementGridHalfExtent, 1.0f, kPlacementGridHalfExtent));
+			const float groundHalfExtent = std::max(kPlacementGridHalfExtent, kRoadGridHalfExtent);
+			transform->Scale(XMFLOAT3(groundHalfExtent, 1.0f, groundHalfExtent));
 			transform->UpdateTransform();
 		}
 		SetEntityColor(ground, XMFLOAT4(0.20f, 0.27f, 0.20f, 1.0f));
@@ -329,11 +333,6 @@ namespace openrepublic
 		millBuilding = createBlock("OpenRepublic synthetic mill", 0.0f, 0.82f, XMFLOAT3(0.82f, 0.82f, 0.82f), kMillColor);
 		warehouseBuilding = createBlock("OpenRepublic synthetic warehouse", 4.0f, 0.72f, XMFLOAT3(0.72f, 0.72f, 0.72f), kWarehouseColor);
 
-		for (std::size_t i = 0; i < roadSegments.size(); ++i)
-		{
-			const float x = -3.0f + static_cast<float>(i) * 2.0f;
-			roadSegments[i] = createBlock("OpenRepublic synthetic road", x, 0.04f, XMFLOAT3(1.0f, 0.045f, 0.22f), kRoadColor);
-		}
 		truckEntity = createBlock("OpenRepublic synthetic truck", -4.0f, 0.28f, XMFLOAT3(0.25f, 0.25f, 0.25f), XMFLOAT4(0.85f, 0.72f, 0.18f, 1.0f));
 
 		const wi::ecs::Entity sun = previewWorld.Entity_CreateLight(
@@ -475,6 +474,17 @@ namespace openrepublic
 		});
 		gui.AddWidget(&roadButton);
 
+		buildRoadButton.Create("BuildRoadSegmentButton");
+		buildRoadButton.SetText("Build road");
+		StyleButton(buildRoadButton);
+		buildRoadButton.SetSize(XMFLOAT2(100, 28));
+		buildRoadButton.SetPos(XMFLOAT2(340, 54));
+		buildRoadButton.OnClick([this](const wi::gui::EventArgs&) {
+			if (activeRoadPlacement) CancelRoadPlacement();
+			else BeginRoadPlacement();
+		});
+		gui.AddWidget(&buildRoadButton);
+
 		placeStorageButton.Create("PlacePrototypeStorageButton");
 		placeStorageButton.SetText("Place storage");
 		StyleButton(placeStorageButton);
@@ -521,7 +531,10 @@ namespace openrepublic
 		StyleButton(cancelPlacementButton);
 		cancelPlacementButton.SetSize(XMFLOAT2(110, 28));
 		cancelPlacementButton.SetPos(XMFLOAT2(226, 54));
-		cancelPlacementButton.OnClick([this](const wi::gui::EventArgs&) { CancelFacilityPlacement(); });
+		cancelPlacementButton.OnClick([this](const wi::gui::EventArgs&) {
+			if (activeRoadPlacement) CancelRoadPlacement();
+			else CancelFacilityPlacement();
+		});
 		gui.AddWidget(&cancelPlacementButton);
 
 		saveButton.Create("SimulationSaveButton");
@@ -599,7 +612,8 @@ namespace openrepublic
 		const bool guiHasFocus = renderPath->GetGUI().HasFocus();
 		if (!guiHasFocus && wi::input::Press(wi::input::KEYBOARD_BUTTON_ESCAPE))
 		{
-			if (activeFacilityPlacement.has_value()) CancelFacilityPlacement();
+			if (activeRoadPlacement) CancelRoadPlacement();
+			else if (activeFacilityPlacement.has_value()) CancelFacilityPlacement();
 			else SelectBuilding(wi::ecs::INVALID_ENTITY);
 		}
 		if (!guiHasFocus && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT))
@@ -671,6 +685,7 @@ namespace openrepublic
 
 	void OpenRepublicApplication::BeginFacilityPlacement(openrepublic::sim::FacilityType type)
 	{
+		CancelRoadPlacement();
 		activeFacilityPlacement = type;
 		SelectBuilding(wi::ecs::INVALID_ENTITY);
 		uiNotice = std::string("Choose a ground cell for the synthetic ") +
@@ -683,6 +698,26 @@ namespace openrepublic
 	{
 		activeFacilityPlacement.reset();
 		uiNotice = "Facility placement cancelled.";
+		UpdateStatusLabel();
+	}
+
+	void OpenRepublicApplication::BeginRoadPlacement()
+	{
+		activeFacilityPlacement.reset();
+		activeRoadPlacement = true;
+		pendingRoadStart.reset();
+		SelectBuilding(wi::ecs::INVALID_ENTITY);
+		uiNotice = "Build synthetic road: click a lattice cell for the first endpoint, then an orthogonally adjacent cell. Esc cancels.";
+		buildRoadButton.SetText("Cancel road");
+		UpdateStatusLabel();
+	}
+
+	void OpenRepublicApplication::CancelRoadPlacement()
+	{
+		activeRoadPlacement = false;
+		pendingRoadStart.reset();
+		buildRoadButton.SetText("Build road");
+		uiNotice = "Road construction mode cancelled.";
 		UpdateStatusLabel();
 	}
 
@@ -727,6 +762,65 @@ namespace openrepublic
 
 		const wi::primitive::Ray ray = wi::renderer::GetPickRay(
 			static_cast<long>(pointer.x), static_cast<long>(pointer.y), *renderPath, *renderPath->camera);
+		if (activeRoadPlacement)
+		{
+			if (!std::isfinite(ray.origin.y) || !std::isfinite(ray.direction.y) || std::abs(ray.direction.y) < 1e-6f)
+			{
+				uiNotice = "Road endpoint ray is parallel to the ground; adjust the camera.";
+				UpdateStatusLabel();
+				return;
+			}
+			const float distance = -ray.origin.y / ray.direction.y;
+			if (!std::isfinite(distance) || distance < ray.TMin || distance > ray.TMax)
+			{
+				uiNotice = "No road lattice cell at this pointer location.";
+				UpdateStatusLabel();
+				return;
+			}
+			const float worldX = ray.origin.x + ray.direction.x * distance;
+			const float worldZ = ray.origin.z + ray.direction.z * distance;
+			constexpr float roadCellSize = openrepublic::sim::Simulation::RoadCellWorldSize;
+			const float gridXFloat = std::round(worldX / roadCellSize);
+			const float gridZFloat = std::round(worldZ / roadCellSize);
+			if (!std::isfinite(gridXFloat) || !std::isfinite(gridZFloat) ||
+				gridXFloat < openrepublic::sim::Simulation::PrototypeGridMin || gridXFloat > openrepublic::sim::Simulation::PrototypeGridMax ||
+				gridZFloat < openrepublic::sim::Simulation::PrototypeGridMin || gridZFloat > openrepublic::sim::Simulation::PrototypeGridMax)
+			{
+				uiNotice = "Road endpoint is outside the bounded synthetic road lattice.";
+				UpdateStatusLabel();
+				return;
+			}
+			const auto gridX = static_cast<std::int32_t>(gridXFloat);
+			const auto gridZ = static_cast<std::int32_t>(gridZFloat);
+			if (!pendingRoadStart.has_value())
+			{
+				pendingRoadStart = std::make_pair(gridX, gridZ);
+				uiNotice = "Road start set at (" + std::to_string(gridX) + ", " + std::to_string(gridZ) + "); choose an orthogonally adjacent endpoint.";
+				UpdateStatusLabel();
+				return;
+			}
+			const auto [startX, startZ] = *pendingRoadStart;
+			if (std::abs(gridX - startX) + std::abs(gridZ - startZ) != 1)
+			{
+				uiNotice = "Road endpoint rejected: choose one orthogonally adjacent lattice cell.";
+				UpdateStatusLabel();
+				return;
+			}
+			const std::uint64_t commandId = simulation.QueueRoadSegment(startX, startZ, gridX, gridZ);
+			if (commandId == 0)
+			{
+				uiNotice = "Road segment could not be queued; the bounded construction queue may be full.";
+			}
+			else
+			{
+				uiNotice = "Queued synthetic road segment command " + std::to_string(commandId) + " from (" +
+					std::to_string(startX) + ", " + std::to_string(startZ) + ") to (" + std::to_string(gridX) + ", " +
+					std::to_string(gridZ) + "); validation occurs at the next simulation tick.";
+			}
+			pendingRoadStart.reset();
+			UpdateStatusLabel();
+			return;
+		}
 		if (activeFacilityPlacement.has_value())
 		{
 			if (!std::isfinite(ray.origin.y) || !std::isfinite(ray.direction.y) || std::abs(ray.direction.y) < 1e-6f)
@@ -778,14 +872,24 @@ namespace openrepublic
 		const openrepublic::sim::Snapshot snapshot = simulation.GetSnapshot();
 		SyncPrototypeStorages(snapshot);
 		SyncFacilities(snapshot);
-		for (const auto& result : snapshot.facilityPlacementResults)
+		SyncRoads(snapshot);
+		for (const auto& result : snapshot.constructionResults)
 		{
-			if (result.commandId <= lastFacilityPlacementResultCommandId) continue;
-			lastFacilityPlacementResultCommandId = result.commandId;
-			uiNotice = result.accepted
-				? "Construction command " + std::to_string(result.commandId) + " accepted as OR-" + std::to_string(result.facilityId) + "."
-				: "Construction command " + std::to_string(result.commandId) + " rejected: occupied cell or facility limit.";
-			if (!simulation.AcknowledgeFacilityPlacementResult(result.commandId))
+			if (result.commandId <= lastConstructionResultCommandId) continue;
+			lastConstructionResultCommandId = result.commandId;
+			if (result.type == openrepublic::sim::ConstructionCommandType::RoadSegment)
+			{
+				uiNotice = result.accepted
+					? "Road construction command " + std::to_string(result.commandId) + " accepted as edge " + std::to_string(result.entityId) + "."
+					: "Road construction command " + std::to_string(result.commandId) + " rejected by road graph validation.";
+			}
+			else
+			{
+				uiNotice = result.accepted
+					? "Construction command " + std::to_string(result.commandId) + " accepted as OR-" + std::to_string(result.entityId) + "."
+					: "Construction command " + std::to_string(result.commandId) + " rejected: occupied cell or facility limit.";
+			}
+			if (!simulation.AcknowledgeConstructionResult(result.commandId))
 			{
 				uiNotice += " (result acknowledgment was already absent.)";
 			}
@@ -800,15 +904,20 @@ namespace openrepublic
 		}
 		if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(truckEntity))
 		{
-			const float x = (static_cast<float>(snapshot.truckNode) - 3.0f) * 2.0f;
-			transform->translation_local = XMFLOAT3(x, 0.28f, 0);
+			const auto node = std::find_if(snapshot.roadNodes.begin(), snapshot.roadNodes.end(), [&](const auto& item) {
+				return item.id == snapshot.truckNode;
+			});
+			if (node != snapshot.roadNodes.end())
+			{
+				transform->translation_local = XMFLOAT3(
+					static_cast<float>(node->gridX) * openrepublic::sim::Simulation::RoadCellWorldSize,
+					0.28f,
+					static_cast<float>(node->gridZ) * openrepublic::sim::Simulation::RoadCellWorldSize);
+			}
 			transform->UpdateTransform();
 		}
-		if (!roadSegments.empty())
-		{
-			SetEntityColor(roadSegments[1], millApproachRoadEnabled ? kRoadColor : kClosedRoadColor);
-		}
 		roadButton.SetText(millApproachRoadEnabled ? "Close mill road" : "Open mill road");
+		buildRoadButton.SetText(activeRoadPlacement ? "Cancel road" : "Build road");
 		UpdateStatusLabel();
 	}
 
@@ -899,6 +1008,60 @@ namespace openrepublic
 		}
 	}
 
+	void OpenRepublicApplication::SyncRoads(const openrepublic::sim::Snapshot& snapshot)
+	{
+		auto findVisual = [this](openrepublic::sim::EntityId id) {
+			return std::find_if(roadVisuals.begin(), roadVisuals.end(), [id](const RoadVisual& visual) {
+				return visual.id == id;
+			});
+		};
+		for (const auto& road : snapshot.roads)
+		{
+			auto visual = findVisual(road.id);
+			if (visual == roadVisuals.end())
+			{
+				const wi::ecs::Entity entity = previewWorld.Entity_CreateCube("OpenRepublic synthetic road edge " + std::to_string(road.id));
+				if (road.aGridX == road.bGridX)
+				{
+					if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(entity))
+					{
+						transform->RotateRollPitchYaw(XMFLOAT3(0, XM_PIDIV2, 0));
+						transform->UpdateTransform();
+					}
+				}
+				roadVisuals.push_back(RoadVisual{ road.id, entity });
+				visual = std::prev(roadVisuals.end());
+			}
+			if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(visual->entity))
+			{
+				const float ax = static_cast<float>(road.aGridX) * openrepublic::sim::Simulation::RoadCellWorldSize;
+				const float az = static_cast<float>(road.aGridZ) * openrepublic::sim::Simulation::RoadCellWorldSize;
+				const float bx = static_cast<float>(road.bGridX) * openrepublic::sim::Simulation::RoadCellWorldSize;
+				const float bz = static_cast<float>(road.bGridZ) * openrepublic::sim::Simulation::RoadCellWorldSize;
+				transform->Scale(XMFLOAT3(1.0f, 0.045f, 0.22f));
+				transform->translation_local = XMFLOAT3((ax + bx) * 0.5f, 0.04f, (az + bz) * 0.5f);
+				transform->UpdateTransform();
+			}
+			SetEntityColor(visual->entity, road.enabled ? kRoadColor : kClosedRoadColor);
+		}
+
+		for (auto visual = roadVisuals.begin(); visual != roadVisuals.end();)
+		{
+			const bool stillPresent = std::any_of(snapshot.roads.begin(), snapshot.roads.end(), [&](const auto& road) {
+				return road.id == visual->id;
+			});
+			if (!stillPresent)
+			{
+				previewWorld.Entity_Remove(visual->entity);
+				visual = roadVisuals.erase(visual);
+			}
+			else
+			{
+				++visual;
+			}
+		}
+	}
+
 	void OpenRepublicApplication::SaveSimulation()
 	{
 		const std::filesystem::path path = std::filesystem::current_path() / kSimulationSaveFile;
@@ -966,8 +1129,11 @@ namespace openrepublic
 		}
 
 		pendingRules.reset();
-		lastFacilityPlacementResultCommandId = 0;
+		lastConstructionResultCommandId = 0;
 		activeFacilityPlacement.reset();
+		activeRoadPlacement = false;
+		pendingRoadStart.reset();
+		buildRoadButton.SetText("Build road");
 		simulationPaused = true;
 		simulationAccumulator = 0.0f;
 		pauseButton.SetText("Resume simulation");
@@ -1042,12 +1208,14 @@ namespace openrepublic
 			<< " | Warehouse " << snapshot.warehouse.flour << "/5"
 			<< " | Storage " << snapshot.prototypeStorages.size()
 			<< " | Facilities " << snapshot.facilities.size() << " (synthetic)"
+			<< " | Roads " << snapshot.roads.size() << " (synthetic)"
 			<< "\nTruck node " << snapshot.truckNode << ", " << snapshot.truckCargoAmount << ' ' << ResourceName(snapshot.truckCargo)
 			<< " | Edge 202 " << (millApproachRoadEnabled ? "open" : "closed")
 			<< " | Rules farm " << snapshot.rules.farmGrainPerHarvest << " every " << snapshot.rules.farmHarvestIntervalTicks
 			<< " ticks, mill " << snapshot.rules.millGrainPerTick << "/tick"
 			<< (pendingRules.has_value() ? " (pending)" : "")
-			<< " | " << (simulationPaused ? "paused" : "running");
+			<< " | " << (simulationPaused ? "paused" : "running")
+			<< (activeRoadPlacement ? (pendingRoadStart.has_value() ? " | road start selected" : " | road placement") : "");
 		if (!uiNotice.empty())
 		{
 			text << "\n" << uiNotice;

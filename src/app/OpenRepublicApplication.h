@@ -3,11 +3,11 @@
 #include "WickedEngine.h"
 #include "openrepublic/sim/simulation.h"
 
-#include <array>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace openrepublic
@@ -27,12 +27,15 @@ namespace openrepublic
 		void PickAtPointer();
 		void BeginFacilityPlacement(openrepublic::sim::FacilityType type);
 		void CancelFacilityPlacement();
+		void BeginRoadPlacement();
+		void CancelRoadPlacement();
 		std::string GetOpenRepublicId(wi::ecs::Entity entity) const;
 		void UpdateSimulationPresentation();
 		void UpdateStatusLabel();
 		void ApplyPendingRules();
 		void SyncPrototypeStorages(const openrepublic::sim::Snapshot& snapshot);
 		void SyncFacilities(const openrepublic::sim::Snapshot& snapshot);
+		void SyncRoads(const openrepublic::sim::Snapshot& snapshot);
 		void SaveSimulation();
 		void LoadSimulation();
 		void ReloadLuaRules();
@@ -48,7 +51,12 @@ namespace openrepublic
 		wi::ecs::Entity millBuilding = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity warehouseBuilding = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity truckEntity = wi::ecs::INVALID_ENTITY;
-		std::array<wi::ecs::Entity, 4> roadSegments{};
+		struct RoadVisual
+		{
+			openrepublic::sim::EntityId id{};
+			wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
+		};
+		std::vector<RoadVisual> roadVisuals;
 		std::vector<wi::ecs::Entity> prototypeStorageEntities;
 		std::vector<std::string> prototypeStorageIds;
 		std::vector<wi::ecs::Entity> facilityEntities;
@@ -58,6 +66,7 @@ namespace openrepublic
 		wi::gui::Button pauseButton;
 		wi::gui::Button stepButton;
 		wi::gui::Button roadButton;
+		wi::gui::Button buildRoadButton;
 		wi::gui::Button placeStorageButton;
 		wi::gui::Button buildFarmButton;
 		wi::gui::Button buildMillButton;
@@ -68,7 +77,9 @@ namespace openrepublic
 		wi::gui::Label simulationStatus;
 		std::optional<openrepublic::sim::SimulationRules> pendingRules;
 		std::optional<openrepublic::sim::FacilityType> activeFacilityPlacement;
-		std::uint64_t lastFacilityPlacementResultCommandId = 0;
+		bool activeRoadPlacement = false;
+		std::optional<std::pair<std::int32_t, std::int32_t>> pendingRoadStart;
+		std::uint64_t lastConstructionResultCommandId = 0;
 		float simulationAccumulator = 0.0f;
 		bool simulationPaused = false;
 		bool millApproachRoadEnabled = true;

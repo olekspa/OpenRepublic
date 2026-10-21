@@ -39,7 +39,50 @@ std::string RemoveSaveRecord(std::string data, const std::string& prefix) {
     return output.str();
 }
 
+std::string AsVersionFiveSave(std::string data) {
+    const auto header=data.find("OPENREPUBLIC_SIM 6");
+    if (header==std::string::npos) return {};
+    data.replace(header,std::string("OPENREPUBLIC_SIM 6").size(),"OPENREPUBLIC_SIM 5");
+    std::istringstream input(data);
+    std::ostringstream output;
+    std::string line;
+    while (std::getline(input,line)) {
+        if (line.rfind("ROAD_GRAPH ",0)==0) {
+            std::istringstream record(line); std::string tag; std::uint32_t nextNode=0,nextRoad=0;
+            std::uint64_t nodes=0,edges=0; record>>tag>>nextNode>>nextRoad>>nodes;
+            for(std::uint64_t i=0;i<nodes*3;++i) { std::string ignored; record>>ignored; }
+            record>>edges; line="ROADS";
+            for(std::uint64_t i=0;i<edges;++i) {
+                std::uint32_t id=0,a=0,b=0; unsigned enabled=0; record>>id>>a>>b>>enabled;
+                if(i<4) line+=" "+std::to_string(enabled);
+            }
+        }
+        else if (line.rfind("CONSTRUCTION_QUEUE ",0)==0) {
+            std::istringstream record(line); std::string tag; std::uint64_t next=0,count=0;
+            record>>tag>>next>>count; line="PLACEMENT_QUEUE "+std::to_string(next)+" "+std::to_string(count);
+            for(std::uint64_t i=0;i<count;++i) {
+                std::uint64_t id=0; unsigned type=0,facilityType=0; int x=0,z=0,bx=0,bz=0;
+                record>>id>>type>>facilityType>>x>>z>>bx>>bz;
+                if(type!=1) return {};
+                line+=" "+std::to_string(id)+" "+std::to_string(facilityType)+" "+std::to_string(x)+" "+std::to_string(z);
+            }
+        } else if (line.rfind("CONSTRUCTION_RESULTS ",0)==0) {
+            std::istringstream record(line); std::string tag; std::uint64_t count=0; record>>tag>>count;
+            line="PLACEMENT_RESULTS "+std::to_string(count);
+            for(std::uint64_t i=0;i<count;++i) {
+                std::uint64_t id=0; unsigned type=0,accepted=0; std::uint32_t entity=0;
+                record>>id>>type>>accepted>>entity;
+                if(type!=1) return {};
+                line+=" "+std::to_string(id)+" "+std::to_string(accepted)+" "+std::to_string(entity);
+            }
+        }
+        output<<line<<'\n';
+    }
+    return output.str();
+}
+
 std::string AsVersionOneSave(std::string data) {
+    data=AsVersionFiveSave(std::move(data));
     const auto header = data.find("OPENREPUBLIC_SIM 5");
     if (header == std::string::npos) return {};
     data.replace(header, std::string("OPENREPUBLIC_SIM 5").size(), "OPENREPUBLIC_SIM 1");
@@ -51,6 +94,7 @@ std::string AsVersionOneSave(std::string data) {
 }
 
 std::string AsVersionTwoSave(std::string data) {
+    data=AsVersionFiveSave(std::move(data));
     const auto header = data.find("OPENREPUBLIC_SIM 5");
     if (header == std::string::npos) return {};
     data.replace(header, std::string("OPENREPUBLIC_SIM 5").size(), "OPENREPUBLIC_SIM 2");
@@ -61,6 +105,7 @@ std::string AsVersionTwoSave(std::string data) {
 }
 
 std::string AsVersionThreeSave(std::string data) {
+    data=AsVersionFiveSave(std::move(data));
     const auto header = data.find("OPENREPUBLIC_SIM 5");
     if (header == std::string::npos) return {};
     data.replace(header, std::string("OPENREPUBLIC_SIM 5").size(), "OPENREPUBLIC_SIM 3");
@@ -70,6 +115,7 @@ std::string AsVersionThreeSave(std::string data) {
 }
 
 std::string AsVersionFourSave(std::string data) {
+    data=AsVersionFiveSave(std::move(data));
     const auto header = data.find("OPENREPUBLIC_SIM 5");
     if (header == std::string::npos) return {};
     data.replace(header, std::string("OPENREPUBLIC_SIM 5").size(), "OPENREPUBLIC_SIM 4");
@@ -110,9 +156,9 @@ int main() {
     Check(customRulesSim.GetSnapshot().mill.grain == 0 && customRulesSim.GetSnapshot().mill.flour == 2,
         "custom mill throughput processes two grain into one-to-one flour");
     const auto customSave = customRulesSim.Save();
-    Check(customSave.find("OPENREPUBLIC_SIM 5\n") == 0, "rules are persisted in version 5 saves");
+    Check(customSave.find("OPENREPUBLIC_SIM 6\n") == 0, "rules are persisted in version 6 saves");
     Simulation customRestored;
-    Check(customRestored.Load(customSave, &error), "version 5 custom-rules save loads");
+    Check(customRestored.Load(customSave, &error), "version 6 custom-rules save loads");
     Check(customRestored.GetRules().farmGrainPerHarvest == 3 && customRestored.GetRules().farmHarvestIntervalTicks == 1 &&
         customRestored.GetRules().millGrainPerTick == 2, "v3 load restores active rules");
     Check(customRestored.Save() == customSave, "v3 custom-rules save/load is canonical");
@@ -166,7 +212,7 @@ int main() {
 
     // Save/load preserves construction and replays the next placement identically.
     const auto placedSave = placement.Save();
-    Check(placedSave.find("OPENREPUBLIC_SIM 5\n") == 0, "construction uses the current version 5 save format");
+    Check(placedSave.find("OPENREPUBLIC_SIM 6\n") == 0, "construction uses the current version 6 save format");
     Simulation placementRestored;
     Check(placementRestored.Load(placedSave, &error), "version 3 save with construction loads");
     Check(placementRestored.Save() == placedSave, "construction save/load round-trip is canonical");
@@ -334,7 +380,7 @@ int main() {
     Check(std::all_of(migrated.roads.begin(), migrated.roads.end(),
         [](const openrepublic::sim::RoadView& road) { return road.enabled; }),
         "version 1 default-road fixture migrates with all roads open");
-    Check(v1Target.Save().find("OPENREPUBLIC_SIM 5\n") == 0, "migrated state writes current save version");
+    Check(v1Target.Save().find("OPENREPUBLIC_SIM 6\n") == 0, "migrated state writes current save version");
     Check(v1Target.GetRules().farmGrainPerHarvest == 2 && v1Target.GetRules().farmHarvestIntervalTicks == 2 &&
         v1Target.GetRules().millGrainPerTick == 1, "version 1 migration supplies default rules");
     const auto v2Save = AsVersionTwoSave(v1Source.Save());
@@ -347,7 +393,7 @@ int main() {
         "version 2 migration preserves state and construction collection");
     Check(v2Migrated.rules.farmGrainPerHarvest == 2 && v2Migrated.rules.farmHarvestIntervalTicks == 2 &&
         v2Migrated.rules.millGrainPerTick == 1, "version 2 migration supplies default rules");
-    Check(v2Target.Save().find("OPENREPUBLIC_SIM 5\n") == 0, "v2 migrated state writes current save version");
+    Check(v2Target.Save().find("OPENREPUBLIC_SIM 6\n") == 0, "v2 migrated state writes current save version");
 
     const auto v2ConstructionSave = AsVersionTwoSave(placedSave);
     Simulation v2ConstructionTarget;
@@ -364,20 +410,29 @@ int main() {
     Check(v3Target.Load(v3Save, &error), "version 3 save loads through migration path");
     Check(v3Target.GetSnapshot().facilities.empty() && v3Target.GetSnapshot().prototypeStorages.size() == Simulation::MaxPrototypeStorages,
         "version 3 migration supplies empty typed facility state while preserving storage");
-    Check(v3Target.Save().find("OPENREPUBLIC_SIM 5\n") == 0, "v3 migrated state writes current save version");
+    Check(v3Target.Save().find("OPENREPUBLIC_SIM 6\n") == 0, "v3 migrated state writes current save version");
     const auto v4Save = AsVersionFourSave(activeFacilitiesSave);
     Check(!v4Save.empty(), "test fixture represents the version 4 schema");
     Simulation v4Target;
     Check(v4Target.Load(v4Save, &error), "version 4 save loads through migration path");
     Check(v4Target.GetSnapshot().facilityPlacementResults.empty(), "version 4 migration starts with no placement acknowledgments");
-    Check(v4Target.Save().find("OPENREPUBLIC_SIM 5\n") == 0, "v4 migrated state writes current save version");
+    Check(v4Target.Save().find("OPENREPUBLIC_SIM 6\n") == 0, "v4 migrated state writes current save version");
+    Simulation v5Source;
+    Check(v5Source.SetRoadEnabled(202,false), "v5 migration fixture closes a legacy seed edge");
+    const auto v5Save=AsVersionFiveSave(v5Source.Save());
+    Simulation v5Target;
+    Check(!v5Save.empty()&&v5Target.Load(v5Save,&error), "version 5 saves migrate to the dynamic graph");
+    const auto migratedV5Roads=v5Target.GetSnapshot().roads;
+    const auto migratedClosed=std::find_if(migratedV5Roads.begin(),migratedV5Roads.end(),[](const auto& road){return road.id==202;});
+    Check(migratedClosed!=migratedV5Roads.end()&&!migratedClosed->enabled, "v5 migration preserves seed edge state and node coordinates");
+    Check(v5Target.Save().find("OPENREPUBLIC_SIM 6\n")==0, "v5 migrated state writes current save version");
 
     // Reject serialized enum values before converting them to the enum's
     // uint8_t representation; 257 must not wrap into FacilityType::Farm.
     Simulation malformedEnumTarget;
     Check(malformedEnumTarget.Load(activeFacilitiesSave, &error), "enum validation target starts with valid facilities");
     const auto malformedEnumBefore = malformedEnumTarget.Save();
-    auto badFacilityType = activeFacilitiesSave;
+    auto badFacilityType = AsVersionFiveSave(activeFacilitiesSave);
     const auto facilityTypeRecord = badFacilityType.find("FACILITIES 2 4001 ");
     Check(facilityTypeRecord != std::string::npos, "facility enum fixture is found");
     if (facilityTypeRecord != std::string::npos) {
@@ -386,7 +441,7 @@ int main() {
     }
     Check(!malformedEnumTarget.Load(badFacilityType, &error), "serialized facility type 257 is rejected before narrowing");
     Check(malformedEnumTarget.Save() == malformedEnumBefore, "invalid facility enum load is transactional");
-    auto badQueuedType = queuedSave;
+    auto badQueuedType = AsVersionFiveSave(queuedSave);
     const auto queueRecord = badQueuedType.find("PLACEMENT_QUEUE ");
     Check(queueRecord != std::string::npos, "queued enum fixture is found");
     if (queueRecord != std::string::npos) {
@@ -405,7 +460,7 @@ int main() {
     Check(mixedOutstandingIds.AcknowledgeFacilityPlacementResult(completedBeforeQueue),
         "mixed-ID fixture acknowledges its earlier result");
     const auto queuedAfterResultId = mixedOutstandingIds.QueueFacilityPlacement(FacilityType::Farm, 3, 2);
-    const auto mixedOutstandingSave = mixedOutstandingIds.Save();
+    const auto mixedOutstandingSave = AsVersionFiveSave(mixedOutstandingIds.Save());
     Simulation mixedIdLoadTarget;
     mixedIdLoadTarget.Step(9);
     const auto mixedIdTargetBefore = mixedIdLoadTarget.Save();
@@ -446,7 +501,7 @@ int main() {
     queuedSuffix.QueueFacilityPlacement(FacilityType::Farm, 0, 6);
     queuedSuffix.QueueFacilityPlacement(FacilityType::Mill, 1, 6);
     queuedSuffix.QueueFacilityPlacement(FacilityType::Farm, 2, 6);
-    const auto queuedSuffixSave = queuedSuffix.Save(); // Queue IDs 1,2,3; next ID 4.
+    const auto queuedSuffixSave = AsVersionFiveSave(queuedSuffix.Save()); // Queue IDs 1,2,3; next ID 4.
     Simulation queuedSuffixLoadTarget;
     queuedSuffixLoadTarget.Step(13);
     const auto queuedSuffixTargetBefore = queuedSuffixLoadTarget.Save();
@@ -467,7 +522,7 @@ int main() {
     Simulation queuedNotLatest;
     queuedNotLatest.QueueFacilityPlacement(FacilityType::Farm, 0, 6);
     queuedNotLatest.QueueFacilityPlacement(FacilityType::Mill, 1, 6);
-    auto queueNotLatest = queuedNotLatest.Save(); // Queue IDs 1,2; next ID 3.
+    auto queueNotLatest = AsVersionFiveSave(queuedNotLatest.Save()); // Queue IDs 1,2; next ID 3.
     const auto latestTag = queueNotLatest.find("PLACEMENT_QUEUE 3 2 ");
     if (latestTag != std::string::npos) queueNotLatest.replace(latestTag, std::string("PLACEMENT_QUEUE 3 2 ").size(),
         "PLACEMENT_QUEUE 4 2 ");
@@ -481,7 +536,7 @@ int main() {
     acceptedResultIds.Step();
     acceptedResultIds.QueueFacilityPlacement(FacilityType::Mill, 2, 4);
     acceptedResultIds.Step();
-    const auto acceptedResultSave = acceptedResultIds.Save();
+    const auto acceptedResultSave = AsVersionFiveSave(acceptedResultIds.Save());
     Simulation facilityResultLoadTarget;
     facilityResultLoadTarget.Step(11);
     const auto facilityResultTargetBefore = facilityResultLoadTarget.Save();
@@ -551,6 +606,66 @@ int main() {
     Check(isolated.truckCargoAmount == 0, "truck does not load cargo without a route");
     Check(isolated.warehouse.flour == 0, "disconnected graph produces no warehouse delivery");
 
+    // Player-built road segments use the same command IDs and tick boundary as
+    // facility placement. A detour around closed edge 202 carries deliveries.
+    using openrepublic::sim::ConstructionCommandType;
+    Simulation newEndpointFirst;
+    const auto newEndpointCommand=newEndpointFirst.QueueRoadSegment(0,1,0,0); // A is new; B is seed node 3.
+    newEndpointFirst.Step();
+    const auto newEndpointSnapshot=newEndpointFirst.GetSnapshot();
+    Check(newEndpointCommand==1&&newEndpointSnapshot.roadNodes.size()==6&&newEndpointSnapshot.roads.size()==5,
+        "new A endpoint followed by existing B remains valid when node storage grows");
+    Check(newEndpointSnapshot.constructionResults.size()==1&&newEndpointSnapshot.constructionResults[0].accepted&&
+        newEndpointSnapshot.roads.back().aGridX==0&&newEndpointSnapshot.roads.back().aGridZ==1&&
+        newEndpointSnapshot.roads.back().bGridX==0&&newEndpointSnapshot.roads.back().bGridZ==0,
+        "road segment preserves both endpoint coordinates after appending its new first endpoint");
+    Simulation detour;
+    const auto detourOne=detour.QueueRoadSegment(-1,0,-1,-1);
+    const auto detourTwo=detour.QueueRoadSegment(-1,-1,0,-1);
+    const auto detourThree=detour.QueueRoadSegment(0,-1,0,0);
+    Check(detourOne==1&&detourTwo==2&&detourThree==3,"road commands share the monotonically increasing construction ID namespace");
+    const auto beforeRoadTick=detour.GetSnapshot();
+    Check(beforeRoadTick.roads.size()==4&&beforeRoadTick.roadNodes.size()==5,"queued road construction is invisible before Step");
+    Check(detour.SetRoadEnabled(202,false),"edge 202 can be closed before route dispatch");
+    detour.Step();
+    auto detourSnapshot=detour.GetSnapshot();
+    Check(detourSnapshot.roads.size()==7&&detourSnapshot.roadNodes.size()==7,"three valid segments apply together at fixed tick boundary");
+    Check(detourSnapshot.constructionResults.size()==3&&detourSnapshot.constructionResults[0].type==ConstructionCommandType::RoadSegment&&
+        detourSnapshot.constructionResults[0].accepted,"typed road command result is exposed to callers");
+    const auto invalidBeforeNodes=detourSnapshot.roadNodes.size();
+    const auto invalidBeforeEdges=detourSnapshot.roads.size();
+    const auto invalidDiagonal=detour.QueueRoadSegment(5,5,6,6);
+    const auto duplicateSegment=detour.QueueRoadSegment(-1,0,-1,-1);
+    const auto outOfBounds=detour.QueueRoadSegment(16,0,17,0);
+    Check(invalidDiagonal==4&&duplicateSegment==5&&outOfBounds==6,"invalid road requests are accepted into bounded validation queue");
+    const auto queuedRoadSave=detour.Save();
+    Simulation queuedRoadRestore;
+    Check(queuedRoadRestore.Load(queuedRoadSave,&error),"save/load preserves queued road requests");
+    detour.Step(); queuedRoadRestore.Step();
+    detourSnapshot=detour.GetSnapshot();
+    Check(detourSnapshot.roadNodes.size()==invalidBeforeNodes&&detourSnapshot.roads.size()==invalidBeforeEdges,
+        "diagonal, duplicate and out-of-bounds segments reject without partial graph mutation");
+    Check(detourSnapshot.constructionResults.size()==6&&
+        !detourSnapshot.constructionResults[3].accepted&&!detourSnapshot.constructionResults[4].accepted&&!detourSnapshot.constructionResults[5].accepted,
+        "invalid road requests return explicit rejected results");
+    Check(detour.Save()==queuedRoadRestore.Save(),"save/load with road results and graph state is canonical");
+    Check(detour.AcknowledgeConstructionResult(detourOne)&&!detour.AcknowledgeConstructionResult(detourOne),
+        "generic construction result acknowledgment removes a result once");
+    detour.Step(3); // Grain dispatch begins and the truck traverses the detour.
+    detourSnapshot=detour.GetSnapshot();
+    Check(detourSnapshot.truckStage==TruckStage::DeliverGrainToMill&&detourSnapshot.activeRoute.size()==5&&
+        std::find(detourSnapshot.activeRoute.begin(),detourSnapshot.activeRoute.end(),detourSnapshot.roadNodes[5].id)!=detourSnapshot.activeRoute.end(),
+        "deterministic BFS selects the player-built detour around closed edge 202");
+    const auto midDetour=detour.Save();
+    Simulation midDetourRestored;
+    Check(midDetourRestored.Load(midDetour,&error),"mid-detour save restores route and dynamic graph");
+    detour.Step(220); midDetourRestored.Step(220);
+    Check(detour.Save()==midDetourRestored.Save(),"mid-detour delivery continues deterministically after save/load");
+    const auto delivered=detour.GetSnapshot();
+    Check(delivered.deliveredFlourTotal>0&&delivered.warehouse.flour>0,"truck completes delivery over the player-built detour");
+    Check(delivered.deliveredFlourTotal==delivered.warehouse.flour,
+        "cumulative flour delivery reconciles exactly with warehouse stock because the prototype has no consumption");
+
     // Save/load during active operation and compare future trajectory.
     Simulation saved;
     saved.Step(17);
@@ -579,7 +694,7 @@ int main() {
     // Invalid loads must not partially mutate the existing object.
     const auto beforeBadLoad = restored.Save();
     auto badVersion = bytes;
-    badVersion.replace(badVersion.find("OPENREPUBLIC_SIM 5"), std::string("OPENREPUBLIC_SIM 5").size(), "OPENREPUBLIC_SIM 9");
+    badVersion.replace(badVersion.find("OPENREPUBLIC_SIM 6"), std::string("OPENREPUBLIC_SIM 6").size(), "OPENREPUBLIC_SIM 9");
     Check(!restored.Load(badVersion, &error), "unsupported save version is rejected");
     Check(restored.Save() == beforeBadLoad, "rejected version leaves state unchanged");
     auto negativeTick = bytes;
@@ -618,6 +733,53 @@ int main() {
     const auto loopingRoute = WithTruckRecord(activeRouteBytes, "TRUCK 2 1 1 2 1 5 1 2 1 2 3");
     Check(!restored.Load(loopingRoute, &error), "repeated-node delivery route is rejected");
     Check(restored.Save() == beforeBadLoad, "looping route rejection leaves state unchanged");
+
+    // Dynamic graph records are validated transactionally, including geometry
+    // and duplicate endpoint/edge invariants.
+    Simulation graphLoadTarget;
+    graphLoadTarget.Step(9);
+    const auto graphTargetBefore=graphLoadTarget.Save();
+    auto nonAdjacentGraph=midDetour;
+    const auto insertedNode=nonAdjacentGraph.find(" 6 -1 -1");
+    Check(insertedNode!=std::string::npos,"dynamic road node fixture is located");
+    if(insertedNode!=std::string::npos) nonAdjacentGraph.replace(insertedNode,std::string(" 6 -1 -1").size()," 6 5 5");
+    Check(!graphLoadTarget.Load(nonAdjacentGraph,&error),"non-adjacent saved road segment is rejected");
+    Check(graphLoadTarget.Save()==graphTargetBefore,"invalid graph geometry load is transactional");
+    auto duplicateNode=midDetour;
+    const auto duplicateNodeRecord=duplicateNode.find(" 6 -1 -1");
+    if(duplicateNodeRecord!=std::string::npos) duplicateNode.replace(duplicateNodeRecord,std::string(" 6 -1 -1").size()," 6 -1 0");
+    Check(!graphLoadTarget.Load(duplicateNode,&error),"duplicate saved road-node coordinates are rejected");
+    Check(graphLoadTarget.Save()==graphTargetBefore,"duplicate-node rejection is transactional");
+    auto duplicateEdge=midDetour;
+    const auto dynamicEdgeId=duplicateEdge.find(" 205 2 6 1");
+    Check(dynamicEdgeId!=std::string::npos,"dynamic edge fixture is located");
+    if(dynamicEdgeId!=std::string::npos) duplicateEdge.replace(dynamicEdgeId,std::string(" 205 2 6 1").size()," 201 2 6 1");
+    Check(!graphLoadTarget.Load(duplicateEdge,&error),"noncanonical or duplicate saved road-edge IDs are rejected");
+    Check(graphLoadTarget.Save()==graphTargetBefore,"duplicate-edge rejection is transactional");
+    Simulation seedRemapSource;
+    seedRemapSource.QueueRoadSegment(-2,0,-2,1);
+    seedRemapSource.Step();
+    auto remappedSeedEdge=seedRemapSource.Save();
+    const auto seedEdgeRecord=remappedSeedEdge.find(" 201 1 2 1");
+    Check(seedEdgeRecord!=std::string::npos,"canonical seed edge record is found for remap fixture");
+    if(seedEdgeRecord!=std::string::npos) remappedSeedEdge.replace(seedEdgeRecord,std::string(" 201 1 2 1").size()," 201 1 6 1");
+    Check(!graphLoadTarget.Load(remappedSeedEdge,&error),"orthogonal seed-edge remap is rejected even when graph geometry is valid");
+    Check(graphLoadTarget.Save()==graphTargetBefore,"seed-edge remap rejection is transactional");
+
+    auto overflowCommandEnum=queuedSave;
+    const auto commandQueueTag=overflowCommandEnum.find("CONSTRUCTION_QUEUE ");
+    const auto commandFields=overflowCommandEnum.find(" 1 1 1 ",commandQueueTag);
+    Check(commandQueueTag!=std::string::npos&&commandFields!=std::string::npos,"v6 queued-command enum fixture is found");
+    if(commandFields!=std::string::npos) overflowCommandEnum.replace(commandFields+3,1,"257");
+    Check(!graphLoadTarget.Load(overflowCommandEnum,&error),"v6 command type 257 is rejected before enum narrowing");
+    Check(graphLoadTarget.Save()==graphTargetBefore,"command enum overflow rejection is transactional");
+    auto overflowResultEnum=newEndpointFirst.Save();
+    const auto resultTag=overflowResultEnum.find("CONSTRUCTION_RESULTS ");
+    const auto resultFields=overflowResultEnum.find(" 1 2 1 ",resultTag);
+    Check(resultTag!=std::string::npos&&resultFields!=std::string::npos,"v6 construction-result enum fixture is found");
+    if(resultFields!=std::string::npos) overflowResultEnum.replace(resultFields+3,1,"257");
+    Check(!graphLoadTarget.Load(overflowResultEnum,&error),"v6 result type 257 is rejected before enum narrowing");
+    Check(graphLoadTarget.Save()==graphTargetBefore,"result enum overflow rejection is transactional");
 
     if (failures) {
         std::cerr << failures << " simulation checks failed\n";

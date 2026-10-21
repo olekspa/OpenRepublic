@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -199,6 +200,111 @@ void TestTerrainMetadata() {
     ExpectMetadataFailure(kValidMetadata, "heightmap with no decoded dimensions", Heightmap{});
 }
 
+void TestTerrainSampling() {
+    // Synthetic row-major ramp: X increases by 10 and each later raster row
+    // increases by 100. The transform deliberately uses nonzero/negative
+    // origins and no game-derived constants.
+    const Heightmap ramp{3, 2, {0.0f, 10.0f, 20.0f, 100.0f, 110.0f, 120.0f}};
+    TerrainTransform transform;
+    transform.originX = -10.0;
+    transform.originZ = 20.0;
+    transform.baseHeight = 5.0;
+    transform.sizeX = 20.0;
+    transform.sizeZ = 10.0;
+    transform.heightScale = 2.0;
+    transform.rowOrder = RasterRowOrder::FirstRowAtMinZ;
+    double output = -777.0;
+    std::string error;
+    Check(SampleTerrainHeight(ramp, transform, 0.0, 22.5, output, &error),
+          "bilinear sample succeeds for interior ramp point");
+    Check(output == 75.0, "interior bilinear sample applies caller base and height scale");
+    Check(error.empty(), "terrain sample success clears diagnostic");
+
+    transform.rowOrder = RasterRowOrder::FirstRowAtMaxZ;
+    Check(SampleTerrainHeight(ramp, transform, 0.0, 22.5, output, &error),
+          "opposite raster row orientation succeeds");
+    Check(output == 175.0, "caller-selected row orientation reverses Z interpolation");
+    Check(SampleTerrainHeight(ramp, transform, -10.0, 20.0, output, &error) && output == 205.0,
+          "inclusive minimum extent maps to the corresponding raster corner");
+    Check(SampleTerrainHeight(ramp, transform, 10.0, 30.0, output, &error) && output == 45.0,
+          "inclusive maximum extent maps to the opposite raster corner");
+    TerrainTransform fractional;
+    fractional.originX = 0.0;
+    fractional.originZ = 0.0;
+    fractional.sizeX = 1.0;
+    fractional.sizeZ = 1.0;
+    fractional.heightScale = 1.0;
+    fractional.rowOrder = RasterRowOrder::FirstRowAtMinZ;
+    Check(SampleTerrainHeight(Heightmap{2, 2, {0.0f, 10.0f, 20.0f, 50.0f}}, fractional,
+                              0.25, 0.75, output, &error) && output == 21.25,
+          "fractional X and Z interpolation both contribute to bilinear result");
+
+    TerrainTransform nonBinaryEdge;
+    nonBinaryEdge.originX = 0.1;
+    nonBinaryEdge.originZ = 0.1;
+    nonBinaryEdge.sizeX = 0.2;
+    nonBinaryEdge.sizeZ = 0.2;
+    nonBinaryEdge.heightScale = 1.0;
+    nonBinaryEdge.rowOrder = RasterRowOrder::FirstRowAtMaxZ;
+    const double maxEdgeX = nonBinaryEdge.originX + nonBinaryEdge.sizeX;
+    const double maxEdgeZ = nonBinaryEdge.originZ + nonBinaryEdge.sizeZ;
+    Check(SampleTerrainHeight(ramp, nonBinaryEdge, maxEdgeX, maxEdgeZ, output, &error) && output == 20.0,
+          "reversed row orientation samples max-Z edge with non-binary-representable extents");
+    const Heightmap unusedInvalid{3, 2, {0.0f, 10.0f, std::numeric_limits<float>::quiet_NaN(),
+                                        100.0f, 110.0f, 120.0f}};
+    Check(SampleTerrainHeight(unusedInvalid, transform, -10.0, 20.0, output, &error) && output == 205.0,
+          "non-finite sample outside the current corner footprint does not block an O(1) query");
+
+    const auto expectFailure = [&](const Heightmap& map, const TerrainTransform& xform,
+                                   double x, double z, const std::string& label) {
+        output = -777.0;
+        error.clear();
+        Check(!SampleTerrainHeight(map, xform, x, z, output, &error) && !error.empty(),
+              label + " rejected with diagnostic");
+        Check(output == -777.0, label + " leaves caller output unchanged");
+    };
+    expectFailure(ramp, transform, 10.001, 25.0, "coordinate beyond inclusive extent");
+    auto invalid = transform;
+    invalid.sizeX = 0.0;
+    expectFailure(ramp, invalid, 0.0, 25.0, "zero horizontal extent");
+    invalid = transform;
+    invalid.heightScale = std::numeric_limits<double>::infinity();
+    expectFailure(ramp, invalid, 0.0, 25.0, "infinite height scale");
+    invalid = transform;
+    invalid.originX = std::numeric_limits<double>::max();
+    invalid.sizeX = std::numeric_limits<double>::max();
+    expectFailure(ramp, invalid, invalid.originX, 25.0, "non-finite world extent from finite inputs");
+    invalid = transform;
+    invalid.originX = 1.0e20;
+    invalid.sizeX = 1.0;
+    expectFailure(ramp, invalid, invalid.originX, 25.0, "positive X extent collapsed by floating-point precision");
+    invalid = transform;
+    invalid.originZ = 1.0e20;
+    invalid.sizeZ = 1.0;
+    expectFailure(ramp, invalid, 0.0, invalid.originZ, "positive Z extent collapsed by floating-point precision");
+    invalid = transform;
+    invalid.heightScale = std::numeric_limits<double>::max();
+    expectFailure(Heightmap{1, 1, {std::numeric_limits<float>::max()}}, invalid,
+                  0.0, 25.0, "height result overflow");
+    invalid = transform;
+    invalid.rowOrder = static_cast<RasterRowOrder>(99);
+    expectFailure(ramp, invalid, 0.0, 25.0, "unknown row orientation");
+    expectFailure(Heightmap{3, 2, {1.0f}}, transform, 0.0, 25.0,
+                  "sample count inconsistent with raster dimensions");
+    expectFailure(Heightmap{2, 1, {0.0f, std::numeric_limits<float>::quiet_NaN()}}, transform,
+                  0.0, 25.0, "non-finite raster value");
+    expectFailure(ramp, transform, std::numeric_limits<double>::quiet_NaN(), 25.0,
+                  "non-finite query coordinate");
+
+    // Single-cell rasters remain well-defined over their explicitly supplied
+    // horizontal extent, including when a zero height scale requests flat output.
+    TerrainTransform flat = transform;
+    flat.heightScale = 0.0;
+    flat.baseHeight = -12.5;
+    Check(SampleTerrainHeight(Heightmap{1, 1, {99.0f}}, flat, 0.0, 25.0, output, &error) &&
+          output == -12.5, "single-cell raster with zero height scale yields flat terrain");
+}
+
 } // namespace
 
 int main() {
@@ -206,6 +312,7 @@ int main() {
     TestDdsFailures();
     TestFileDdsReader();
     TestTerrainMetadata();
+    TestTerrainSampling();
     if (failures != 0) {
         std::cerr << failures << " terrain reader check(s) failed\n";
         return 1;

@@ -18,8 +18,10 @@ constexpr std::uint32_t MillFlourCapacity = 4;
 constexpr std::uint32_t WarehouseFlourCapacity = 5;
 constexpr std::uint32_t TruckCapacity = 2;
 constexpr std::uint64_t FirstFacilityCommandId = 1;
-constexpr std::array<EntityId, 5> Nodes{1, 2, 3, 4, 5};
+constexpr EntityId FirstDynamicRoadNodeId = 6;
+constexpr EntityId FirstDynamicRoadId = 205;
 struct Edge { EntityId id; EntityId a; EntityId b; bool enabled; };
+struct RoadNode { EntityId id; std::int32_t x; std::int32_t z; };
 
 template <typename UInt>
 bool ReadUnsigned(std::istream& in, UInt& value) {
@@ -48,9 +50,6 @@ bool ReadSigned(std::istream& in, Int& value) {
     return true;
 }
 
-bool HasNode(EntityId node) {
-    return std::find(Nodes.begin(), Nodes.end(), node) != Nodes.end();
-}
 }
 
 struct Simulation::State {
@@ -68,15 +67,23 @@ struct Simulation::State {
     std::vector<EntityId> route;
     std::size_t routeCursor{};
     std::vector<PlacedStorageView> prototypeStorages;
-    struct PendingPlacement { std::uint64_t commandId; FacilityType type; std::int32_t gridX; std::int32_t gridZ; };
+    struct PendingCommand { std::uint64_t commandId; ConstructionCommandType type; FacilityType facilityType; std::int32_t ax, az, bx, bz; };
     std::vector<FacilityView> facilities;
-    std::vector<PendingPlacement> placementQueue;
-    std::vector<FacilityPlacementResult> placementResults;
-    std::uint64_t nextPlacementCommandId{FirstFacilityCommandId};
-    std::array<Edge, 4> edges{{
-        {201, 1, 2, true}, {202, 2, 3, true},
-        {203, 3, 4, true}, {204, 4, 5, true}
-    }};
+    std::vector<PendingCommand> commandQueue;
+    std::vector<ConstructionResult> commandResults;
+    std::uint64_t nextCommandId{FirstFacilityCommandId};
+    EntityId nextRoadNodeId{FirstDynamicRoadNodeId};
+    EntityId nextRoadId{FirstDynamicRoadId};
+    std::vector<RoadNode> nodes{{1,-2,0},{2,-1,0},{3,0,0},{4,1,0},{5,2,0}};
+    std::vector<Edge> edges{{201,1,2,true},{202,2,3,true},{203,3,4,true},{204,4,5,true}};
+
+    const RoadNode* NodeAt(std::int32_t x, std::int32_t z) const {
+        const auto it = std::find_if(nodes.begin(), nodes.end(), [x,z](const RoadNode& n){ return n.x==x && n.z==z; });
+        return it == nodes.end() ? nullptr : &*it;
+    }
+    bool HasNode(EntityId id) const {
+        return std::any_of(nodes.begin(), nodes.end(), [id](const RoadNode& n){ return n.id==id; });
+    }
 
     std::vector<EntityId> FindRoute(EntityId from, EntityId to) const {
         if (!HasNode(from) || !HasNode(to)) return {};
@@ -88,7 +95,7 @@ struct Simulation::State {
             const auto node = pending.front();
             pending.pop();
             if (node == to) break;
-            // Edges are stored in stable ID order; this is the canonical tie-break.
+            // Stable edge-ID order is the deterministic BFS tie-break.
             for (const auto& edge : edges) {
                 if (!edge.enabled) continue;
                 EntityId next = 0;
@@ -223,21 +230,55 @@ struct Simulation::State {
         });
     }
 
-    void ApplyPlacements() {
-        for (const auto& request : placementQueue) {
-            const bool validType = request.type == FacilityType::Farm || request.type == FacilityType::Mill;
-            const bool validCell = request.gridX >= Simulation::PrototypeGridMin && request.gridX <= Simulation::PrototypeGridMax &&
-                request.gridZ >= Simulation::PrototypeGridMin && request.gridZ <= Simulation::PrototypeGridMax &&
-                !CellOccupied(request.gridX, request.gridZ);
-            const bool accepted = validType && validCell && facilities.size() < Simulation::MaxFacilities;
-            EntityId id = 0;
-            if (accepted) {
-                id = Simulation::FirstFacilityId + static_cast<EntityId>(facilities.size());
-                facilities.push_back(FacilityView{id, request.type, request.gridX, request.gridZ});
+    void ApplyCommands() {
+        for (const auto& request : commandQueue) {
+            bool accepted = false;
+            EntityId entity = 0;
+            if (request.type == ConstructionCommandType::FacilityPlacement) {
+                const bool validType = request.facilityType == FacilityType::Farm || request.facilityType == FacilityType::Mill;
+                const bool validCell = request.ax >= Simulation::PrototypeGridMin && request.ax <= Simulation::PrototypeGridMax &&
+                    request.az >= Simulation::PrototypeGridMin && request.az <= Simulation::PrototypeGridMax && !CellOccupied(request.ax, request.az);
+                accepted = validType && validCell && facilities.size() < Simulation::MaxFacilities;
+                if (accepted) {
+                    entity = Simulation::FirstFacilityId + static_cast<EntityId>(facilities.size());
+                    facilities.push_back(FacilityView{entity, request.facilityType, request.ax, request.az});
+                }
+            } else {
+                const auto dx = static_cast<std::int64_t>(request.bx) - request.ax;
+                const auto dz = static_cast<std::int64_t>(request.bz) - request.az;
+                const bool inBounds = request.ax >= Simulation::PrototypeGridMin && request.ax <= Simulation::PrototypeGridMax &&
+                    request.az >= Simulation::PrototypeGridMin && request.az <= Simulation::PrototypeGridMax &&
+                    request.bx >= Simulation::PrototypeGridMin && request.bx <= Simulation::PrototypeGridMax &&
+                    request.bz >= Simulation::PrototypeGridMin && request.bz <= Simulation::PrototypeGridMax;
+                const auto* a = NodeAt(request.ax, request.az);
+                const auto* b = NodeAt(request.bx, request.bz);
+                // Copy endpoint identity before appending any nodes: vector
+                // growth may invalidate both lookup pointers.
+                const bool hasA = a != nullptr;
+                const bool hasB = b != nullptr;
+                const EntityId existingA = hasA ? a->id : 0;
+                const EntityId existingB = hasB ? b->id : 0;
+                const bool adjacent = (dx == 1 || dx == -1) && dz == 0 || (dz == 1 || dz == -1) && dx == 0;
+                const bool duplicate = hasA && hasB && std::any_of(edges.begin(), edges.end(), [existingA,existingB](const Edge& e){
+                    return (e.a==existingA && e.b==existingB)||(e.a==existingB && e.b==existingA);
+                });
+                const auto missing = static_cast<std::size_t>(!hasA) + static_cast<std::size_t>(!hasB);
+                accepted = inBounds && adjacent && !duplicate && edges.size() < Simulation::MaxRoadSegments &&
+                    nodes.size() + missing <= Simulation::MaxRoadNodes && nextRoadId != std::numeric_limits<EntityId>::max() &&
+                    nextRoadNodeId <= std::numeric_limits<EntityId>::max() - missing;
+                if (accepted) {
+                    // No mutation occurs until every geometric and capacity check passes.
+                    EntityId aid = hasA ? existingA : nextRoadNodeId++;
+                    EntityId bid = hasB ? existingB : nextRoadNodeId++;
+                    if (!hasA) nodes.push_back(RoadNode{aid,request.ax,request.az});
+                    if (!hasB) nodes.push_back(RoadNode{bid,request.bx,request.bz});
+                    entity = nextRoadId++;
+                    edges.push_back(Edge{entity,aid,bid,true});
+                }
             }
-            placementResults.push_back(FacilityPlacementResult{request.commandId, accepted, id});
+            commandResults.push_back(ConstructionResult{request.commandId, request.type, accepted, entity});
         }
-        placementQueue.clear();
+        commandQueue.clear();
     }
 };
 
@@ -252,7 +293,7 @@ void Simulation::Step() {
     // Synthetic rules are data-driven; the mill conversion remains 1:1 and
     // process/output limits are explicit OpenRepublic prototype constraints.
     ++state_->tick;
-    state_->ApplyPlacements();
+    state_->ApplyCommands();
     const auto extraFarms = static_cast<std::uint32_t>(std::count_if(state_->facilities.begin(), state_->facilities.end(),
         [](const FacilityView& f) { return f.type == FacilityType::Farm; }));
     const auto extraMills = static_cast<std::uint32_t>(std::count_if(state_->facilities.begin(), state_->facilities.end(),
@@ -282,7 +323,17 @@ void Simulation::Step(std::uint64_t count) {
 Snapshot Simulation::GetSnapshot() const {
     std::vector<RoadView> roads;
     roads.reserve(state_->edges.size());
-    for (const auto& edge : state_->edges) roads.push_back(RoadView{edge.id, edge.a, edge.b, edge.enabled});
+    for (const auto& edge : state_->edges) {
+        const auto a = std::find_if(state_->nodes.begin(), state_->nodes.end(), [&edge](const RoadNode& n){return n.id==edge.a;});
+        const auto b = std::find_if(state_->nodes.begin(), state_->nodes.end(), [&edge](const RoadNode& n){return n.id==edge.b;});
+        roads.push_back(RoadView{edge.id, edge.a, edge.b, edge.enabled, a->x, a->z, b->x, b->z});
+    }
+    std::vector<RoadNodeView> roadNodes;
+    for (const auto& node : state_->nodes) roadNodes.push_back(RoadNodeView{node.id,node.x,node.z});
+    std::vector<FacilityPlacementResult> legacyResults;
+    for (const auto& result : state_->commandResults)
+        if (result.type == ConstructionCommandType::FacilityPlacement)
+            legacyResults.push_back(FacilityPlacementResult{result.commandId,result.accepted,result.entityId});
     return Snapshot{
         state_->tick,
         InventoryView{state_->farmGrain, 0},
@@ -297,7 +348,9 @@ Snapshot Simulation::GetSnapshot() const {
         state_->routeCursor,
         state_->prototypeStorages,
         state_->facilities,
-        state_->placementResults,
+        std::move(legacyResults),
+        state_->commandResults,
+        std::move(roadNodes),
         std::move(roads),
         state_->rules
     };
@@ -338,20 +391,36 @@ EntityId Simulation::PlacePrototypeStorage(std::int32_t gridX, std::int32_t grid
 
 std::uint64_t Simulation::QueueFacilityPlacement(FacilityType type, std::int32_t gridX, std::int32_t gridZ) {
     if (state_->tick == std::numeric_limits<Tick>::max() ||
-        state_->placementQueue.size() >= MaxQueuedFacilityPlacements ||
-        state_->placementQueue.size() + state_->placementResults.size() >= MaxUnacknowledgedFacilityResults ||
-        state_->nextPlacementCommandId == std::numeric_limits<std::uint64_t>::max()) return 0;
-    const auto id = state_->nextPlacementCommandId++;
-    state_->placementQueue.push_back(State::PendingPlacement{id, type, gridX, gridZ});
+        state_->commandQueue.size() >= MaxQueuedFacilityPlacements ||
+        state_->commandQueue.size() + state_->commandResults.size() >= MaxUnacknowledgedFacilityResults ||
+        state_->nextCommandId == std::numeric_limits<std::uint64_t>::max()) return 0;
+    const auto id = state_->nextCommandId++;
+    state_->commandQueue.push_back(State::PendingCommand{id, ConstructionCommandType::FacilityPlacement, type, gridX, gridZ, 0, 0});
     return id;
 }
 
-bool Simulation::AcknowledgeFacilityPlacementResult(std::uint64_t commandId) {
-    const auto it = std::find_if(state_->placementResults.begin(), state_->placementResults.end(),
-        [commandId](const FacilityPlacementResult& result) { return result.commandId == commandId; });
-    if (it == state_->placementResults.end()) return false;
-    state_->placementResults.erase(it);
+std::uint64_t Simulation::QueueRoadSegment(std::int32_t ax, std::int32_t az, std::int32_t bx, std::int32_t bz) {
+    if (state_->tick == std::numeric_limits<Tick>::max() ||
+        state_->commandQueue.size() >= MaxQueuedFacilityPlacements ||
+        state_->commandQueue.size() + state_->commandResults.size() >= MaxUnacknowledgedFacilityResults ||
+        state_->nextCommandId == std::numeric_limits<std::uint64_t>::max()) return 0;
+    const auto id = state_->nextCommandId++;
+    state_->commandQueue.push_back(State::PendingCommand{id, ConstructionCommandType::RoadSegment, FacilityType::Farm, ax, az, bx, bz});
+    return id;
+}
+
+bool Simulation::AcknowledgeConstructionResult(std::uint64_t commandId) {
+    const auto it = std::find_if(state_->commandResults.begin(), state_->commandResults.end(),
+        [commandId](const ConstructionResult& result) { return result.commandId == commandId; });
+    if (it == state_->commandResults.end()) return false;
+    state_->commandResults.erase(it);
     return true;
+}
+
+bool Simulation::AcknowledgeFacilityPlacementResult(std::uint64_t commandId) {
+    const auto it = std::find_if(state_->commandResults.begin(), state_->commandResults.end(),
+        [commandId](const ConstructionResult& result) { return result.commandId == commandId && result.type == ConstructionCommandType::FacilityPlacement; });
+    return it != state_->commandResults.end() && AcknowledgeConstructionResult(commandId);
 }
 
 bool Simulation::SetRoadEnabled(EntityId edgeId, bool enabled) {
@@ -364,7 +433,7 @@ bool Simulation::SetRoadEnabled(EntityId edgeId, bool enabled) {
 
 std::string Simulation::Save() const {
     std::ostringstream out;
-    out << "OPENREPUBLIC_SIM 5\n"
+    out << "OPENREPUBLIC_SIM 6\n"
         << "TICK " << state_->tick << '\n'
         << "DELIVERED " << state_->deliveredFlourTotal << '\n'
         << "FARM " << state_->farmGrain << '\n'
@@ -374,8 +443,10 @@ std::string Simulation::Save() const {
         << static_cast<unsigned>(state_->cargo) << ' ' << state_->cargoAmount << ' '
         << state_->routeCursor << ' ' << state_->route.size();
     for (const auto node : state_->route) out << ' ' << node;
-    out << '\n' << "ROADS";
-    for (const auto& edge : state_->edges) out << ' ' << (edge.enabled ? 1 : 0);
+    out << '\n' << "ROAD_GRAPH " << state_->nextRoadNodeId << ' ' << state_->nextRoadId << ' ' << state_->nodes.size();
+    for (const auto& node : state_->nodes) out << ' ' << node.id << ' ' << node.x << ' ' << node.z;
+    out << ' ' << state_->edges.size();
+    for (const auto& edge : state_->edges) out << ' ' << edge.id << ' ' << edge.a << ' ' << edge.b << ' ' << (edge.enabled ? 1 : 0);
     out << '\n' << "PROTOTYPE_STORAGES " << state_->prototypeStorages.size();
     for (const auto& storage : state_->prototypeStorages)
         out << ' ' << storage.id << ' ' << storage.gridX << ' ' << storage.gridZ;
@@ -384,12 +455,14 @@ std::string Simulation::Save() const {
         << "FACILITIES " << state_->facilities.size();
     for (const auto& facility : state_->facilities)
         out << ' ' << facility.id << ' ' << static_cast<unsigned>(facility.type) << ' ' << facility.gridX << ' ' << facility.gridZ;
-    out << '\n' << "PLACEMENT_QUEUE " << state_->nextPlacementCommandId << ' ' << state_->placementQueue.size();
-    for (const auto& request : state_->placementQueue)
-        out << ' ' << request.commandId << ' ' << static_cast<unsigned>(request.type) << ' ' << request.gridX << ' ' << request.gridZ;
-    out << '\n' << "PLACEMENT_RESULTS " << state_->placementResults.size();
-    for (const auto& result : state_->placementResults)
-        out << ' ' << result.commandId << ' ' << (result.accepted ? 1 : 0) << ' ' << result.facilityId;
+    out << '\n' << "CONSTRUCTION_QUEUE " << state_->nextCommandId << ' ' << state_->commandQueue.size();
+    for (const auto& request : state_->commandQueue)
+        out << ' ' << request.commandId << ' ' << static_cast<unsigned>(request.type) << ' '
+            << static_cast<unsigned>(request.facilityType) << ' ' << request.ax << ' ' << request.az << ' ' << request.bx << ' ' << request.bz;
+    out << '\n' << "CONSTRUCTION_RESULTS " << state_->commandResults.size();
+    for (const auto& result : state_->commandResults)
+        out << ' ' << result.commandId << ' ' << static_cast<unsigned>(result.type) << ' '
+            << (result.accepted ? 1 : 0) << ' ' << result.entityId;
     out << '\n';
     return out.str();
 }
@@ -403,7 +476,7 @@ bool Simulation::Load(std::string_view data, std::string* error) {
     std::string tag;
     unsigned version = 0;
     if (!(in >> tag) || tag != "OPENREPUBLIC_SIM" || !ReadUnsigned(in, version)) return fail("invalid save header");
-    if (version < 1 || version > 5) return fail("unsupported save version");
+    if (version < 1 || version > 6) return fail("unsupported save version");
 
     State candidate;
     std::uint64_t routeSize = 0;
@@ -416,7 +489,7 @@ bool Simulation::Load(std::string_view data, std::string* error) {
     if (!(in >> tag) || tag != "TRUCK" || !ReadUnsigned(in, candidate.truckNode) || !ReadUnsigned(in, stage) ||
         !ReadUnsigned(in, cargo) || !ReadUnsigned(in, candidate.cargoAmount) ||
         !ReadUnsigned(in, candidate.routeCursor) || !ReadUnsigned(in, routeSize)) return fail("invalid truck record");
-    if (routeSize > Nodes.size()) return fail("route record too large");
+    if (routeSize > MaxRoadNodes) return fail("route record too large");
     candidate.stage = static_cast<TruckStage>(stage);
     candidate.cargo = static_cast<Resource>(cargo);
     candidate.route.reserve(static_cast<std::size_t>(routeSize));
@@ -425,11 +498,32 @@ bool Simulation::Load(std::string_view data, std::string* error) {
         if (!ReadUnsigned(in, node)) return fail("truncated or invalid route record");
         candidate.route.push_back(node);
     }
-    if (!(in >> tag) || tag != "ROADS") return fail("invalid roads record");
-    for (auto& edge : candidate.edges) {
-        unsigned enabled = 0;
-        if (!ReadUnsigned(in, enabled) || enabled > 1) return fail("invalid road state");
-        edge.enabled = enabled != 0;
+    if (version >= 6) {
+        std::uint64_t nodeCount = 0, edgeCount = 0;
+        if (!(in >> tag) || tag != "ROAD_GRAPH" || !ReadUnsigned(in, candidate.nextRoadNodeId) ||
+            !ReadUnsigned(in, candidate.nextRoadId) || !ReadUnsigned(in, nodeCount) ||
+            nodeCount < 5 || nodeCount > MaxRoadNodes) return fail("invalid road graph header");
+        candidate.nodes.clear(); candidate.nodes.reserve(static_cast<std::size_t>(nodeCount));
+        for (std::uint64_t i=0;i<nodeCount;++i) {
+            RoadNode node{};
+            if (!ReadUnsigned(in,node.id)||!ReadSigned(in,node.x)||!ReadSigned(in,node.z)) return fail("invalid road node");
+            candidate.nodes.push_back(node);
+        }
+        if (!ReadUnsigned(in,edgeCount)||edgeCount<4||edgeCount>MaxRoadSegments) return fail("invalid road segment count");
+        candidate.edges.clear(); candidate.edges.reserve(static_cast<std::size_t>(edgeCount));
+        for (std::uint64_t i=0;i<edgeCount;++i) {
+            Edge edge{}; unsigned enabled=0;
+            if (!ReadUnsigned(in,edge.id)||!ReadUnsigned(in,edge.a)||!ReadUnsigned(in,edge.b)||!ReadUnsigned(in,enabled)||enabled>1)
+                return fail("invalid road segment");
+            edge.enabled=enabled!=0; candidate.edges.push_back(edge);
+        }
+    } else {
+        if (!(in >> tag) || tag != "ROADS") return fail("invalid roads record");
+        for (auto& edge : candidate.edges) {
+            unsigned enabled = 0;
+            if (!ReadUnsigned(in, enabled) || enabled > 1) return fail("invalid road state");
+            edge.enabled = enabled != 0;
+        }
     }
     if (version >= 2) {
         std::uint64_t storageCount = 0;
@@ -466,32 +560,52 @@ bool Simulation::Load(std::string_view data, std::string* error) {
             candidate.facilities.push_back(facility);
         }
         std::uint64_t queueCount = 0;
-        if (!(in >> tag) || tag != "PLACEMENT_QUEUE" || !ReadUnsigned(in, candidate.nextPlacementCommandId) ||
+        if (version >= 6) {
+            if (!(in >> tag) || tag != "CONSTRUCTION_QUEUE" || !ReadUnsigned(in,candidate.nextCommandId) || !ReadUnsigned(in,queueCount))
+                return fail("invalid construction queue record");
+            if (queueCount > MaxQueuedFacilityPlacements) return fail("too many queued construction commands");
+            for (std::uint64_t i=0;i<queueCount;++i) {
+                State::PendingCommand request{}; unsigned type=0, facilityType=0;
+                if (!ReadUnsigned(in,request.commandId)||!ReadUnsigned(in,type)||!ReadUnsigned(in,facilityType)||
+                    !ReadSigned(in,request.ax)||!ReadSigned(in,request.az)||!ReadSigned(in,request.bx)||!ReadSigned(in,request.bz))
+                    return fail("invalid queued construction command");
+                if (type > std::numeric_limits<std::uint8_t>::max() || facilityType > std::numeric_limits<std::uint8_t>::max())
+                    return fail("queued construction enum exceeds representation");
+                request.type=static_cast<ConstructionCommandType>(type); request.facilityType=static_cast<FacilityType>(facilityType);
+                candidate.commandQueue.push_back(request);
+            }
+        } else if (!(in >> tag) || tag != "PLACEMENT_QUEUE" || !ReadUnsigned(in, candidate.nextCommandId) ||
             !ReadUnsigned(in, queueCount)) return fail("invalid placement queue record");
-        if (queueCount > MaxQueuedFacilityPlacements) return fail("too many queued placements");
-        for (std::uint64_t i = 0; i < queueCount; ++i) {
-            State::PendingPlacement request{};
-            unsigned type = 0;
-            if (!ReadUnsigned(in, request.commandId) || !ReadUnsigned(in, type) ||
-                !ReadSigned(in, request.gridX) || !ReadSigned(in, request.gridZ)) return fail("invalid queued placement entry");
-            if (type > std::numeric_limits<std::uint8_t>::max()) return fail("queued placement type exceeds enum representation");
-            request.type = static_cast<FacilityType>(type);
-            candidate.placementQueue.push_back(request);
+        if (version < 6) {
+            if (queueCount > MaxQueuedFacilityPlacements) return fail("too many queued placements");
+            for (std::uint64_t i = 0; i < queueCount; ++i) {
+                std::uint64_t command=0; unsigned type=0; std::int32_t x=0,z=0;
+                if (!ReadUnsigned(in,command) || !ReadUnsigned(in,type) || !ReadSigned(in,x) || !ReadSigned(in,z)) return fail("invalid queued placement entry");
+                if (type > std::numeric_limits<std::uint8_t>::max()) return fail("queued placement type exceeds enum representation");
+                candidate.commandQueue.push_back(State::PendingCommand{command,ConstructionCommandType::FacilityPlacement,static_cast<FacilityType>(type),x,z,0,0});
+            }
         }
     }
     if (version >= 5) {
         std::uint64_t resultCount = 0;
-        if (!(in >> tag) || tag != "PLACEMENT_RESULTS" || !ReadUnsigned(in, resultCount))
+        if (version >= 6) {
+            if (!(in >> tag) || tag != "CONSTRUCTION_RESULTS" || !ReadUnsigned(in,resultCount)) return fail("invalid construction results record");
+            if (resultCount > MaxUnacknowledgedFacilityResults) return fail("too many unacknowledged construction results");
+            for (std::uint64_t i=0;i<resultCount;++i) {
+                ConstructionResult result{}; unsigned type=0,accepted=0;
+                if (!ReadUnsigned(in,result.commandId)||!ReadUnsigned(in,type)||!ReadUnsigned(in,accepted)||!ReadUnsigned(in,result.entityId)||accepted>1||
+                    type>std::numeric_limits<std::uint8_t>::max()) return fail("invalid construction result entry");
+                result.type=static_cast<ConstructionCommandType>(type); result.accepted=accepted!=0; candidate.commandResults.push_back(result);
+            }
+        } else if (!(in >> tag) || tag != "PLACEMENT_RESULTS" || !ReadUnsigned(in, resultCount))
             return fail("invalid placement results record");
-        if (resultCount > MaxUnacknowledgedFacilityResults) return fail("too many unacknowledged placement results");
-        candidate.placementResults.reserve(static_cast<std::size_t>(resultCount));
-        for (std::uint64_t i = 0; i < resultCount; ++i) {
-            FacilityPlacementResult result;
-            unsigned accepted = 0;
-            if (!ReadUnsigned(in, result.commandId) || !ReadUnsigned(in, accepted) || !ReadUnsigned(in, result.facilityId) || accepted > 1)
-                return fail("invalid placement result entry");
-            result.accepted = accepted != 0;
-            candidate.placementResults.push_back(result);
+        if (version < 6) {
+            if (resultCount > MaxUnacknowledgedFacilityResults) return fail("too many unacknowledged placement results");
+            for (std::uint64_t i=0;i<resultCount;++i) {
+                ConstructionResult result{}; unsigned accepted=0;
+                if (!ReadUnsigned(in,result.commandId)||!ReadUnsigned(in,accepted)||!ReadUnsigned(in,result.entityId)||accepted>1) return fail("invalid placement result entry");
+                result.type=ConstructionCommandType::FacilityPlacement; result.accepted=accepted!=0; candidate.commandResults.push_back(result);
+            }
         }
     }
     std::string extra;
@@ -526,43 +640,67 @@ bool Simulation::Load(std::string_view data, std::string* error) {
         for (const auto& storage : candidate.prototypeStorages)
             if (storage.gridX == facility.gridX && storage.gridZ == facility.gridZ) return fail("facility overlaps prototype storage");
     }
+    if (candidate.nodes.size() < 5 || candidate.nodes.size() > MaxRoadNodes || candidate.edges.size() < 4 || candidate.edges.size() > MaxRoadSegments)
+        return fail("road graph exceeds supported limits");
+    for (std::size_t i=0;i<candidate.nodes.size();++i) {
+        const auto& n=candidate.nodes[i];
+        if (n.id != i+1 || n.x < PrototypeGridMin || n.x > PrototypeGridMax || n.z < PrototypeGridMin || n.z > PrototypeGridMax)
+            return fail("road node IDs or coordinates are noncanonical");
+        for (std::size_t j=0;j<i;++j) if (candidate.nodes[j].x==n.x && candidate.nodes[j].z==n.z) return fail("duplicate road node coordinate");
+    }
+    const std::int32_t seedX[5]={-2,-1,0,1,2};
+    for (std::size_t i=0;i<5;++i) if (candidate.nodes[i].x!=seedX[i]||candidate.nodes[i].z!=0) return fail("legacy road anchors changed");
+    if (candidate.nextRoadNodeId != candidate.nodes.size()+1 || candidate.nextRoadId != 201+candidate.edges.size())
+        return fail("next road graph IDs are not canonical");
+    for (std::size_t i=0;i<candidate.edges.size();++i) {
+        const auto& e=candidate.edges[i];
+        if (e.id != 201+i || !candidate.HasNode(e.a) || !candidate.HasNode(e.b) || e.a==e.b) return fail("road edge IDs or endpoints are invalid");
+        const auto a=std::find_if(candidate.nodes.begin(),candidate.nodes.end(),[&e](const RoadNode& n){return n.id==e.a;});
+        const auto b=std::find_if(candidate.nodes.begin(),candidate.nodes.end(),[&e](const RoadNode& n){return n.id==e.b;});
+        const auto dx=static_cast<std::int64_t>(a->x)-b->x, dz=static_cast<std::int64_t>(a->z)-b->z;
+        if (!((dx==1||dx==-1)&&dz==0 || (dz==1||dz==-1)&&dx==0)) return fail("road segment is not orthogonally adjacent");
+        for (std::size_t j=0;j<i;++j) if ((candidate.edges[j].a==e.a&&candidate.edges[j].b==e.b)||(candidate.edges[j].a==e.b&&candidate.edges[j].b==e.a)) return fail("duplicate road edge");
+    }
+    const EntityId seedA[4]={1,2,3,4}, seedB[4]={2,3,4,5};
+    for (std::size_t i=0;i<4;++i) {
+        const auto& edge=candidate.edges[i];
+        if (edge.id!=201+i || !((edge.a==seedA[i]&&edge.b==seedB[i])||(edge.a==seedB[i]&&edge.b==seedA[i])))
+            return fail("legacy seed road IDs and endpoints are not canonical");
+    }
+    if (candidate.nodes[0].id!=FarmNodeId || candidate.nodes[2].id!=MillNodeId || candidate.nodes[4].id!=WarehouseNodeId)
+        return fail("road service anchors are invalid");
+
     std::uint64_t previousCommand = 0;
-    if (candidate.nextPlacementCommandId == 0) return fail("next placement command ID is invalid");
-    for (const auto& request : candidate.placementQueue) {
-        if (request.commandId <= previousCommand || request.commandId >= candidate.nextPlacementCommandId)
-            return fail("queued placement command IDs are not canonical");
-        if (previousCommand != 0 &&
-            (previousCommand == std::numeric_limits<std::uint64_t>::max() || request.commandId != previousCommand + 1))
-            return fail("queued placement command IDs are not contiguous");
+    if (candidate.nextCommandId == 0) return fail("next construction command ID is invalid");
+    for (const auto& request : candidate.commandQueue) {
+        if (request.commandId <= previousCommand || request.commandId >= candidate.nextCommandId) return fail("queued command IDs are not canonical");
+        if (previousCommand != 0 && request.commandId != previousCommand + 1) return fail("queued command IDs are not contiguous");
+        if (request.type != ConstructionCommandType::FacilityPlacement && request.type != ConstructionCommandType::RoadSegment) return fail("unknown queued command type");
         previousCommand = request.commandId;
     }
-    if (!candidate.placementQueue.empty() &&
-        candidate.placementQueue.back().commandId != candidate.nextPlacementCommandId - 1)
-        return fail("queued placements are not the latest command ID suffix");
-    if (candidate.tick == std::numeric_limits<Tick>::max() && !candidate.placementQueue.empty())
-        return fail("terminal tick cannot contain queued placements");
-    std::uint64_t previousResult = 0;
-    EntityId previousAcceptedFacility = 0;
-    for (const auto& result : candidate.placementResults) {
-        if (result.commandId <= previousResult || result.commandId >= candidate.nextPlacementCommandId)
-            return fail("placement result command IDs are not canonical");
+    if (!candidate.commandQueue.empty() && candidate.commandQueue.back().commandId != candidate.nextCommandId-1) return fail("queued commands are not latest command suffix");
+    if (candidate.tick==std::numeric_limits<Tick>::max()&&!candidate.commandQueue.empty()) return fail("terminal tick cannot contain queued commands");
+    std::uint64_t previousResult=0; EntityId previousFacility=0, previousRoad=204;
+    for (const auto& result : candidate.commandResults) {
+        if (result.commandId<=previousResult||result.commandId>=candidate.nextCommandId) return fail("construction result IDs are not canonical");
+        if (result.type!=ConstructionCommandType::FacilityPlacement&&result.type!=ConstructionCommandType::RoadSegment) return fail("unknown construction result type");
         if (result.accepted) {
-            if (result.facilityId < FirstFacilityId || result.facilityId >= FirstFacilityId + candidate.facilities.size())
-                return fail("accepted placement result references unknown facility");
-            if (result.facilityId <= previousAcceptedFacility)
-                return fail("accepted placement result facility IDs are not strictly increasing");
-            previousAcceptedFacility = result.facilityId;
-        } else if (result.facilityId != 0) return fail("rejected placement result has a facility ID");
-        previousResult = result.commandId;
+            if (result.type==ConstructionCommandType::FacilityPlacement) {
+                if (result.entityId<FirstFacilityId||result.entityId>=FirstFacilityId+candidate.facilities.size()||result.entityId<=previousFacility) return fail("facility result references invalid facility");
+                previousFacility=result.entityId;
+            } else {
+                if (result.entityId<FirstDynamicRoadId||result.entityId>=candidate.nextRoadId||result.entityId<=previousRoad) return fail("road result references invalid edge");
+                previousRoad=result.entityId;
+            }
+        } else if (result.entityId!=0) return fail("rejected construction result has entity ID");
+        previousResult=result.commandId;
     }
-    for (const auto& request : candidate.placementQueue) {
-        if (request.commandId <= previousResult || request.commandId >= candidate.nextPlacementCommandId)
-            return fail("outstanding placement command IDs are not globally ordered");
-        previousResult = request.commandId;
+    for (const auto& request : candidate.commandQueue) {
+        if (request.commandId<=previousResult||request.commandId>=candidate.nextCommandId) return fail("outstanding command IDs are not globally ordered");
+        previousResult=request.commandId;
     }
-    if (candidate.placementQueue.size() + candidate.placementResults.size() > MaxUnacknowledgedFacilityResults)
-        return fail("too many pending placement acknowledgments");
-    if (!HasNode(candidate.truckNode)) return fail("truck references unknown node");
+    if (candidate.commandQueue.size()+candidate.commandResults.size()>MaxUnacknowledgedFacilityResults) return fail("too many pending construction acknowledgments");
+    if (!candidate.HasNode(candidate.truckNode)) return fail("truck references unknown node");
     if (stage > static_cast<unsigned>(TruckStage::ReturnToFarm) || cargo > static_cast<unsigned>(Resource::Flour)) return fail("unknown truck stage or cargo resource");
     if (candidate.cargoAmount > TruckCapacity || ((candidate.cargoAmount == 0) != (candidate.cargo == Resource::None))) return fail("invalid cargo amount/resource pair");
     if (candidate.route.empty()) {
@@ -571,7 +709,7 @@ bool Simulation::Load(std::string_view data, std::string* error) {
         if (candidate.route.size() < 2 || candidate.routeCursor >= candidate.route.size()) return fail("invalid route cursor");
         if (candidate.route[candidate.routeCursor] != candidate.truckNode) return fail("truck node does not match route cursor");
         for (std::size_t i = 0; i < candidate.route.size(); ++i) {
-            if (!HasNode(candidate.route[i])) return fail("route references unknown node");
+            if (!candidate.HasNode(candidate.route[i])) return fail("route references unknown node");
             if (std::find(candidate.route.begin(), candidate.route.begin() + static_cast<std::ptrdiff_t>(i), candidate.route[i]) !=
                 candidate.route.begin() + static_cast<std::ptrdiff_t>(i)) return fail("route repeats a node");
             if (i) {
