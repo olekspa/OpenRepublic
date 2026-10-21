@@ -34,6 +34,7 @@ The local Rival Republics checkout did not contain a root license or copying not
 | Area | Reusable result | Limit |
 |---|---|---|
 | Building and vehicle definitions | A local static reader can inventory selected definition fields and emit a production graph with diagnostics. | This is not a complete game schema. Resource prices, automatic construction materials, exact placement footprints, and some directive semantics remain unknown. |
+| ModelViewer content inspection | On the local installation reported as buildid `23935965`, the game's ModelViewer loaded one NMF model and its sibling MTL separately and displayed textured geometry. | This is one sample in the game's own viewer; OpenRepublic import, runtime OBJ import, other formats/models, an OBJ/GLB export route, coordinate correctness, and standalone-use rights remain unverified. |
 | Save parsing | Bounds-checked parsing and one-field-at-a-time comparisons are good methods. | Building/save candidates are partial; opaque bytes remain unresolved. No complete writer, round-trip, or save compatibility contract has been established. |
 | Road network | Read-only snapshots, native identity preservation, terrain-aware candidate planning, and before/after reports are useful. | `complete: true` can mean only that pagination finished. Proximity-based links and planner connectivity do not prove the original game's native topology. |
 | Terrain | DDS decoding and static height/layer extraction can guide an OpenRepublic reader and test fixture design. | Height transform, axis orientation, water/resource channels, buildability, and some compressed formats remain inferred, unresolved, or unsupported. |
@@ -42,7 +43,7 @@ The local Rival Republics checkout did not contain a root license or copying not
 
 ## Next experiments
 
-1. Confirm the ModelViewer UI's NMF load, OBJ import, and export behavior on one local model while retaining all input files in the game installation. Static command labels alone are not a successful import.
+1. Establish an OpenRepublic-owned import path, beginning with synthetic fixtures. Runtime OBJ import in ModelViewer and any OBJ/GLB export route remain unverified; do not infer runtime behavior from save/import labels.
 2. Build a private asset-dependency manifest for one building definition → model → material → texture chain, retaining unknown references and source provenance.
 3. Use the existing Python DDS reader as a reference for a small local-only OpenRepublic terrain reader; compare format, dimensions, and selected values before rendering a sample.
 4. Select one source-backed production chain and keep unit conversion, staffing, transport, and pricing assumptions explicit in the simulation schema.
