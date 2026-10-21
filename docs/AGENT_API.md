@@ -31,7 +31,15 @@ The example is a local synthetic demonstration, not an unattended service or a p
 
 ## Queries and revisions
 
-`QueryWorld()` returns an explicit `ErrorCode` and, when allowed, a snapshot with the current process-local `revision`, tick, entities with stable simulation IDs and inventories, the current truck plan/state, and road views. A denied query returns `PermissionDenied` and a zero/default view.
+`QueryWorld()` returns an explicit `ErrorCode` and, when allowed, a snapshot with the current process-local `revision`, tick, entities with stable simulation IDs and inventories, the current truck plan/state, road views, the active `SimulationRules`, and the simulation's cumulative `deliveredFlourTotal`. These production fields come from the same authoritative simulation snapshot as the rest of the world view. They expose OpenRepublic's current synthetic rules and outcome counters; they do not claim to reproduce WRSR formulas. A denied query returns `PermissionDenied` and a zero/default view, including zeroed production telemetry.
+
+The JSONL `world` result groups these fields under `production`. `deliveredFlourTotal` is a decimal string because it is a `uint64_t`; the three bounded rule values are JSON integers:
+
+```json
+{"production":{"deliveredFlourTotal":"0","rules":{"farmGrainPerHarvest":2,"farmHarvestIntervalTicks":2,"millGrainPerTick":1}}}
+```
+
+The Python controller validates the decimal-string representation and checks that cumulative delivery advances after its route runs. The API remains read-only for rules: controllers can observe the active values but cannot change them through Agent API v0.
 
 `QueryEntityPage(expectedRevision, offset, limit)` returns entities in ascending stable-ID order. A page limit must be from 1 through `MaxEntityPageSize` (32). The result carries the snapshot revision, starting offset, `nextOffset`, and `hasMore`; callers can reuse the returned revision for the next page. A changed world returns `StaleRevision`. The query uses one simulation snapshot, so its revision and page contents agree.
 
@@ -55,6 +63,6 @@ Events cover successful command submission, command application or rejection, an
 
 ## Validation evidence and limits
 
-On 21 October 2026, the Release client build passed CTest **10/10** and the headless Release build passed **9/9**. This includes the Agent API tests, JSON protocol tests, the process-level Python controller, bounded MTL resolver tests, and existing simulation/content/scripting suites. Agent API tests cover capability discovery, stable-ID queries, pagination, stale revisions, permission denial, event ordering and cursor retention, command submission/application/rejection/acknowledgement, bounded stepping, overflow-safe road validation, legacy-result adoption, save-v7 compatibility, and a synthetic Farm→Mill→Storage delivery. The process-level controller proves the wire protocol can build roads and player Storage, assign the plan, inspect results/events, and receive flour by tick 17.
+On 21 October 2026, the Release client build passed CTest **10/10** and the headless Release build passed **9/9**. This includes the Agent API tests, JSON protocol tests, the process-level Python controller, bounded MTL resolver tests, and existing simulation/content/scripting suites. Agent API tests cover capability discovery, stable-ID queries, production-rule and cumulative-delivery telemetry, pagination, stale revisions, permission denial, event ordering and cursor retention, command submission/application/rejection/acknowledgement, bounded stepping, overflow-safe road validation, legacy-result adoption, save-v7 compatibility, and a synthetic Farm→Mill→Storage delivery. The process-level controller proves the wire protocol can build roads and player Storage, assign the plan, inspect results/events, observe an increasing cumulative delivery count, and receive flour by tick 17.
 
 These are OpenRepublic source/build/test results. No WRSR runtime, save, binary, asset, formula, or compatibility behavior is verified by this API. The local role flag is not authentication, and the host must not be exposed over a network. Any future multi-client transport needs explicit caller identity, ownership, schema validation, resource controls, and lifecycle tests.

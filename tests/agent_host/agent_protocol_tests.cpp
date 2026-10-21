@@ -33,6 +33,13 @@ int main() {
         "default role is observer");
     const auto before = parseResponse(observer.HandleLine(request("2", "world")), "world query returns JSON");
     const auto beforeTick = before["result"]["world"]["tick"].get<std::string>();
+    const auto& production = before["result"]["world"]["production"];
+    check(production["deliveredFlourTotal"].is_string() && production["deliveredFlourTotal"] == "0",
+        "cumulative uint64 production telemetry uses a decimal string on the wire");
+    check(production["rules"]["farmGrainPerHarvest"] == 2 &&
+        production["rules"]["farmHarvestIntervalTicks"] == 2 &&
+        production["rules"]["millGrainPerTick"] == 1,
+        "world JSON includes the active synthetic production rules");
     const auto mutation = Json{{"id", "3"}, {"protocolVersion", ProtocolVersion}, {"method", "step"}, {"ticks", 1}}.dump();
     const auto denied = parseResponse(observer.HandleLine(mutation), "observer mutation denial returns JSON");
     check(denied["ok"] && denied["result"]["errorCode"] == "permission_denied",
@@ -83,6 +90,8 @@ int main() {
     check(capabilities["ok"] && capabilities["result"]["actions"].size() == 8,
         "controller discovers the complete current API action set");
     const auto initial = parseResponse(controller.HandleLine(request("6", "world")), "controller world returns JSON");
+    check(initial["result"]["world"]["production"]["deliveredFlourTotal"].is_string(),
+        "controller world exposes the cumulative production counter");
     const auto initialRevision = initial["result"]["world"]["revision"].get<std::string>();
     const auto wrongRevision = Json{{"id", "7"}, {"protocolVersion", ProtocolVersion}, {"method", "place_storage"},
         {"revision", "9999999999999999999"}, {"x", 5}, {"z", 0}}.dump();

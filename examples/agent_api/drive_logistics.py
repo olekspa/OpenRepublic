@@ -121,6 +121,14 @@ def check(condition, message):
         raise RuntimeError(message)
 
 
+def decimal_u64(value, name):
+    check(isinstance(value, str) and value.isascii() and value.isdigit(),
+        f"{name} must be an unsigned decimal string")
+    parsed = int(value)
+    check(parsed <= 0xFFFFFFFFFFFFFFFF, f"{name} exceeds uint64")
+    return parsed
+
+
 def run_observer_checks(executable):
     bad_args = subprocess.run([executable, "--unknown-option"], capture_output=True, text=True, timeout=10)
     check(bad_args.returncode == 2 and not bad_args.stdout and bad_args.stderr,
@@ -200,6 +208,15 @@ def run_controller(executable):
         check(response.get("ok") and response["result"]["errorCode"] == "none", "world query")
         return response["result"]["world"]
 
+    initial = world()
+    initial_production = initial["production"]
+    check(initial_production["rules"] == {
+        "farmGrainPerHarvest": 2,
+        "farmHarvestIntervalTicks": 2,
+        "millGrainPerTick": 1,
+    }, "external controller can inspect the authoritative synthetic production rules")
+    initial_delivered = decimal_u64(initial_production["deliveredFlourTotal"], "initial deliveredFlourTotal")
+
     command_ids = []
 
     def submit(method, **args):
@@ -246,6 +263,13 @@ def run_controller(executable):
     final = world()
     check(final["route"]["storageId"] == 3001, "authoritative route targets player storage")
     check(delivered["inventory"]["flour"] > 0, "player storage contains delivered flour")
+    final_delivered = decimal_u64(final["production"]["deliveredFlourTotal"], "final deliveredFlourTotal")
+    stored_flour = sum(entity["inventory"]["flour"] for entity in final["entities"]
+        if entity["kind"] == "storage")
+    check(final_delivered > initial_delivered,
+        "cumulative delivery telemetry increases after the external controller's route runs")
+    check(final_delivered >= stored_flour,
+        "cumulative delivery telemetry reconciles with flour remaining in storage when consumption is absent")
     events = host.call("events", afterSequence="0", limit=32)
     check(events.get("ok") and events["result"]["errorCode"] == "none" and events["result"]["events"],
         "controller can observe structured lifecycle events")

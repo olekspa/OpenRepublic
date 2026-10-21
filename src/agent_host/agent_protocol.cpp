@@ -270,6 +270,10 @@ Json WorldJson(const agent_api::WorldView& world) {
     for (const auto id : world.route.activeNodes) activeNodes.push_back(id);
     return Json{{"apiVersion", world.apiVersion}, {"revision", std::to_string(world.revision)},
         {"tick", std::to_string(world.tick)}, {"entities", std::move(entities)},
+        {"production", Json{{"deliveredFlourTotal", std::to_string(world.deliveredFlourTotal)},
+            {"rules", Json{{"farmGrainPerHarvest", world.rules.farmGrainPerHarvest},
+                {"farmHarvestIntervalTicks", world.rules.farmHarvestIntervalTicks},
+                {"millGrainPerTick", world.rules.millGrainPerTick}}}}},
         {"route", Json{{"farmId", world.route.assignedPlan.farmId},
             {"millId", world.route.assignedPlan.millId}, {"storageId", world.route.assignedPlan.storageId},
             {"activeNodes", std::move(activeNodes)}, {"cursor", world.route.cursor},

@@ -163,5 +163,22 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - **VERIFIED — headless Release build and CTest:** build succeeded; 9/9 tests passed, including the external controller and MTL dependency tests.
 - **VERIFIED — source/diff hygiene:** `git diff --check` passed after the aggregate-budget implementation.
 - **UNKNOWN — WRSR behavior:** no WRSR process was launched and no original asset, save, Steam file, or Rival Republics data was modified or added. MTL sample provenance remains incomplete; resolver path-base rules, `$TEXTURE_MTL`, texture-slot meanings, material fidelity, and standalone-use rights remain open.
-- This increment is still uncommitted pending final scoped diff review and publication. It advances the external-agent foundation and a metadata-only material dependency stage; it does not complete the playable-slice acceptance criteria or the remaining M0 UI gates.
-- Resume from this checkpoint by inspecting the exact changed file set and docs, then commit/push only the reviewed OpenRepublic paths. Keep the goal active and continue to the next highest-value playable-slice gap after publication.
+- At the time this checkpoint was first written, the increment was staged pending final scoped diff review and publication. It advances the external-agent foundation and a metadata-only material dependency stage; it does not complete the playable-slice acceptance criteria or the remaining M0 UI gates.
+- Resume by reviewing the exact changed file set and docs, then commit/push only the reviewed OpenRepublic paths. Keep the goal active and continue to the next highest-value playable-slice gap after publication.
+
+**2026-10-21 15:30:30 EDT (19:30:30 UTC) — publication receipt**
+
+- Final review completed; the local JSONL host, external controller, and MTL dependency resolver were committed as `76a5bd1` (`Add local agent host and MTL dependency resolver`) and pushed to `origin/main`. The previous checkpoint status above was superseded by this publication.
+- Client Release CTest passed 10/10 and headless Release CTest passed 9/9. The checkout was clean after publication. M1 remains open for richer verified observations and subsequent integrated-world work; no WRSR behavior or proprietary asset use was verified.
+
+## Chronological continuation — production telemetry through Agent API v0
+
+**2026-10-21 15:37:16 EDT (19:37:16 UTC)**
+
+- Extended the typed `WorldView` with the simulation snapshot's active `SimulationRules` and cumulative `deliveredFlourTotal`. `QueryWorld` fills both from the same authoritative snapshot. A denied query returns zeroed telemetry along with its zero/default world view.
+- The JSONL `world` result now exposes `production.rules` as bounded integer fields and `production.deliveredFlourTotal` as a decimal string for its `uint64_t` type. The external Python controller validates the schema, confirms the count increases after its route executes, and reconciles it against flour remaining in storage. Agent API v0 remains read-only for rules.
+- Added typed API and wire-protocol checks for initial defaults, custom active rules, same-snapshot counters, the decimal-string contract, successful cumulative delivery, and denied-query zeroing.
+- **VERIFIED — client Release build and CTest:** the application, API tests, protocol tests, and local host built; full client CTest passed 10/10.
+- **VERIFIED — headless Release build and CTest:** the simulation, API tests, protocol tests, and local host built; full headless CTest passed 9/9. The first headless CTest attempt used an older host executable and failed because it lacked the new field; rebuilding the headless host and rerunning the complete suite passed.
+- **VERIFIED — diff hygiene:** `git diff --check` passed. No WRSR game or proprietary files were used or modified; no WRSR formulas or compatibility behavior are claimed.
+- This increment is scoped to OpenRepublic source, synthetic tests, and public documentation. It is ready for final diff review and publication. M1 and the playable-alpha gates remain open.

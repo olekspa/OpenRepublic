@@ -51,6 +51,8 @@ WorldQuery AgentApi::QueryWorld() const {
     auto& out = query.world;
     out.revision = snapshot.stateRevision;
     out.tick = snapshot.tick;
+    out.deliveredFlourTotal = snapshot.deliveredFlourTotal;
+    out.rules = snapshot.rules;
     out.entities.reserve(snapshot.facilities.size() + snapshot.storages.size());
     for (const auto& facility : snapshot.facilities) {
         out.entities.push_back(Entity{facility.id, facility.type, true, false,

@@ -88,6 +88,9 @@ struct WorldView {
     std::uint32_t apiVersion{ApiVersion};
     std::uint64_t revision{};
     sim::Tick tick{};
+    std::uint64_t deliveredFlourTotal{};
+    // Zeroed when no authorized world snapshot is available.
+    sim::SimulationRules rules{0, 0, 0};
     std::vector<Entity> entities;
     Route route;
 };

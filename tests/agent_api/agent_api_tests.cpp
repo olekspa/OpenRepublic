@@ -30,6 +30,9 @@ int main() {
     auto world = worldQuery.world;
     check(world.entities.size() >= 3 && world.route.assignedPlan.farmId == sim::Simulation::FarmId,
         "structured initial world and transport assignment are queryable");
+    check(world.deliveredFlourTotal == 0 && world.rules.farmGrainPerHarvest == 2 &&
+        world.rules.farmHarvestIntervalTicks == 2 && world.rules.millGrainPerTick == 1,
+        "initial world query exposes cumulative production telemetry and active synthetic rules");
     bool foundFarm = false, foundMill = false, foundStorage = false;
     for (const auto& entity : world.entities) {
         foundFarm |= entity.id == sim::Simulation::FarmId && entity.isFacility && entity.facilityType == sim::FacilityType::Farm;
@@ -37,6 +40,18 @@ int main() {
         foundStorage |= entity.id == sim::Simulation::WarehouseId && entity.isStorage;
     }
     check(foundFarm && foundMill && foundStorage, "entity inventory query uses stable simulation IDs");
+
+    sim::Simulation configuredSimulation;
+    const sim::SimulationRules configuredRules{3, 4, 2};
+    check(configuredSimulation.SetRules(configuredRules), "telemetry fixture accepts a valid custom ruleset");
+    const auto configuredSnapshot = configuredSimulation.GetSnapshot();
+    agent_api::AgentApi configuredApi(std::move(configuredSimulation), permissions);
+    const auto configuredWorld = configuredApi.QueryWorld().world;
+    check(configuredWorld.deliveredFlourTotal == configuredSnapshot.deliveredFlourTotal &&
+        configuredWorld.rules.farmGrainPerHarvest == configuredRules.farmGrainPerHarvest &&
+        configuredWorld.rules.farmHarvestIntervalTicks == configuredRules.farmHarvestIntervalTicks &&
+        configuredWorld.rules.millGrainPerTick == configuredRules.millGrainPerTick,
+        "world query returns production counters and rules from the authoritative snapshot");
 
     const auto denied = api.PlaceStorage(world.revision, 0, 0);
     check(denied.error == agent_api::ErrorCode::PermissionDenied, "construction permission is enforced");
@@ -78,9 +93,16 @@ int main() {
     constructionApi.Step(400);
     world = constructionApi.QueryWorld().world;
     bool delivered = false;
-    for (const auto& entity : world.entities)
-        if (entity.id == sim::Simulation::WarehouseId) delivered = entity.inventory.flour > 0;
+    std::uint32_t warehouseFlour = 0;
+    for (const auto& entity : world.entities) {
+        if (entity.id == sim::Simulation::WarehouseId) {
+            warehouseFlour = entity.inventory.flour;
+            delivered = warehouseFlour > 0;
+        }
+    }
     check(delivered, "headless Farm to Mill to Storage controller loop completes without UI");
+    check(world.deliveredFlourTotal > 0 && world.deliveredFlourTotal >= warehouseFlour,
+        "world query exposes cumulative flour deliveries consistent with warehouse stock");
 
     sim::Simulation rejectionSimulation;
     const auto rejectedId = rejectionSimulation.QueueStoragePlacement(0, 0);
@@ -129,6 +151,8 @@ int main() {
     const auto deniedQuery = queryDeniedApi.QueryWorld();
     check(deniedQuery.error == agent_api::ErrorCode::PermissionDenied && deniedQuery.world.revision == 0 &&
         deniedQuery.world.tick == 0 && deniedQuery.world.entities.empty() && deniedQuery.world.route.roads.empty() &&
+        deniedQuery.world.deliveredFlourTotal == 0 && deniedQuery.world.rules.farmGrainPerHarvest == 0 &&
+        deniedQuery.world.rules.farmHarvestIntervalTicks == 0 && deniedQuery.world.rules.millGrainPerTick == 0 &&
         deniedQuery.world.route.assignedPlan.farmId == 0 && deniedQuery.world.route.assignedPlan.millId == 0 &&
         deniedQuery.world.route.assignedPlan.storageId == 0 && deniedQuery.world.route.truckNode == 0,
         "denied world query returns explicit permission status without exposing state or revision");

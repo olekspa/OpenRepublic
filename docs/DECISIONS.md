@@ -63,7 +63,7 @@ The first OpenRepublic-owned application scene uses only OpenRepublic-created ge
 
 Human UI, tests, Lua-facing tools, and future LLM or external controllers must reach gameplay through the same validated command and query paths over the authoritative C++ simulation. The first implementation is an in-process typed C++ interface with capability discovery, revision-checked entity queries and commands, bounded paging and event reads, permission checks, and distinct queued/applied/rejected results. It does not own a second simulation and does not expose renderer entities as world identity.
 
-**Consequence:** keep command/query types and state revisions explicit, and apply mutations at simulation tick boundaries. The internal API is not a WRSR protocol or compatibility claim. The first local adapter is recorded separately in D-008.
+**Consequence:** keep command/query types and state revisions explicit, and apply mutations at simulation tick boundaries. World queries may expose typed, read-only simulation rules and cumulative outcome counters so controllers can verify synthetic behavior; these values remain OpenRepublic state and do not imply WRSR formula parity. The internal API is not a WRSR protocol or compatibility claim. The first local adapter is recorded separately in D-008.
 
 ## D-008: Start external-agent access with a bounded local JSONL host
 
