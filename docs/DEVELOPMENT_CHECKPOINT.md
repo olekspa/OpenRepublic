@@ -65,3 +65,32 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - The scoped M0 implementation, simulation regression, and checkpoint were committed as `0775ce8` (`Fix logistics selection and document checkpoint`) and pushed to `origin/main`.
 - This publication does not close M0 runtime acceptance: all six UI items above remain unverified in this session. Continue the project without describing the runtime gate as passed.
 - Because the current native UI automation surface cannot control or capture the Windows window, continue evidence-bounded M1 work in parallel rather than claiming unavailable runtime evidence.
+
+## Chronological continuation — bounded GLB semantic profile
+
+**2026-10-21 14:17:40 EDT (18:17:40 UTC)**
+
+- Added an OpenRepublic-owned semantic preflight for a narrow embedded-resource glTF 2.0 profile. It validates the same in-memory bytes read by the bounded GLB container reader, checks the supplied container metadata, and rejects external URIs, extensions, sparse accessors, unsupported semantics/layouts, unsupported texture coordinate sets, morph data, animation, skins, cameras, unsupported sampler values, invalid references, invalid binary ranges, non-finite geometry/transforms, and invalid node graphs.
+- The developer probe writes those validated bytes to a unique temporary snapshot before calling the pinned Wicked Editor importer. Import occurs in a staging scene; every imported mesh must contain finite indexed triangle data before the scene merges into the preview.
+- Added synthetic semantic fixtures for valid embedded geometry/material/image references and failure cases including `texCoord: 1`, hierarchy cycles/multiple parents, range errors, unsupported features, invalid values, and transactional result preservation.
+- **VERIFIED — Release builds:** client and headless CMake builds both succeeded on the configured VS 2022 toolchain.
+- **VERIFIED — client CTest:** 5/5 tests passed, including `OpenRepublicGlbSemanticTests`.
+- **VERIFIED — headless CTest:** 4/4 tests passed, including `OpenRepublicGlbSemanticTests`.
+- **UNKNOWN — runtime/content fidelity:** no new GLB visual or material comparison was made. The Editor importer and image decoders are not sandboxed; the profile is for trusted local inputs. No claim of general glTF support, direct NMF support, WRSR asset compatibility, or standalone content rights is made.
+- No WRSR executable was launched, no save or Steam file was modified, and no proprietary game asset or Rival Republics artifact was added to the repository. The changes remain uncommitted pending independent review and final diff inspection.
+
+**2026-10-21 14:20:08 EDT (18:20:08 UTC) — independent review follow-up**
+
+- A read-only reviewer found two actionable GLB-profile gaps: repeated/aliased accessors could trigger excessive repeated scalar reads, and finite but non-unit rotation quaternions were accepted.
+- Added a 16,777,216 aggregate scalar-read budget across finite FLOAT accessor values and indices. FLOAT accessor data is checked once per accessor; index data is checked once per index accessor, caching its maximum value and comparing it with each consuming mesh's POSITION count. Removed the per-primitive POSITION rescan.
+- Node rotation quaternions now require squared norm within `1e-3` of one. Added fixtures for zero, non-unit, and valid normalized rotations plus a 65,536-accessor alias fixture that exceeds the aggregate scan budget.
+- **VERIFIED — client/headless Release builds:** both succeeded.
+- **VERIFIED — client CTest:** 5/5 passed. **Headless CTest:** 4/4 passed. The semantic suite passed with the new resource-cap and quaternion cases.
+- Visual/material fidelity, importer sandboxing, WRSR NMF parsing, and local original-content rights remain unverified. The reviewer raised no further findings about the exact-snapshot path or staged-mesh checks. No WRSR runtime/save/Steam writes or proprietary artifacts were used.
+
+**2026-10-21 14:21:31 EDT (18:21:31 UTC) — shared-index regression**
+
+- The review follow-up confirmed the aggregate scan cap and quaternion checks, then identified a missing regression for an index accessor reused across primitives with different POSITION counts.
+- Added a synthetic two-mesh fixture that shares one index accessor (`[0, 1, 3]`): the first mesh has four positions, while the second has three and must reject the cached maximum index.
+- Rebuilt the semantic test targets in client and headless Release configurations. The focused semantic CTest passed 1/1 in each configuration; final full CTest passed client 5/5 and headless 4/4.
+- All results remain source/build/test evidence only. No new graphical import comparison or WRSR runtime test was performed; this increment is still uncommitted pending final review and diff check.

@@ -11,3 +11,12 @@ add_executable(OpenRepublicGlbContainerTests
 target_link_libraries(OpenRepublicGlbContainerTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicGlbContainerTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicGlbContainerTests COMMAND OpenRepublicGlbContainerTests)
+
+if(OPENREPUBLIC_GLB_SEMANTIC_AVAILABLE)
+    add_executable(OpenRepublicGlbSemanticTests
+        glb_semantic_tests.cpp
+    )
+    target_link_libraries(OpenRepublicGlbSemanticTests PRIVATE OpenRepublicContent)
+    target_compile_features(OpenRepublicGlbSemanticTests PRIVATE cxx_std_17)
+    add_test(NAME OpenRepublicGlbSemanticTests COMMAND OpenRepublicGlbSemanticTests)
+endif()

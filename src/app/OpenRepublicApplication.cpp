@@ -1,8 +1,7 @@
 #include "OpenRepublicApplication.h"
 #include "ModelImporter.h"
-#include "tiny_gltf.h"
-#include "json.hpp"
 #include "openrepublic/content/glb_container.h"
+#include "openrepublic/content/glb_semantic.h"
 #include "openrepublic/content/terrain_dds.h"
 
 #ifdef OPENREPUBLIC_WITH_LUA_RULES
@@ -12,6 +11,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cwctype>
@@ -64,8 +64,8 @@ namespace openrepublic
 		constexpr std::uint32_t kStorageFlourCapacity = 5;
 		constexpr std::uintmax_t kMaxTerrainMetadataBytes = 64u * 1024u;
 		constexpr char kGlbProbeLimitations[] =
-			"Trusted local inputs only: preflight checks container framing, and accepted files are reopened by the pinned importer "
-			"and may resolve external URIs; this is not a hostile-file sandbox or a licensing assessment.";
+			"Trusted local inputs only: a bounded embedded-resource profile is checked before importing an exact temporary snapshot; "
+			"the pinned importer and image decoders are not sandboxed, and this is not a licensing assessment.";
 
 		bool HasValidIndexedTriangleData(const wi::scene::MeshComponent& mesh)
 		{
@@ -93,79 +93,139 @@ namespace openrepublic
 			return true;
 		}
 
-		bool ValidateGlbTrianglePrimitiveModes(const std::vector<std::uint8_t>& bytes,
-			const openrepublic::content::GlbContainerInfo& info, std::string& error)
+		bool ValidateEmbeddedGlbProfile(const std::vector<std::uint8_t>& bytes,
+			const openrepublic::content::GlbContainerInfo& info,
+			openrepublic::content::GlbSemanticSummary& summary, std::string& error)
 		{
-			const char* jsonBegin = reinterpret_cast<const char*>(bytes.data() + info.jsonChunkOffset);
-			const char* jsonEnd = jsonBegin + info.jsonChunkBytes;
-			try
+#ifdef OPENREPUBLIC_HAS_GLB_SEMANTIC_VALIDATOR
+			openrepublic::content::GlbSemanticError semanticError;
+			if (!openrepublic::content::ValidateEmbeddedGlbV2(bytes, info, summary, semanticError))
 			{
-				const nlohmann::json document = nlohmann::json::parse(jsonBegin, jsonEnd);
-				if (!document.is_object())
-				{
-					error = "GLB JSON root is not an object.";
-					return false;
-				}
-				const auto meshesIt = document.find("meshes");
-				if (meshesIt == document.end() || !meshesIt->is_array())
-				{
-					error = "GLB JSON has no mesh array to validate.";
-					return false;
-				}
-
-				std::size_t primitiveCount = 0;
-				for (const auto& mesh : *meshesIt)
-				{
-					if (!mesh.is_object())
-					{
-						error = "GLB mesh entry is not an object.";
-						return false;
-					}
-					const auto primitivesIt = mesh.find("primitives");
-					if (primitivesIt == mesh.end() || !primitivesIt->is_array() || primitivesIt->empty())
-					{
-						error = "GLB mesh has no primitive array to validate.";
-						return false;
-					}
-
-					for (const auto& primitive : *primitivesIt)
-					{
-						if (!primitive.is_object())
-						{
-							error = "GLB primitive entry is not an object.";
-							return false;
-						}
-						const auto modeIt = primitive.find("mode");
-						if (modeIt != primitive.end())
-						{
-							const bool triangleMode = modeIt->is_number_unsigned()
-								? modeIt->get<std::uint64_t>() == 4
-								: modeIt->is_number_integer() && modeIt->get<std::int64_t>() == 4;
-							if (!triangleMode)
-							{
-								error = "Wicked's pinned importer supports only glTF TRIANGLES mode (4) in this probe.";
-								return false;
-							}
-						}
-						++primitiveCount;
-					}
-				}
-
-				if (primitiveCount == 0)
-				{
-					error = "GLB JSON contains no mesh primitives.";
-					return false;
-				}
-			}
-			catch (const std::exception& exception)
-			{
-				error = std::string("GLB JSON primitive-mode validation failed: ") + exception.what();
+				error = semanticError.message;
 				return false;
 			}
-
 			error.clear();
 			return true;
+#else
+			static_cast<void>(bytes);
+			static_cast<void>(info);
+			static_cast<void>(summary);
+			error = "Bounded GLB semantic validation is unavailable in this build; no import was attempted.";
+			return false;
+#endif
 		}
+
+		class ScopedGlbSnapshot
+		{
+		public:
+			ScopedGlbSnapshot() = default;
+			ScopedGlbSnapshot(const ScopedGlbSnapshot&) = delete;
+			ScopedGlbSnapshot& operator=(const ScopedGlbSnapshot&) = delete;
+
+			~ScopedGlbSnapshot()
+			{
+				Cleanup();
+			}
+
+			bool Write(const std::vector<std::uint8_t>& bytes, std::string& error)
+			{
+				std::error_code tempError;
+				const std::filesystem::path tempRoot = std::filesystem::temp_directory_path(tempError);
+				if (tempError || tempRoot.empty())
+				{
+					error = "Could not resolve a temporary directory for the validated GLB snapshot.";
+					return false;
+				}
+
+				static std::atomic<std::uint64_t> sequence{ 0 };
+				for (std::size_t attempt = 0; attempt < 64; ++attempt)
+				{
+					const std::wstring directoryName = L"OpenRepublic-GLB-" +
+						std::to_wstring(GetCurrentProcessId()) + L"-" +
+						std::to_wstring(sequence.fetch_add(1, std::memory_order_relaxed));
+					const std::filesystem::path candidate = tempRoot / directoryName;
+					if (CreateDirectoryW(candidate.c_str(), nullptr))
+					{
+						directory_ = candidate;
+						break;
+					}
+
+					const DWORD createError = GetLastError();
+					if (createError != ERROR_ALREADY_EXISTS && createError != ERROR_FILE_EXISTS)
+					{
+						error = "Could not create the temporary directory for the validated GLB snapshot.";
+						return false;
+					}
+				}
+
+				if (directory_.empty())
+				{
+					error = "Could not reserve a unique temporary directory for the validated GLB snapshot.";
+					return false;
+				}
+
+				file_ = directory_ / L"validated-input.glb";
+				HANDLE file = CreateFileW(file_.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+					FILE_ATTRIBUTE_TEMPORARY, nullptr);
+				if (file == INVALID_HANDLE_VALUE)
+				{
+					Cleanup();
+					error = "Could not create the temporary file for the validated GLB snapshot.";
+					return false;
+				}
+
+				bool writeSucceeded = true;
+				std::size_t offset = 0;
+				while (offset < bytes.size())
+				{
+					const std::size_t remaining = bytes.size() - offset;
+					const DWORD chunkBytes = static_cast<DWORD>(std::min<std::size_t>(
+						remaining, static_cast<std::size_t>(std::numeric_limits<DWORD>::max())));
+					DWORD written = 0;
+					if (!WriteFile(file, bytes.data() + offset, chunkBytes, &written, nullptr) || written != chunkBytes)
+					{
+						writeSucceeded = false;
+						break;
+					}
+					offset += written;
+				}
+
+				if (writeSucceeded && !FlushFileBuffers(file))
+				{
+					writeSucceeded = false;
+				}
+				CloseHandle(file);
+				if (!writeSucceeded)
+				{
+					Cleanup();
+					error = "Could not write the complete validated GLB snapshot to the temporary file.";
+					return false;
+				}
+
+				error.clear();
+				return true;
+			}
+
+			const std::filesystem::path& Path() const { return file_; }
+
+		private:
+			void Cleanup() noexcept
+			{
+				if (!file_.empty())
+				{
+					DeleteFileW(file_.c_str());
+					file_.clear();
+				}
+				if (!directory_.empty())
+				{
+					RemoveDirectoryW(directory_.c_str());
+					directory_.clear();
+				}
+			}
+
+			std::filesystem::path directory_;
+			std::filesystem::path file_;
+		};
 
 		bool IsBuiltInDemoCell(std::int32_t gridX, std::int32_t gridZ)
 		{
@@ -512,6 +572,7 @@ namespace openrepublic
 			{
 				std::vector<std::uint8_t> glbBytes;
 				content::GlbContainerInfo containerInfo;
+				content::GlbSemanticSummary semanticSummary;
 				std::string preflightError;
 				if (!content::ReadBoundedGlbContainer(glbProbePath, glbBytes, &preflightError) ||
 					!content::PreflightGlbContainer(glbBytes, containerInfo, &preflightError))
@@ -519,52 +580,82 @@ namespace openrepublic
 					uiNotice = "GLB container framing preflight failed: " + preflightError +
 						" No import was attempted; " + std::string(kGlbProbeLimitations);
 				}
-				else if (!ValidateGlbTrianglePrimitiveModes(glbBytes, containerInfo, preflightError))
+				else if (!ValidateEmbeddedGlbProfile(glbBytes, containerInfo, semanticSummary, preflightError))
 				{
-					uiNotice = "GLB probe rejected the primitive layout: " + preflightError + " " + kGlbProbeLimitations;
+					uiNotice = "GLB probe rejected the bounded semantic profile: " + preflightError + " " + kGlbProbeLimitations;
 				}
 				else
 				{
-					wi::scene::Scene stagingScene;
-					ImportModel_GLTF(glbProbePath.u8string(), stagingScene);
-					wi::unordered_set<wi::ecs::Entity> stagedEntities;
-					stagingScene.FindAllEntities(stagedEntities);
-					std::size_t usableMeshCount = 0;
-					std::size_t stagedMeshCount = 0;
-					bool allStagedMeshesValid = true;
-					for (const wi::ecs::Entity entity : stagedEntities)
+					ScopedGlbSnapshot snapshot;
+					if (!snapshot.Write(glbBytes, preflightError))
 					{
-						const wi::scene::MeshComponent* mesh = stagingScene.meshes.GetComponent(entity);
-						if (mesh == nullptr)
-						{
-							continue;
-						}
-						++stagedMeshCount;
-						if (HasValidIndexedTriangleData(*mesh))
-						{
-							++usableMeshCount;
-						}
-						else
-						{
-							allStagedMeshesValid = false;
-						}
-					}
-
-					if (usableMeshCount == 0 || stagedMeshCount == 0 || !allStagedMeshesValid)
-					{
-						uiNotice = "GLB container framing passed, but the Wicked importer produced no meshes or at least one mesh "
-							"failed valid indexed triangle-data checks. " +
-							std::string(kGlbProbeLimitations);
+						uiNotice = "GLB probe validated the file but could not create an exact temporary snapshot: " +
+							preflightError + " No import was attempted.";
 					}
 					else
 					{
-						const std::size_t transformCount = stagingScene.transforms.GetCount();
-						const std::size_t meshCount = stagedMeshCount;
-						const std::size_t materialCount = stagingScene.materials.GetCount();
-						previewWorld.Merge(stagingScene);
-						uiNotice = "Imported local GLB probe after container preflight: " + std::to_string(meshCount) + " meshes, " +
-							std::to_string(materialCount) + " materials, " + std::to_string(transformCount) + " transforms. " +
-							kGlbProbeLimitations;
+						wi::scene::Scene stagingScene;
+						bool importSucceeded = true;
+						try
+						{
+							ImportModel_GLTF(snapshot.Path().u8string(), stagingScene);
+						}
+						catch (const std::exception& exception)
+						{
+							importSucceeded = false;
+							uiNotice = std::string("Pinned GLB importer threw an exception: ") + exception.what();
+						}
+						catch (...)
+						{
+							importSucceeded = false;
+							uiNotice = "Pinned GLB importer failed with an unknown exception.";
+						}
+
+						if (importSucceeded)
+						{
+							wi::unordered_set<wi::ecs::Entity> stagedEntities;
+							stagingScene.FindAllEntities(stagedEntities);
+							std::size_t usableMeshCount = 0;
+							std::size_t stagedMeshCount = 0;
+							bool allStagedMeshesValid = true;
+							for (const wi::ecs::Entity entity : stagedEntities)
+							{
+								const wi::scene::MeshComponent* mesh = stagingScene.meshes.GetComponent(entity);
+								if (mesh == nullptr)
+								{
+									continue;
+								}
+								++stagedMeshCount;
+								if (HasValidIndexedTriangleData(*mesh))
+								{
+									++usableMeshCount;
+								}
+								else
+								{
+									allStagedMeshesValid = false;
+								}
+							}
+
+							if (usableMeshCount == 0 || stagedMeshCount == 0 || !allStagedMeshesValid)
+							{
+								uiNotice = "Bounded GLB validation passed, but the Wicked importer produced no meshes or at least one mesh "
+									"failed valid indexed triangle-data checks. " +
+									std::string(kGlbProbeLimitations);
+							}
+							else
+							{
+								const std::size_t transformCount = stagingScene.transforms.GetCount();
+								const std::size_t meshCount = stagedMeshCount;
+								const std::size_t materialCount = stagingScene.materials.GetCount();
+								previewWorld.Merge(stagingScene);
+								uiNotice = "Imported local GLB probe after bounded profile validation: " + std::to_string(meshCount) + " meshes, " +
+									std::to_string(materialCount) + " materials, " + std::to_string(transformCount) + " transforms. Input profile: " +
+									std::to_string(semanticSummary.primitiveCount) + " triangles, " +
+									std::to_string(semanticSummary.textureCount) + " textures, " +
+									std::to_string(semanticSummary.imageCount) + " embedded images. " +
+									kGlbProbeLimitations;
+							}
+						}
 					}
 				}
 			}
