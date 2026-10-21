@@ -672,8 +672,8 @@ void TestNmfPreviewGeometryRebasesObjectsAndPreservesSubsetOffsets() {
               preview.drawRanges[2].indexOffset == 9 && preview.drawRanges[2].indexCount == 3 &&
               preview.drawRanges[2].submaterialIndex == NoNmfPreviewSubmaterialIndex,
           "subset offsets stay relative to the flattened index stream and tails are omitted per draw");
-    Check(preview.ignoredSubsetIndexCount == 3 && preview.renderedTriangleCount == 3,
-          "trailing per-subset indices and rendered triangles are counted explicitly");
+    Check(preview.ignoredSubsetIndexCount == 3 && preview.drawRangeTriangleCount == 3,
+          "trailing per-subset indices and draw-range triangles are counted explicitly");
     Check(preview.sourceNormalMask == std::vector<std::uint8_t>{1, 1, 1, 0, 0, 0} &&
               preview.sourceNormals[0].x == 0.1f && preview.sourceNormals[2].z == 0.9f &&
               preview.sourceNormals[3].x == 0 && preview.sourceNormals[5].z == 0,
@@ -691,8 +691,8 @@ void TestNmfPreviewGeometryStructuralDiagnosticsAndTransactionalFailures() {
     std::string error;
     Check(BuildNmfPreviewGeometry(degenerate, preview, &error),
           "diagnostic preview geometry is built: " + error);
-    Check(preview.zeroAreaTriangleCount == 1 && preview.renderedTriangleCount == 1,
-          "exact zero-area rendered triangles are reported without changing the draw list");
+    Check(preview.zeroAreaTriangleCount == 1 && preview.drawRangeTriangleCount == 1,
+          "exact zero-area draw-range triangles are reported without changing the draw list");
     Check(preview.sourceNormalCount == 3 && preview.sourceNormalLengthMinimum == 1 &&
               preview.sourceNormalLengthMean == 2 && preview.sourceNormalLengthMaximum == 3,
           "source-normal magnitude min/mean/max are reported without imposing a unit-length rule");

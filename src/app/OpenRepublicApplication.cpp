@@ -698,7 +698,8 @@ namespace openrepublic
 
 		bool CreateNmfStaticPreview(wi::scene::Scene& scene, const std::filesystem::path& nmfPath,
 			wi::ecs::Entity& meshEntity, XMFLOAT3& previewCameraTarget, float& previewCameraDistance,
-			bool unlitDiagnostic, std::string& description, std::string& error)
+			bool unlitDiagnostic, std::string& description, std::string& geometryAuditSummary,
+			std::string& error)
 		{
 			openrepublic::content::NmfStaticGeometry geometry;
 			if (!openrepublic::content::LoadNmfStaticGeometry(nmfPath, geometry, &error))
@@ -947,7 +948,7 @@ namespace openrepublic
 				return false;
 			}
 
-			const std::size_t triangleCount = previewGeometry.renderedTriangleCount;
+			const std::size_t drawRangeTriangleCount = previewGeometry.drawRangeTriangleCount;
 			std::string mtlBindingSummary;
 			if (unlitDiagnostic)
 			{
@@ -984,16 +985,40 @@ namespace openrepublic
 			const std::string materialAdapterSummary = unlitDiagnostic
 				? "MTL material parsing and diffuse-to-PBR adaptation were bypassed; no material compatibility claim is made. "
 				: "The Wicked base-color mapping is approximate and does not establish source color-space, alpha, lighting, or shader parity. ";
+			const std::string sourceNormalLengthAudit = previewGeometry.sourceNormalCount == 0
+				? "none"
+				: std::to_string(previewGeometry.sourceNormalLengthMinimum) + "/" +
+					std::to_string(previewGeometry.sourceNormalLengthMean) + "/" +
+					std::to_string(previewGeometry.sourceNormalLengthMaximum);
+			// Keep the bounded geometry counters separate from the verbose UI notice:
+			// Wicked's wilog formatter uses a fixed 1024-byte buffer.
+			geometryAuditSummary =
+				std::string(unlitDiagnostic ? "mode=neutral-unlit" : "mode=regular") +
+				" objects=" + std::to_string(geometry.objects.size()) +
+				" vertices=" + std::to_string(vertexCount) +
+				" source_indices=" + std::to_string(previewGeometry.indices.size()) +
+				" draw_ranges=" + std::to_string(previewGeometry.drawRanges.size()) +
+				" expected_draw_indices=" + std::to_string(drawRangeTriangleCount * 3) +
+				" draw_range_triangles=" + std::to_string(drawRangeTriangleCount) +
+				" subset_tail_indices=" +
+					std::to_string(previewGeometry.ignoredSubsetIndexCount) +
+				" extents_xyz=" +
+					std::to_string(static_cast<double>(previewGeometry.sourceMaximum.x) - previewGeometry.sourceMinimum.x) + "/" +
+					std::to_string(static_cast<double>(previewGeometry.sourceMaximum.y) - previewGeometry.sourceMinimum.y) + "/" +
+					std::to_string(static_cast<double>(previewGeometry.sourceMaximum.z) - previewGeometry.sourceMinimum.z) +
+				" exact_zero_area=" + std::to_string(previewGeometry.zeroAreaTriangleCount) +
+				" source_normals=" + std::to_string(previewGeometry.sourceNormalCount) +
+				" normal_lengths_min_mean_max=" + sourceNormalLengthAudit;
 			description = "Bounded static NMF geometry preview: " +
 				std::to_string(geometry.objects.size()) + " objects (one LOD each), " +
 				std::to_string(vertexCount) + " vertices, " +
-				std::to_string(triangleCount) + " rendered triangles in " +
-				std::to_string(drawRanges.size()) + " index-range groups. Geometry is uniformly normalized to a 10-unit display span at x=8. " +
+				std::to_string(drawRangeTriangleCount) + " complete triangles across " +
+				std::to_string(drawRanges.size()) + " retained draw ranges. Geometry is uniformly normalized to a 10-unit display span at x=8. " +
 				"Source position extents X/Y/Z=" +
 				std::to_string(static_cast<double>(previewGeometry.sourceMaximum.x) - previewGeometry.sourceMinimum.x) + "/" +
 				std::to_string(static_cast<double>(previewGeometry.sourceMaximum.y) - previewGeometry.sourceMinimum.y) + "/" +
 				std::to_string(static_cast<double>(previewGeometry.sourceMaximum.z) - previewGeometry.sourceMinimum.z) +
-				"; exact-zero-area rendered triangles=" +
+				"; exact-zero-area draw-range triangles=" +
 				std::to_string(previewGeometry.zeroAreaTriangleCount) + "; " + normalLengthSummary +
 				". These are structural diagnostics, not source-convention or fidelity checks. " +
 				std::to_string(mappedSubmaterialCount) + " referenced submaterial-table entries, " +
@@ -1329,6 +1354,7 @@ namespace openrepublic
 		}
 		else if (!nmfProbePath.empty())
 		{
+			std::string geometryAuditSummary;
 			if (!HasExtensionInsensitive(nmfProbePath, L".nmf"))
 			{
 				uiNotice = "NMF probe accepts only .nmf files.";
@@ -1339,7 +1365,8 @@ namespace openrepublic
 				std::string description;
 				std::string error;
 				if (CreateNmfStaticPreview(previewWorld, nmfProbePath, meshEntity,
-					nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfUnlitPreview, description, error))
+					nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfUnlitPreview,
+					description, geometryAuditSummary, error))
 				{
 					nmfPreviewLoaded = true;
 					uiNotice = description;
@@ -1349,7 +1376,15 @@ namespace openrepublic
 					uiNotice = "NMF probe failed: " + error;
 				}
 			}
-			wilog("[OpenRepublic] NMF probe: %s", uiNotice.c_str());
+			if (nmfPreviewLoaded)
+			{
+				wilog("[OpenRepublic] NMF geometry audit: %s", geometryAuditSummary.c_str());
+				wilog("[OpenRepublic] NMF limits: UV pair-to-set mapping is inferred; textures are unsupported; source axes, winding, units, normal direction, and visual fidelity remain unverified.");
+			}
+			else
+			{
+				wilog("[OpenRepublic] NMF probe: %s", uiNotice.c_str());
+			}
 		}
 		else if (!terrainProbePath.empty())
 		{

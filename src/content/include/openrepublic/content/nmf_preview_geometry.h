@@ -41,7 +41,7 @@ struct NmfPreviewGeometry {
     float cameraDistance{};
     std::size_t sourceNormalCount{};
     std::size_t ignoredSubsetIndexCount{};
-    std::size_t renderedTriangleCount{};
+    std::size_t drawRangeTriangleCount{};
     std::size_t zeroAreaTriangleCount{};
     double sourceNormalLengthMinimum{};
     double sourceNormalLengthMean{};

@@ -190,7 +190,7 @@ bool BuildNmfPreviewGeometry(const NmfStaticGeometry& geometry,
                 range.indexCount > candidate.indices.size() - range.indexOffset ||
                 range.indexCount % 3 != 0)
                 return Fail(error, "NMF preview draw range is invalid after index rebasing");
-            candidate.renderedTriangleCount += range.indexCount / 3;
+            candidate.drawRangeTriangleCount += range.indexCount / 3;
             for (std::size_t index = range.indexOffset;
                  index < static_cast<std::size_t>(range.indexOffset) + range.indexCount;
                  index += 3) {
