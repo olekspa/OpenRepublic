@@ -145,3 +145,8 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - Independent review led to fixes for unbounded stepping, signed-overflow road validation, result-retention growth, denied-query leakage, historical-result acknowledgment, and event order/timestamps. The final review found no actionable issue; synthetic tests cover these cases and the API paging/journal contract.
 - **VERIFIED — Release source/build/test evidence:** the client `OpenRepublic` and `OpenRepublicAgentApiTests` targets built. Full client CTest passed 7/7; full headless CTest passed 6/6. The synthetic API controller test completes a Farm→Mill→Storage delivery. This does not establish runtime UI acceptance, WRSR behavior, a serialized agent protocol, or IPC/MCP/C# support.
 - No WRSR game was launched, and no Steam installation, save, original asset, or Rival Republics file was modified or added. The source and documentation changes remain under final diff review before publication.
+
+**2026-10-21 15:18 EDT (19:18 UTC) — publication checkpoint**
+
+- The typed Agent API v0 source, tests, and documentation were published to `origin/main` as `2bbc830` (`Add versioned simulation agent API v0`). The checkout was clean after push.
+- M1 remains incomplete: the API is still in-process C++ only. Next, add a bounded local stdio protocol and an external scripted controller so an independent process can inspect and operate the synthetic Farm→Mill→Storage simulation without GUI automation.
