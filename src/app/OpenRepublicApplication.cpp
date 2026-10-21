@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cwctype>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -27,9 +28,12 @@ namespace openrepublic
 		constexpr float kCameraMoveSpeed = 5.0f;
 		constexpr float kMaxCameraMoveDeltaSeconds = 0.1f;
 		constexpr float kWheelZoomSpeed = 0.9f;
-		constexpr float kPlacementGridSpacing = 1.25f;
+		// Construction cells share integer coordinates with road service nodes so
+		// player-placed facilities/storage can occupy an explicit truck endpoint.
+		constexpr float kPlacementGridSpacing = openrepublic::sim::Simulation::RoadCellWorldSize;
 		constexpr float kPlacementGridHalfExtent =
 			(static_cast<float>(openrepublic::sim::Simulation::PrototypeGridMax) + 0.5f) * kPlacementGridSpacing;
+		constexpr float kLegacyOverlapDisplayOffset = 0.75f * kPlacementGridSpacing;
 		constexpr float kRoadGridHalfExtent =
 			(static_cast<float>(openrepublic::sim::Simulation::PrototypeGridMax) + 0.5f) *
 			openrepublic::sim::Simulation::RoadCellWorldSize;
@@ -53,7 +57,24 @@ namespace openrepublic
 		constexpr double kTerrainVerticalPreviewScale = 0.005; // 5x vertical exaggeration at the display scale.
 		constexpr double kRawPreviewVerticalScale = 5.0;
 		constexpr double kMaxTerrainPreviewHeight = 1000.0;
+		// Current synthetic storage capacity also shown by the demo stock readout.
+		constexpr std::uint32_t kStorageFlourCapacity = 5;
 		constexpr std::uintmax_t kMaxTerrainMetadataBytes = 64u * 1024u;
+
+		bool IsBuiltInDemoCell(std::int32_t gridX, std::int32_t gridZ)
+		{
+			return gridZ == 0 && (gridX == -2 || gridX == 0 || gridX == 2);
+		}
+
+		float GetSyntheticEntityDisplayZ(std::int32_t gridX, std::int32_t gridZ)
+		{
+			const float z = static_cast<float>(gridZ) * kPlacementGridSpacing;
+			// v1-v6 permitted player entities to share the demo Farm/Mill/Warehouse
+			// cells. Keep their logical grid positions for routing while separating
+			// the cubes spatially for picking; actual pointer selection remains a
+			// separate runtime acceptance check.
+			return z + (IsBuiltInDemoCell(gridX, gridZ) ? kLegacyOverlapDisplayOffset : 0.0f);
+		}
 
 		bool CreateTerrainPreview(wi::scene::Scene& scene, const std::filesystem::path& heightmapPath,
 			wi::ecs::Entity& terrainEntity, std::string& description, std::string& error)
@@ -447,6 +468,7 @@ namespace openrepublic
 		stepButton.SetPos(XMFLOAT2(152, 18));
 		stepButton.OnClick([this](const wi::gui::EventArgs&) {
 			ApplyPendingRules();
+			ApplyPendingRoadToggle();
 			simulation.Step();
 			simulationAccumulator = 0.0f;
 			uiNotice = "Advanced one fixed simulation tick.";
@@ -460,17 +482,11 @@ namespace openrepublic
 		roadButton.SetSize(XMFLOAT2(132, 28));
 		roadButton.SetPos(XMFLOAT2(268, 18));
 		roadButton.OnClick([this](const wi::gui::EventArgs&) {
-			const bool requestedState = !millApproachRoadEnabled;
-			if (simulation.SetRoadEnabled(202, requestedState))
-			{
-				millApproachRoadEnabled = requestedState;
-				uiNotice = millApproachRoadEnabled ? "Mill approach road opened." : "Mill approach road closed.";
-			}
-			else
-			{
-				uiNotice = "Road stays open while the truck's active route needs it.";
-			}
-			UpdateSimulationPresentation();
+			const bool currentOrPending = pendingMillApproachRoadState.value_or(millApproachRoadEnabled);
+			pendingMillApproachRoadState = !currentOrPending;
+			uiNotice = std::string("Queued mill approach road ") + (*pendingMillApproachRoadState ? "open" : "closed") +
+				" request for the next fixed simulation tick.";
+			UpdateStatusLabel();
 		});
 		gui.AddWidget(&roadButton);
 
@@ -489,20 +505,10 @@ namespace openrepublic
 		placeStorageButton.SetText("Place storage");
 		StyleButton(placeStorageButton);
 		placeStorageButton.SetSize(XMFLOAT2(122, 28));
-		placeStorageButton.SetPos(XMFLOAT2(404, 18));
+		placeStorageButton.SetPos(XMFLOAT2(444, 54));
 		placeStorageButton.OnClick([this](const wi::gui::EventArgs&) {
-			const auto snapshot = simulation.GetSnapshot();
-			const auto slot = static_cast<std::int32_t>(snapshot.prototypeStorages.size());
-			const auto storageId = simulation.PlacePrototypeStorage(-2 + slot * 2, 2);
-			if (storageId == 0)
-			{
-				uiNotice = "No valid prototype storage site remains.";
-			}
-			else
-			{
-				uiNotice = "Placed synthetic storage OR-" + std::to_string(storageId) + ".";
-			}
-			UpdateSimulationPresentation();
+			if (activeStoragePlacement) CancelFacilityPlacement();
+			else BeginStoragePlacement();
 		});
 		gui.AddWidget(&placeStorageButton);
 
@@ -537,6 +543,41 @@ namespace openrepublic
 		});
 		gui.AddWidget(&cancelPlacementButton);
 
+		setTruckFarmButton.Create("TruckPlanFarmEndpointButton");
+		setTruckFarmButton.SetText("Use selected farm");
+		StyleButton(setTruckFarmButton);
+		setTruckFarmButton.SetSize(XMFLOAT2(148, 28));
+		setTruckFarmButton.SetPos(XMFLOAT2(18, 90));
+		setTruckFarmButton.OnClick([this](const wi::gui::EventArgs&) { AssignTruckFarmEndpoint(); });
+		gui.AddWidget(&setTruckFarmButton);
+
+		setTruckMillButton.Create("TruckPlanMillEndpointButton");
+		setTruckMillButton.SetText("Use selected mill");
+		StyleButton(setTruckMillButton);
+		setTruckMillButton.SetSize(XMFLOAT2(148, 28));
+		setTruckMillButton.SetPos(XMFLOAT2(172, 90));
+		setTruckMillButton.OnClick([this](const wi::gui::EventArgs&) { AssignTruckMillEndpoint(); });
+		gui.AddWidget(&setTruckMillButton);
+
+		setTruckStorageButton.Create("TruckPlanStorageEndpointButton");
+		setTruckStorageButton.SetText("Use selected storage");
+		StyleButton(setTruckStorageButton);
+		setTruckStorageButton.SetSize(XMFLOAT2(166, 28));
+		setTruckStorageButton.SetPos(XMFLOAT2(326, 90));
+		setTruckStorageButton.OnClick([this](const wi::gui::EventArgs&) { AssignTruckStorageEndpoint(); });
+		gui.AddWidget(&setTruckStorageButton);
+
+		queueTruckPlanButton.Create("QueueTruckPlanButton");
+		queueTruckPlanButton.SetText("Queue truck plan");
+		StyleButton(queueTruckPlanButton);
+		queueTruckPlanButton.SetSize(XMFLOAT2(148, 28));
+		queueTruckPlanButton.SetPos(XMFLOAT2(498, 90));
+		queueTruckPlanButton.OnClick([this](const wi::gui::EventArgs&) { QueueSelectedTruckPlan(); });
+		gui.AddWidget(&queueTruckPlanButton);
+		setTruckFarmButton.SetText("Farm: OR-" + std::to_string(truckPlan.farmId));
+		setTruckMillButton.SetText("Mill: OR-" + std::to_string(truckPlan.millId));
+		setTruckStorageButton.SetText("Storage: OR-" + std::to_string(truckPlan.storageId));
+
 		saveButton.Create("SimulationSaveButton");
 		saveButton.SetText("Save demo");
 		StyleButton(saveButton);
@@ -568,8 +609,8 @@ namespace openrepublic
 		simulationStatus.font.params.color = kUiTextColor;
 		simulationStatus.margin_left = 10;
 		simulationStatus.margin_top = 7;
-		simulationStatus.SetSize(XMFLOAT2(860, 100));
-		simulationStatus.SetPos(XMFLOAT2(18, 90));
+		simulationStatus.SetSize(XMFLOAT2(980, 130));
+		simulationStatus.SetPos(XMFLOAT2(18, 126));
 		simulationStatus.SetWrapEnabled(true);
 		gui.AddWidget(&simulationStatus);
 
@@ -598,6 +639,7 @@ namespace openrepublic
 			while (simulationAccumulator >= kSimulationTickSeconds)
 			{
 				ApplyPendingRules();
+				ApplyPendingRoadToggle();
 				simulation.Step();
 				simulationAccumulator -= kSimulationTickSeconds;
 				UpdateSimulationPresentation();
@@ -613,7 +655,7 @@ namespace openrepublic
 		if (!guiHasFocus && wi::input::Press(wi::input::KEYBOARD_BUTTON_ESCAPE))
 		{
 			if (activeRoadPlacement) CancelRoadPlacement();
-			else if (activeFacilityPlacement.has_value()) CancelFacilityPlacement();
+			else if (activeFacilityPlacement.has_value() || activeStoragePlacement) CancelFacilityPlacement();
 			else SelectBuilding(wi::ecs::INVALID_ENTITY);
 		}
 		if (!guiHasFocus && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT))
@@ -683,9 +725,182 @@ namespace openrepublic
 		return {};
 	}
 
+	std::optional<openrepublic::sim::EntityId> OpenRepublicApplication::GetSelectedSimulationId() const
+	{
+		const std::string openRepublicId = GetOpenRepublicId(selectedBuilding);
+		constexpr char prefix[] = "OR-";
+		if (openRepublicId.rfind(prefix, 0) != 0 || openRepublicId.size() <= sizeof(prefix) - 1) return std::nullopt;
+		try
+		{
+			const unsigned long long parsed = std::stoull(openRepublicId.substr(sizeof(prefix) - 1));
+			if (parsed > std::numeric_limits<openrepublic::sim::EntityId>::max()) return std::nullopt;
+			return static_cast<openrepublic::sim::EntityId>(parsed);
+		}
+		catch (const std::exception&)
+		{
+			return std::nullopt;
+		}
+	}
+
+	void OpenRepublicApplication::AssignTruckFarmEndpoint()
+	{
+		const auto id = GetSelectedSimulationId();
+		const auto snapshot = simulation.GetSnapshot();
+		const auto facility = id ? std::find_if(snapshot.facilities.begin(), snapshot.facilities.end(), [&](const auto& item) {
+			return item.id == *id && item.type == openrepublic::sim::FacilityType::Farm;
+		}) : snapshot.facilities.end();
+		if (!id || facility == snapshot.facilities.end())
+		{
+			uiNotice = "Select a built-in or player-built farm first.";
+		}
+		else if (std::none_of(snapshot.roadNodes.begin(), snapshot.roadNodes.end(), [&](const auto& node) {
+			return node.gridX == facility->gridX && node.gridZ == facility->gridZ;
+		}))
+		{
+			uiNotice = "Farm OR-" + std::to_string(*id) + " has no road node at grid (" +
+				std::to_string(facility->gridX) + ", " + std::to_string(facility->gridZ) +
+				"); connect a road endpoint to this cell before assigning it.";
+		}
+		else
+		{
+			truckPlan.farmId = *id;
+			setTruckFarmButton.SetText("Farm: OR-" + std::to_string(*id));
+			uiNotice = "Truck farm endpoint set to OR-" + std::to_string(*id) + ". Queue the plan when all endpoints are ready.";
+		}
+		UpdateStatusLabel();
+	}
+
+	void OpenRepublicApplication::AssignTruckMillEndpoint()
+	{
+		const auto id = GetSelectedSimulationId();
+		const auto snapshot = simulation.GetSnapshot();
+		const auto facility = id ? std::find_if(snapshot.facilities.begin(), snapshot.facilities.end(), [&](const auto& item) {
+			return item.id == *id && item.type == openrepublic::sim::FacilityType::Mill;
+		}) : snapshot.facilities.end();
+		if (!id || facility == snapshot.facilities.end())
+		{
+			uiNotice = "Select a built-in or player-built mill first.";
+		}
+		else if (std::none_of(snapshot.roadNodes.begin(), snapshot.roadNodes.end(), [&](const auto& node) {
+			return node.gridX == facility->gridX && node.gridZ == facility->gridZ;
+		}))
+		{
+			uiNotice = "Mill OR-" + std::to_string(*id) + " has no road node at grid (" +
+				std::to_string(facility->gridX) + ", " + std::to_string(facility->gridZ) +
+				"); connect a road endpoint to this cell before assigning it.";
+		}
+		else
+		{
+			truckPlan.millId = *id;
+			setTruckMillButton.SetText("Mill: OR-" + std::to_string(*id));
+			uiNotice = "Truck mill endpoint set to OR-" + std::to_string(*id) + ". Queue the plan when all endpoints are ready.";
+		}
+		UpdateStatusLabel();
+	}
+
+	void OpenRepublicApplication::AssignTruckStorageEndpoint()
+	{
+		const auto id = GetSelectedSimulationId();
+		const auto snapshot = simulation.GetSnapshot();
+		const auto storage = id ? std::find_if(snapshot.storages.begin(), snapshot.storages.end(), [&](const auto& item) {
+			return item.id == *id;
+		}) : snapshot.storages.end();
+		if (!id || storage == snapshot.storages.end())
+		{
+			uiNotice = "Select the built-in warehouse or a placed storage first.";
+		}
+		else if (std::none_of(snapshot.roadNodes.begin(), snapshot.roadNodes.end(), [&](const auto& node) {
+			return node.gridX == storage->gridX && node.gridZ == storage->gridZ;
+		}))
+		{
+			uiNotice = "Storage OR-" + std::to_string(*id) + " has no road node at grid (" +
+				std::to_string(storage->gridX) + ", " + std::to_string(storage->gridZ) +
+				"); connect a road endpoint to this cell before assigning it.";
+		}
+		else
+		{
+			truckPlan.storageId = *id;
+			setTruckStorageButton.SetText("Storage: OR-" + std::to_string(*id));
+			uiNotice = "Truck storage endpoint set to OR-" + std::to_string(*id) + ". Queue the plan when all endpoints are ready.";
+		}
+		UpdateStatusLabel();
+	}
+
+	void OpenRepublicApplication::QueueSelectedTruckPlan()
+	{
+		const auto snapshot = simulation.GetSnapshot();
+		if (!snapshot.pendingTruckPlans.empty())
+		{
+			uiNotice = "Truck plan command " + std::to_string(snapshot.pendingTruckPlans.front().commandId) +
+				" is still pending; wait for its fixed-tick result before queueing another plan.";
+			UpdateStatusLabel();
+			return;
+		}
+		const auto activeFarm = std::find_if(snapshot.facilities.begin(), snapshot.facilities.end(), [&](const auto& item) {
+			return item.id == snapshot.truckPlan.farmId && item.type == openrepublic::sim::FacilityType::Farm;
+		});
+		const auto activeFarmNode = activeFarm == snapshot.facilities.end()
+			? snapshot.roadNodes.end()
+			: std::find_if(snapshot.roadNodes.begin(), snapshot.roadNodes.end(), [&](const auto& node) {
+				return node.gridX == activeFarm->gridX && node.gridZ == activeFarm->gridZ;
+			});
+		const bool idleAtAssignedFarm = snapshot.truckCargo == openrepublic::sim::Resource::None &&
+			snapshot.truckCargoAmount == 0 && snapshot.activeRoute.empty() &&
+			snapshot.truckStage == openrepublic::sim::TruckStage::LoadGrainAtFarm &&
+			activeFarmNode != snapshot.roadNodes.end() && snapshot.truckNode == activeFarmNode->id;
+		if (!idleAtAssignedFarm)
+		{
+			const auto activeStorage = std::find_if(snapshot.storages.begin(), snapshot.storages.end(), [&](const auto& item) {
+				return item.id == snapshot.truckPlan.storageId;
+			});
+			const bool storageOnlyRetarget = truckPlan.farmId == snapshot.truckPlan.farmId &&
+				truckPlan.millId == snapshot.truckPlan.millId && truckPlan.storageId != snapshot.truckPlan.storageId &&
+				snapshot.truckStage == openrepublic::sim::TruckStage::DeliverFlourToWarehouse &&
+				snapshot.truckCargo == openrepublic::sim::Resource::Flour && snapshot.truckCargoAmount > 0 &&
+				activeStorage != snapshot.storages.end() && activeStorage->inventory.flour >= kStorageFlourCapacity;
+			if (!storageOnlyRetarget)
+			{
+				uiNotice = "Truck plan changes wait until the truck is empty, its route is clear, and it is idle at its assigned farm. During delivery recovery, only change Storage while keeping Farm and Mill unchanged and the active storage is full of flour.";
+				UpdateStatusLabel();
+				return;
+			}
+		}
+		const std::uint64_t commandId = simulation.QueueTruckPlan(truckPlan);
+		if (commandId == 0)
+		{
+			uiNotice = "Truck plan could not be queued; the bounded command queue may be full or the simulation may be at its terminal tick.";
+		}
+		else
+		{
+			uiNotice = "Queued truck plan command " + std::to_string(commandId) + " (Farm OR-" +
+				std::to_string(truckPlan.farmId) + " -> Mill OR-" + std::to_string(truckPlan.millId) +
+				" -> Storage OR-" + std::to_string(truckPlan.storageId) + "); graph connectivity and truck state will be validated at the next fixed tick.";
+		}
+		UpdateStatusLabel();
+	}
+
+	void OpenRepublicApplication::ApplyPendingRoadToggle()
+	{
+		if (!pendingMillApproachRoadState.has_value()) return;
+		const bool requestedState = *pendingMillApproachRoadState;
+		pendingMillApproachRoadState.reset();
+		if (simulation.SetRoadEnabled(202, requestedState))
+		{
+			millApproachRoadEnabled = requestedState;
+			uiNotice = std::string("Mill approach road ") + (millApproachRoadEnabled ? "opened" : "closed") +
+				" at a fixed simulation tick boundary.";
+		}
+		else
+		{
+			uiNotice = "Road remains open while the truck's active route requires it.";
+		}
+	}
+
 	void OpenRepublicApplication::BeginFacilityPlacement(openrepublic::sim::FacilityType type)
 	{
 		CancelRoadPlacement();
+		activeStoragePlacement = false;
+		placeStorageButton.SetText("Place storage");
 		activeFacilityPlacement = type;
 		SelectBuilding(wi::ecs::INVALID_ENTITY);
 		uiNotice = std::string("Choose a ground cell for the synthetic ") +
@@ -697,13 +912,28 @@ namespace openrepublic
 	void OpenRepublicApplication::CancelFacilityPlacement()
 	{
 		activeFacilityPlacement.reset();
-		uiNotice = "Facility placement cancelled.";
+		activeStoragePlacement = false;
+		placeStorageButton.SetText("Place storage");
+		uiNotice = "Placement mode cancelled.";
+		UpdateStatusLabel();
+	}
+
+	void OpenRepublicApplication::BeginStoragePlacement()
+	{
+		CancelRoadPlacement();
+		activeFacilityPlacement.reset();
+		activeStoragePlacement = true;
+		SelectBuilding(wi::ecs::INVALID_ENTITY);
+		placeStorageButton.SetText("Cancel storage");
+		uiNotice = "Place synthetic storage: click a valid construction grid cell. The storage is queued for validation at the next fixed simulation tick; Esc or Cancel build exits placement.";
 		UpdateStatusLabel();
 	}
 
 	void OpenRepublicApplication::BeginRoadPlacement()
 	{
 		activeFacilityPlacement.reset();
+		activeStoragePlacement = false;
+		placeStorageButton.SetText("Place storage");
 		activeRoadPlacement = true;
 		pendingRoadStart.reset();
 		SelectBuilding(wi::ecs::INVALID_ENTITY);
@@ -737,6 +967,7 @@ namespace openrepublic
 				? kPlacedFarmColor : kPlacedMillColor;
 			SetEntityColor(facilityEntities[i], selectedBuilding == facilityEntities[i] ? kSelectedBuildingColor : baseColor);
 		}
+		UpdateStatusLabel();
 
 		if (window != nullptr)
 		{
@@ -863,6 +1094,48 @@ namespace openrepublic
 			UpdateStatusLabel();
 			return;
 		}
+		if (activeStoragePlacement)
+		{
+			if (!std::isfinite(ray.origin.y) || !std::isfinite(ray.direction.y) || std::abs(ray.direction.y) < 1e-6f)
+			{
+				uiNotice = "Storage placement ray is parallel to the ground; adjust the camera.";
+				UpdateStatusLabel();
+				return;
+			}
+			const float distance = -ray.origin.y / ray.direction.y;
+			if (!std::isfinite(distance) || distance < ray.TMin || distance > ray.TMax)
+			{
+				uiNotice = "No ground cell at this pointer location.";
+				UpdateStatusLabel();
+				return;
+			}
+			const float worldX = ray.origin.x + ray.direction.x * distance;
+			const float worldZ = ray.origin.z + ray.direction.z * distance;
+			const float gridXFloat = std::round(worldX / kPlacementGridSpacing);
+			const float gridZFloat = std::round(worldZ / kPlacementGridSpacing);
+			if (!std::isfinite(gridXFloat) || !std::isfinite(gridZFloat) ||
+				gridXFloat < openrepublic::sim::Simulation::PrototypeGridMin || gridXFloat > openrepublic::sim::Simulation::PrototypeGridMax ||
+				gridZFloat < openrepublic::sim::Simulation::PrototypeGridMin || gridZFloat > openrepublic::sim::Simulation::PrototypeGridMax)
+			{
+				uiNotice = "Storage location is outside the prototype construction grid.";
+				UpdateStatusLabel();
+				return;
+			}
+			const auto gridX = static_cast<std::int32_t>(gridXFloat);
+			const auto gridZ = static_cast<std::int32_t>(gridZFloat);
+			const std::uint64_t commandId = simulation.QueueStoragePlacement(gridX, gridZ);
+			if (commandId == 0)
+			{
+				uiNotice = "Could not queue storage placement; the bounded construction queue may be full or at its terminal tick.";
+			}
+			else
+			{
+				uiNotice = "Queued storage placement command " + std::to_string(commandId) + " at grid (" +
+					std::to_string(gridX) + ", " + std::to_string(gridZ) + "); occupancy and capacity are validated at the next fixed tick.";
+			}
+			UpdateStatusLabel();
+			return;
+		}
 		const wi::scene::Scene::RayIntersectionResult hit = previewWorld.Intersects(ray);
 		SelectBuilding(hit.entity);
 	}
@@ -882,6 +1155,18 @@ namespace openrepublic
 				uiNotice = result.accepted
 					? "Road construction command " + std::to_string(result.commandId) + " accepted as edge " + std::to_string(result.entityId) + "."
 					: "Road construction command " + std::to_string(result.commandId) + " rejected by road graph validation.";
+			}
+			else if (result.type == openrepublic::sim::ConstructionCommandType::StoragePlacement)
+			{
+				uiNotice = result.accepted
+					? "Storage placement command " + std::to_string(result.commandId) + " accepted as OR-" + std::to_string(result.entityId) + "."
+					: "Storage placement command " + std::to_string(result.commandId) + " rejected: occupied cell or storage limit.";
+			}
+			else if (result.type == openrepublic::sim::ConstructionCommandType::TruckPlan)
+			{
+				uiNotice = result.accepted
+					? "Truck plan command " + std::to_string(result.commandId) + " accepted; the selected route is now active."
+					: "Truck plan command " + std::to_string(result.commandId) + " rejected: invalid endpoint, disconnected graph, or truck still active on its previous plan.";
 			}
 			else
 			{
@@ -952,9 +1237,9 @@ namespace openrepublic
 			if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(prototypeStorageEntities[i]))
 			{
 				transform->translation_local = XMFLOAT3(
-					static_cast<float>(storage.gridX) * 1.25f,
+					static_cast<float>(storage.gridX) * kPlacementGridSpacing,
 					0.58f,
-					static_cast<float>(storage.gridZ) * 1.25f);
+					GetSyntheticEntityDisplayZ(storage.gridX, storage.gridZ));
 				transform->UpdateTransform();
 			}
 		}
@@ -962,10 +1247,13 @@ namespace openrepublic
 
 	void OpenRepublicApplication::SyncFacilities(const openrepublic::sim::Snapshot& snapshot)
 	{
-		bool identityChanged = facilityEntities.size() != snapshot.facilities.size();
+		const std::size_t firstDynamicFacility = std::min<std::size_t>(2, snapshot.facilities.size());
+		const std::size_t dynamicFacilityCount = snapshot.facilities.size() - firstDynamicFacility;
+		bool identityChanged = facilityEntities.size() != dynamicFacilityCount;
 		for (std::size_t i = 0; !identityChanged && i < snapshot.facilities.size(); ++i)
 		{
-			identityChanged = facilityIds[i] != "OR-" + std::to_string(snapshot.facilities[i].id);
+			if (i < firstDynamicFacility) continue;
+			identityChanged = facilityIds[i - firstDynamicFacility] != "OR-" + std::to_string(snapshot.facilities[i].id);
 		}
 		if (identityChanged)
 		{
@@ -974,11 +1262,12 @@ namespace openrepublic
 			facilityIds.clear();
 			facilityTypes.clear();
 		}
-		for (std::size_t i = 0; i < snapshot.facilities.size(); ++i)
+		for (std::size_t i = firstDynamicFacility; i < snapshot.facilities.size(); ++i)
 		{
 			const auto& facility = snapshot.facilities[i];
+			const std::size_t dynamicIndex = i - firstDynamicFacility;
 			const std::string openRepublicId = "OR-" + std::to_string(facility.id);
-			if (i >= facilityEntities.size())
+			if (dynamicIndex >= facilityEntities.size())
 			{
 				const std::string kind = facility.type == openrepublic::sim::FacilityType::Farm ? "farm" : "mill";
 				const wi::ecs::Entity entity = previewWorld.Entity_CreateCube("OpenRepublic synthetic " + kind + " " + openRepublicId);
@@ -991,16 +1280,16 @@ namespace openrepublic
 				facilityIds.push_back(openRepublicId);
 				facilityTypes.push_back(facility.type);
 			}
-			facilityTypes[i] = facility.type;
-			if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(facilityEntities[i]))
+			facilityTypes[dynamicIndex] = facility.type;
+			if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(facilityEntities[dynamicIndex]))
 			{
 				transform->translation_local = XMFLOAT3(
 					static_cast<float>(facility.gridX) * kPlacementGridSpacing, 0.7f,
-					static_cast<float>(facility.gridZ) * kPlacementGridSpacing);
+					GetSyntheticEntityDisplayZ(facility.gridX, facility.gridZ));
 				transform->UpdateTransform();
 			}
 			const XMFLOAT4 baseColor = facility.type == openrepublic::sim::FacilityType::Farm ? kPlacedFarmColor : kPlacedMillColor;
-			SetEntityColor(facilityEntities[i], selectedBuilding == facilityEntities[i] ? kSelectedBuildingColor : baseColor);
+			SetEntityColor(facilityEntities[dynamicIndex], selectedBuilding == facilityEntities[dynamicIndex] ? kSelectedBuildingColor : baseColor);
 		}
 		if (selectedBuilding != wi::ecs::INVALID_ENTITY && GetOpenRepublicId(selectedBuilding).empty())
 		{
@@ -1130,10 +1419,17 @@ namespace openrepublic
 
 		pendingRules.reset();
 		lastConstructionResultCommandId = 0;
+		pendingMillApproachRoadState.reset();
+		truckPlan = simulation.GetSnapshot().truckPlan;
+		setTruckFarmButton.SetText("Farm: OR-" + std::to_string(truckPlan.farmId));
+		setTruckMillButton.SetText("Mill: OR-" + std::to_string(truckPlan.millId));
+		setTruckStorageButton.SetText("Storage: OR-" + std::to_string(truckPlan.storageId));
 		activeFacilityPlacement.reset();
+		activeStoragePlacement = false;
 		activeRoadPlacement = false;
 		pendingRoadStart.reset();
 		buildRoadButton.SetText("Build road");
+		placeStorageButton.SetText("Place storage");
 		simulationPaused = true;
 		simulationAccumulator = 0.0f;
 		pauseButton.SetText("Resume simulation");
@@ -1211,11 +1507,55 @@ namespace openrepublic
 			<< " | Roads " << snapshot.roads.size() << " (synthetic)"
 			<< "\nTruck node " << snapshot.truckNode << ", " << snapshot.truckCargoAmount << ' ' << ResourceName(snapshot.truckCargo)
 			<< " | Edge 202 " << (millApproachRoadEnabled ? "open" : "closed")
+			<< (pendingMillApproachRoadState.has_value() ? " (change pending)" : "")
 			<< " | Rules farm " << snapshot.rules.farmGrainPerHarvest << " every " << snapshot.rules.farmHarvestIntervalTicks
 			<< " ticks, mill " << snapshot.rules.millGrainPerTick << "/tick"
 			<< (pendingRules.has_value() ? " (pending)" : "")
 			<< " | " << (simulationPaused ? "paused" : "running")
-			<< (activeRoadPlacement ? (pendingRoadStart.has_value() ? " | road start selected" : " | road placement") : "");
+			<< (activeRoadPlacement ? (pendingRoadStart.has_value() ? " | road start selected" : " | road placement") : "")
+			<< (activeStoragePlacement ? " | storage placement" : "")
+			<< (activeFacilityPlacement.has_value() ? " | facility placement" : "")
+			<< "\nRoad lattice: " << openrepublic::sim::Simulation::RoadCellWorldSize
+			<< " world units/cell; service anchors Farm(-2,0), Mill(0,0), Warehouse(2,0)"
+			<< "\nActive truck plan: Farm OR-" << snapshot.truckPlan.farmId << " -> Mill OR-" << snapshot.truckPlan.millId
+			<< " -> Storage OR-" << snapshot.truckPlan.storageId;
+		if (truckPlan.farmId != snapshot.truckPlan.farmId || truckPlan.millId != snapshot.truckPlan.millId ||
+			truckPlan.storageId != snapshot.truckPlan.storageId)
+		{
+			text << "\nDraft truck plan (not active): Farm OR-" << truckPlan.farmId << " -> Mill OR-" << truckPlan.millId
+				<< " -> Storage OR-" << truckPlan.storageId;
+		}
+		else
+		{
+			text << "\nDraft truck plan matches the active plan.";
+		}
+		for (const auto& pending : snapshot.pendingTruckPlans)
+		{
+			text << "\nPending truck plan command " << pending.commandId << ": Farm OR-" << pending.plan.farmId
+				<< " -> Mill OR-" << pending.plan.millId << " -> Storage OR-" << pending.plan.storageId
+				<< " (queued; not active yet).";
+		}
+		queueTruckPlanButton.SetText(snapshot.pendingTruckPlans.empty() ? "Queue truck plan" : "Plan pending...");
+		if (const auto id = GetSelectedSimulationId())
+		{
+			const auto facility = std::find_if(snapshot.facilities.begin(), snapshot.facilities.end(), [&](const auto& item) {
+				return item.id == *id;
+			});
+			const auto storage = std::find_if(snapshot.storages.begin(), snapshot.storages.end(), [&](const auto& item) {
+				return item.id == *id;
+			});
+			if (facility != snapshot.facilities.end())
+			{
+				text << "\nSelected OR-" << *id << " "
+					<< (facility->type == openrepublic::sim::FacilityType::Farm ? "Farm" : "Mill")
+					<< " inventory: grain " << facility->inventory.grain << ", flour " << facility->inventory.flour;
+			}
+			else if (storage != snapshot.storages.end())
+			{
+				text << "\nSelected OR-" << *id << " Storage inventory: grain " << storage->inventory.grain
+					<< ", flour " << storage->inventory.flour;
+			}
+		}
 		if (!uiNotice.empty())
 		{
 			text << "\n" << uiNotice;

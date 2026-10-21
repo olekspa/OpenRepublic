@@ -30,6 +30,7 @@ struct PlacedStorageView {
     EntityId id{};
     std::int32_t gridX{};
     std::int32_t gridZ{};
+    InventoryView inventory{};
 };
 
 enum class FacilityType : std::uint8_t { Farm = 1, Mill = 2 };
@@ -39,6 +40,18 @@ struct FacilityView {
     FacilityType type{FacilityType::Farm};
     std::int32_t gridX{};
     std::int32_t gridZ{};
+    InventoryView inventory{};
+};
+
+struct TruckPlan {
+    EntityId farmId{1001};
+    EntityId millId{1002};
+    EntityId storageId{1003};
+};
+
+struct PendingTruckPlanView {
+    std::uint64_t commandId{};
+    TruckPlan plan;
 };
 
 struct FacilityPlacementResult {
@@ -47,7 +60,7 @@ struct FacilityPlacementResult {
     EntityId facilityId{};
 };
 
-enum class ConstructionCommandType : std::uint8_t { FacilityPlacement = 1, RoadSegment = 2 };
+enum class ConstructionCommandType : std::uint8_t { FacilityPlacement = 1, RoadSegment = 2, TruckPlan = 3, StoragePlacement = 4 };
 
 struct ConstructionResult {
     std::uint64_t commandId{};
@@ -94,6 +107,9 @@ struct Snapshot {
     std::size_t routeCursor{};
     std::vector<PlacedStorageView> prototypeStorages;
     std::vector<FacilityView> facilities;
+    std::vector<PlacedStorageView> storages;
+    TruckPlan truckPlan;
+    std::vector<PendingTruckPlanView> pendingTruckPlans;
     // Unacknowledged results, ordered by command ID. A caller should acknowledge
     // results after consuming them; they survive later ticks and save/load.
     std::vector<FacilityPlacementResult> facilityPlacementResults;
@@ -118,6 +134,7 @@ public:
     static constexpr EntityId FirstFacilityId = 4001;
     static constexpr std::size_t MaxPrototypeStorages = 8;
     static constexpr std::size_t MaxFacilities = 16;
+    static constexpr std::size_t MaxStorages = MaxPrototypeStorages + 1;
     static constexpr std::size_t MaxQueuedFacilityPlacements = 16;
     static constexpr std::size_t MaxUnacknowledgedFacilityResults = 16;
     static constexpr std::size_t MaxRoadNodes = 128;
@@ -141,7 +158,7 @@ public:
     SimulationRules GetRules() const;
     bool SetRules(const SimulationRules& rules, std::string* error = nullptr);
 
-    // Non-WRSR synthetic placement prototype. Returns zero on invalid or duplicate cells.
+    // Scenario/bootstrap helper only; live input should use QueueStoragePlacement.
     EntityId PlacePrototypeStorage(std::int32_t gridX, std::int32_t gridZ);
 
     // Queue a synthetic Farm or Mill construction request. Requests are
@@ -153,9 +170,15 @@ public:
     // share the facility command ID sequence and apply in submission order.
     std::uint64_t QueueRoadSegment(std::int32_t aGridX, std::int32_t aGridZ,
         std::int32_t bGridX, std::int32_t bGridZ);
+    std::uint64_t QueueStoragePlacement(std::int32_t gridX, std::int32_t gridZ);
+    std::uint64_t QueueTruckPlan(const TruckPlan& plan);
     bool AcknowledgeConstructionResult(std::uint64_t commandId);
     // Remove a result after the caller has consumed it. Returns false if unknown.
     bool AcknowledgeFacilityPlacementResult(std::uint64_t commandId);
+
+    // Scenario/bootstrap helper only. Live players should use QueueTruckPlan so
+    // the plan is validated and applied at a deterministic tick boundary.
+    bool SetTruckPlan(const TruckPlan& plan, std::string* error = nullptr);
 
     // Toggle a synthetic road edge for scenario construction and connectivity checks.
     // Closing an edge on the truck's remaining route replans to the same

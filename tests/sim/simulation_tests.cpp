@@ -29,6 +29,17 @@ std::string WithTruckRecord(std::string data, const std::string& record) {
     return data;
 }
 
+std::string WithSaveRecord(std::string data, const std::string& prefix, const std::string& replacement) {
+    auto begin = data.find(prefix);
+    while (begin != std::string::npos && begin != 0 && data[begin - 1] != '\n')
+        begin = data.find(prefix, begin + prefix.size());
+    if (begin == std::string::npos) return {};
+    const auto end = data.find('\n', begin);
+    if (end == std::string::npos) return {};
+    data.replace(begin, end - begin, replacement);
+    return data;
+}
+
 std::string RemoveSaveRecord(std::string data, const std::string& prefix) {
     std::istringstream input(data);
     std::ostringstream output;
@@ -40,9 +51,9 @@ std::string RemoveSaveRecord(std::string data, const std::string& prefix) {
 }
 
 std::string AsVersionFiveSave(std::string data) {
-    const auto header=data.find("OPENREPUBLIC_SIM 6");
+    const auto header=data.find("OPENREPUBLIC_SIM 7");
     if (header==std::string::npos) return {};
-    data.replace(header,std::string("OPENREPUBLIC_SIM 6").size(),"OPENREPUBLIC_SIM 5");
+    data.replace(header,std::string("OPENREPUBLIC_SIM 7").size(),"OPENREPUBLIC_SIM 6");
     std::istringstream input(data);
     std::ostringstream output;
     std::string line;
@@ -55,6 +66,24 @@ std::string AsVersionFiveSave(std::string data) {
             for(std::uint64_t i=0;i<edges;++i) {
                 std::uint32_t id=0,a=0,b=0; unsigned enabled=0; record>>id>>a>>b>>enabled;
                 if(i<4) line+=" "+std::to_string(enabled);
+            }
+        }
+        else if (line.rfind("STORAGES ",0)==0 || line.rfind("TRUCK_PLAN ",0)==0) continue;
+        else if (line.rfind("FACILITIES ",0)==0) {
+            std::istringstream record(line); std::string tag; std::uint64_t count=0; record>>tag>>count;
+            line="FACILITIES 0";
+            for(std::uint64_t i=0;i<count;++i) {
+                std::uint32_t id=0; unsigned type=0; int x=0,z=0; std::uint32_t grain=0,flour=0;
+                record>>id>>type>>x>>z>>grain>>flour;
+                if(id < Simulation::FirstFacilityId) continue;
+                if(line=="FACILITIES 0") line="FACILITIES 1";
+                else {
+                    const auto countStart=line.find(' ');
+                    const auto countEnd=line.find(' ',countStart+1);
+                    const auto existing=std::stoull(line.substr(countStart+1,countEnd-countStart-1));
+                    line.replace(countStart+1,countEnd-countStart-1,std::to_string(existing+1));
+                }
+                line+=" "+std::to_string(id)+" "+std::to_string(type)+" "+std::to_string(x)+" "+std::to_string(z);
             }
         }
         else if (line.rfind("CONSTRUCTION_QUEUE ",0)==0) {
@@ -77,6 +106,35 @@ std::string AsVersionFiveSave(std::string data) {
             }
         }
         output<<line<<'\n';
+    }
+    data=output.str();
+    const auto v6=data.find("OPENREPUBLIC_SIM 6");
+    data.replace(v6,std::string("OPENREPUBLIC_SIM 6").size(),"OPENREPUBLIC_SIM 5");
+    return data;
+}
+
+std::string AsVersionSixSave(std::string data) {
+    const auto header = data.find("OPENREPUBLIC_SIM 7");
+    if (header == std::string::npos) return {};
+    data.replace(header, std::string("OPENREPUBLIC_SIM 7").size(), "OPENREPUBLIC_SIM 6");
+    std::istringstream input(data);
+    std::ostringstream output;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.rfind("STORAGES ", 0) == 0 || line.rfind("TRUCK_PLAN ", 0) == 0) continue;
+        if (line.rfind("FACILITIES ", 0) == 0) {
+            std::istringstream record(line); std::string tag; std::uint64_t count=0; record>>tag>>count;
+            std::vector<std::string> placed;
+            for (std::uint64_t i=0;i<count;++i) {
+                std::uint32_t id=0, grain=0, flour=0; unsigned type=0; int x=0,z=0;
+                if (!(record>>id>>type>>x>>z>>grain>>flour)) return {};
+                if (id >= Simulation::FirstFacilityId)
+                    placed.push_back(std::to_string(id)+" "+std::to_string(type)+" "+std::to_string(x)+" "+std::to_string(z));
+            }
+            line = "FACILITIES " + std::to_string(placed.size());
+            for (const auto& item : placed) line += " " + item;
+        }
+        output << line << '\n';
     }
     return output.str();
 }
@@ -150,15 +208,16 @@ int main() {
         "custom harvest amount and interval produce three grain before the truck takes two");
     customRulesSim.Step(3); // Truck reaches and unloads at the mill.
     Check(customRulesSim.GetSnapshot().mill.grain == 2, "custom-rule grain reaches the mill");
-    Check(customRulesSim.SetRoadEnabled(203, false) && customRulesSim.SetRoadEnabled(204, false),
-        "mill throughput fixture isolates the mill from flour export");
+    Check(customRulesSim.SetRoadEnabled(203, false) == false,
+        "plan validation rejects closing the active mill-to-storage path");
     customRulesSim.Step();
-    Check(customRulesSim.GetSnapshot().mill.grain == 0 && customRulesSim.GetSnapshot().mill.flour == 2,
-        "custom mill throughput processes two grain into one-to-one flour");
+    Check(customRulesSim.GetSnapshot().mill.grain == 0 && customRulesSim.GetSnapshot().truckCargo == Resource::Flour &&
+        customRulesSim.GetSnapshot().truckCargoAmount == 2,
+        "custom mill throughput processes two grain and the truck retains the produced flour");
     const auto customSave = customRulesSim.Save();
-    Check(customSave.find("OPENREPUBLIC_SIM 6\n") == 0, "rules are persisted in version 6 saves");
+    Check(customSave.find("OPENREPUBLIC_SIM 7\n") == 0, "rules are persisted in version 7 saves");
     Simulation customRestored;
-    Check(customRestored.Load(customSave, &error), "version 6 custom-rules save loads");
+    Check(customRestored.Load(customSave, &error), "version 7 custom-rules save loads");
     Check(customRestored.GetRules().farmGrainPerHarvest == 3 && customRestored.GetRules().farmHarvestIntervalTicks == 1 &&
         customRestored.GetRules().millGrainPerTick == 2, "v3 load restores active rules");
     Check(customRestored.Save() == customSave, "v3 custom-rules save/load is canonical");
@@ -202,7 +261,7 @@ int main() {
     Check(placement.PlacePrototypeStorage(-17, 0) == 0, "prototype storage rejects x below grid bounds");
     Check(placement.PlacePrototypeStorage(0, 17) == 0, "prototype storage rejects z above grid bounds");
     for (std::int32_t i = 0; i < 6; ++i)
-        Check(placement.PlacePrototypeStorage(i, 0) == Simulation::FirstPrototypeStorageId + 2 + i,
+        Check(placement.PlacePrototypeStorage(i, 2) == Simulation::FirstPrototypeStorageId + 2 + i,
             "valid prototype storage receives next stable ID");
     Check(placement.PlacePrototypeStorage(10, 10) == 0, "ninth prototype storage is rejected");
     const auto placed = placement.GetSnapshot().prototypeStorages;
@@ -212,7 +271,7 @@ int main() {
 
     // Save/load preserves construction and replays the next placement identically.
     const auto placedSave = placement.Save();
-    Check(placedSave.find("OPENREPUBLIC_SIM 6\n") == 0, "construction uses the current version 6 save format");
+    Check(placedSave.find("OPENREPUBLIC_SIM 7\n") == 0, "construction uses the current version 7 save format");
     Simulation placementRestored;
     Check(placementRestored.Load(placedSave, &error), "version 3 save with construction loads");
     Check(placementRestored.Save() == placedSave, "construction save/load round-trip is canonical");
@@ -229,7 +288,7 @@ int main() {
     const auto invalidTypeCommand = construction.QueueFacilityPlacement(static_cast<FacilityType>(99), 4, 3);
     Check(farmCommand == 1 && duplicateCommand == 2 && invalidTypeCommand == 3,
         "facility placement commands receive stable submission IDs");
-    Check(construction.GetSnapshot().facilities.empty() && construction.GetSnapshot().facilityPlacementResults.empty(),
+    Check(construction.GetSnapshot().facilities.size() == 2 && construction.GetSnapshot().facilityPlacementResults.empty(),
         "queued facilities are not visible before a fixed tick boundary");
     const auto queuedSave = construction.Save();
     Simulation queuedRestored;
@@ -248,7 +307,7 @@ int main() {
         "later command targeting an occupied cell is rejected");
     Check(!constructionSnapshot.facilityPlacementResults[2].accepted,
         "unknown facility type is rejected at the tick boundary");
-    Check(constructionSnapshot.facilities.size() == 1 && constructionSnapshot.facilities[0].type == FacilityType::Farm,
+    Check(constructionSnapshot.facilities.size() == 3 && constructionSnapshot.facilities[2].id == Simulation::FirstFacilityId && constructionSnapshot.facilities[2].type == FacilityType::Farm,
         "snapshot exposes the accepted typed facility");
     Check(construction.Save() == queuedRestored.Save(), "queued placement continuation is deterministic after reload");
     Check(construction.PlacePrototypeStorage(2, 3) == 0,
@@ -312,15 +371,25 @@ int main() {
         accelerated.QueueFacilityPlacement(FacilityType::Mill, 3, 0) != 0,
         "synthetic farm and mill requests queue");
     accelerated.Step();
-    Check(accelerated.GetSnapshot().facilities.size() == 2,
+    Check(accelerated.GetSnapshot().facilities.size() == 4,
         "both non-overlapping facility types are committed at the boundary");
     accelerated.Step(5);
-    Check(accelerated.GetSnapshot().mill.grain == 0 &&
-        accelerated.GetSnapshot().truckCargo == Resource::Flour && accelerated.GetSnapshot().truckCargoAmount == 2,
-        "placed mill rate processes the delivered grain at its synthetic throughput");
+    Simulation unchangedDemo;
+    unchangedDemo.Step(6);
+    const auto acceleratedSnapshot = accelerated.GetSnapshot();
+    const auto unchangedSnapshot = unchangedDemo.GetSnapshot();
+    const auto addedFarm = std::find_if(acceleratedSnapshot.facilities.begin(), acceleratedSnapshot.facilities.end(),
+        [](const auto& f) { return f.id == Simulation::FirstFacilityId; });
+    const auto addedMill = std::find_if(acceleratedSnapshot.facilities.begin(), acceleratedSnapshot.facilities.end(),
+        [](const auto& f) { return f.id == Simulation::FirstFacilityId + 1; });
+    Check(addedFarm != acceleratedSnapshot.facilities.end() && addedFarm->inventory.grain > 0 &&
+        addedMill != acceleratedSnapshot.facilities.end() && addedMill->inventory.grain == 0 && addedMill->inventory.flour == 0 &&
+        acceleratedSnapshot.farm.grain == unchangedSnapshot.farm.grain &&
+        acceleratedSnapshot.mill.grain == unchangedSnapshot.mill.grain,
+        "placed farms and mills own stock without multiplying built-in inventories");
     accelerated.Step(4);
     Check(accelerated.GetSnapshot().deliveredFlourTotal > 0,
-        "the truck consumes facility-produced flour in the active delivery chain");
+        "the built-in demo chain continues independently of extra placed facilities");
     const auto activeFacilitiesSave = accelerated.Save();
     Simulation facilitiesRestored;
     Check(facilitiesRestored.Load(activeFacilitiesSave, &error), "save with typed facilities loads");
@@ -328,6 +397,171 @@ int main() {
     accelerated.Step(140);
     facilitiesRestored.Step(140);
     Check(facilitiesRestored.Save() == accelerated.Save(), "typed facility simulation resumes deterministically after reload");
+
+    // Fully assigned player-authored Farm -> Mill -> Storage logistics over
+    // the same deterministic road graph. This is synthetic acceptance only.
+    using openrepublic::sim::TruckPlan;
+    Simulation playerChain;
+    const auto playerStorageCommand = playerChain.QueueStoragePlacement(1, 1);
+    const auto playerStorageId = Simulation::FirstPrototypeStorageId;
+    Check(playerStorageCommand != 0, "player logistics queues an independent storage entity");
+    const auto roadA = playerChain.QueueRoadSegment(-1, 0, -1, 1);
+    const auto roadB = playerChain.QueueRoadSegment(-1, 1, 0, 1);
+    const auto roadC = playerChain.QueueRoadSegment(0, 1, 1, 1);
+    const auto playerFarmPlacement = playerChain.QueueFacilityPlacement(FacilityType::Farm, -1, 1);
+    const auto playerMillPlacement = playerChain.QueueFacilityPlacement(FacilityType::Mill, 0, 1);
+    playerChain.Step();
+    const auto playerBuilt = playerChain.GetSnapshot();
+    Check(roadA && roadB && roadC && playerFarmPlacement && playerMillPlacement &&
+        playerBuilt.facilities.size() == 4 && playerBuilt.constructionResults.size() == 6,
+        "player farm, mill, storage and road graph are created at a tick boundary");
+    const auto storageResult = std::find_if(playerBuilt.constructionResults.begin(), playerBuilt.constructionResults.end(),
+        [playerStorageCommand](const auto& r) { return r.commandId == playerStorageCommand; });
+    Check(storageResult != playerBuilt.constructionResults.end() && storageResult->accepted && storageResult->entityId == playerStorageId &&
+        storageResult->type == openrepublic::sim::ConstructionCommandType::StoragePlacement,
+        "queued storage placement returns a typed stable entity result");
+    const TruckPlan playerPlan{Simulation::FirstFacilityId, Simulation::FirstFacilityId + 1, playerStorageId};
+    const auto playerPlanCommand = playerChain.QueueTruckPlan(playerPlan);
+    Check(playerPlanCommand != 0 && playerChain.GetSnapshot().truckPlan.farmId == Simulation::FarmId,
+        "live plan request is queued without changing the active plan before the tick boundary");
+    const auto pendingPlanSave = playerChain.Save();
+    const auto queuedPlanView = playerChain.GetSnapshot().pendingTruckPlans;
+    Check(queuedPlanView.size() == 1 && queuedPlanView[0].commandId == playerPlanCommand &&
+        queuedPlanView[0].plan.farmId == playerPlan.farmId && queuedPlanView[0].plan.millId == playerPlan.millId &&
+        queuedPlanView[0].plan.storageId == playerPlan.storageId,
+        "snapshot exposes the pending plan command and exact assigned endpoints");
+    Simulation queuedPlanRestored;
+    Check(queuedPlanRestored.Load(pendingPlanSave, &error) && queuedPlanRestored.Save() == pendingPlanSave,
+        "save/load preserves an unprocessed queued truck plan");
+    const auto restoredQueuedPlanView = queuedPlanRestored.GetSnapshot().pendingTruckPlans;
+    Check(restoredQueuedPlanView.size() == 1 && restoredQueuedPlanView[0].commandId == playerPlanCommand &&
+        restoredQueuedPlanView[0].plan.storageId == playerPlan.storageId,
+        "snapshot restores exact queued plan endpoints after save/load");
+    playerChain.Step();
+    queuedPlanRestored.Step();
+    const auto appliedPlanSnapshot = playerChain.GetSnapshot();
+    const auto planResult = std::find_if(appliedPlanSnapshot.constructionResults.begin(), appliedPlanSnapshot.constructionResults.end(),
+        [playerPlanCommand](const auto& r) { return r.commandId == playerPlanCommand; });
+    Check(planResult != appliedPlanSnapshot.constructionResults.end() && planResult->accepted &&
+        planResult->type == openrepublic::sim::ConstructionCommandType::TruckPlan &&
+        appliedPlanSnapshot.truckPlan.farmId == playerPlan.farmId,
+        "connected player entities accept a typed queued plan at the tick boundary");
+    Check(queuedPlanRestored.Save() == playerChain.Save(), "queued plan applies deterministically after save/load");
+    Simulation pendingWorldPlan;
+    const auto pendingFarm = pendingWorldPlan.QueueFacilityPlacement(FacilityType::Farm, -2, 1);
+    const auto pendingMill = pendingWorldPlan.QueueFacilityPlacement(FacilityType::Mill, 2, 1);
+    struct PendingRoad { int ax; int az; int bx; int bz; };
+    const PendingRoad pendingRoads[] = {
+        {-2, 0, -2, 1}, {-2, 1, -1, 1}, {-1, 1, 0, 1},
+        {0, 1, 1, 1}, {1, 1, 2, 1}, {2, 1, 2, 0}
+    };
+    bool pendingRoadsQueued = true;
+    for (const auto& road : pendingRoads)
+        pendingRoadsQueued = pendingWorldPlan.QueueRoadSegment(road.ax, road.az, road.bx, road.bz) != 0 && pendingRoadsQueued;
+    const TruckPlan pendingWorldTruckPlan{Simulation::FirstFacilityId, Simulation::FirstFacilityId + 1,
+        Simulation::WarehouseId};
+    const auto pendingWorldPlanCommand = pendingWorldPlan.QueueTruckPlan(pendingWorldTruckPlan);
+    const auto pendingWorldSave = pendingWorldPlan.Save();
+    Simulation pendingWorldRestored;
+    Check(pendingFarm && pendingMill && pendingRoadsQueued && pendingWorldPlanCommand &&
+        pendingWorldRestored.Load(pendingWorldSave, &error),
+        "save/load accepts a queued plan whose earlier queued facilities and roads make it valid");
+    pendingWorldPlan.Step();
+    pendingWorldRestored.Step();
+    Check(pendingWorldRestored.Save() == pendingWorldPlan.Save() &&
+        pendingWorldRestored.GetSnapshot().truckPlan.farmId == pendingWorldTruckPlan.farmId,
+        "queued facility, road, and truck-plan sequence applies identically after save/load");
+    const auto beforePlanLegClosure = playerChain.Save();
+    Check(!playerChain.SetRoadEnabled(207, false),
+        "closing a non-active edge that severs the assigned mill-to-storage leg is rejected");
+    Check(playerChain.Save() == beforePlanLegClosure,
+        "rejected non-active plan-leg closure preserves graph, cargo and route transactionally");
+    Simulation disconnectedPlan;
+    disconnectedPlan.QueueFacilityPlacement(FacilityType::Farm, 6, 6);
+    disconnectedPlan.QueueFacilityPlacement(FacilityType::Mill, 7, 6);
+    disconnectedPlan.Step();
+    const auto disconnectedBefore = disconnectedPlan.Save();
+    Check(!disconnectedPlan.SetTruckPlan(TruckPlan{Simulation::FirstFacilityId, Simulation::FirstFacilityId + 1,
+        Simulation::WarehouseId}, &error), "plan without road-node-connected facilities is rejected");
+    Check(disconnectedPlan.Save() == disconnectedBefore, "disconnected plan rejection is transactional");
+    const auto disconnectedPlanCommand = disconnectedPlan.QueueTruckPlan(
+        TruckPlan{Simulation::FirstFacilityId, Simulation::FirstFacilityId + 1, Simulation::WarehouseId});
+    disconnectedPlan.Step();
+    const auto disconnectedResultSnapshot = disconnectedPlan.GetSnapshot();
+    const auto disconnectedResult = std::find_if(disconnectedResultSnapshot.constructionResults.begin(),
+        disconnectedResultSnapshot.constructionResults.end(), [disconnectedPlanCommand](const auto& r) {
+            return r.commandId == disconnectedPlanCommand;
+        });
+    Check(disconnectedResult != disconnectedResultSnapshot.constructionResults.end() && !disconnectedResult->accepted &&
+        disconnectedResult->type == openrepublic::sim::ConstructionCommandType::TruckPlan &&
+        disconnectedResultSnapshot.truckPlan.farmId == Simulation::FarmId,
+        "disconnected queued plan is rejected with a typed result and leaves the active plan unchanged");
+    bool reachedLoadedRoute = false;
+    for (int i = 0; i < 300; ++i) {
+        playerChain.Step();
+        const auto current = playerChain.GetSnapshot();
+        if (current.truckCargo == Resource::Grain && current.activeRoute.size() >= 2 && current.routeCursor == 0) {
+            reachedLoadedRoute = true;
+            break;
+        }
+    }
+    Check(reachedLoadedRoute, "assigned truck loads grain and advances along the player farm-to-mill route");
+    playerChain.Step(); // Save with cargo in transit at the route destination before unloading.
+    const auto cargoSave = playerChain.Save();
+    Check(cargoSave.find("OPENREPUBLIC_SIM 7\n") == 0, "assigned logistics state uses v7 save format");
+    Simulation playerChainRestored;
+    Check(playerChainRestored.Load(cargoSave, &error), "v7 save persists assigned route, facility stocks and truck cargo");
+    Check(playerChainRestored.Save() == cargoSave, "v7 assigned cargo save round-trips canonically");
+    Check(!playerChain.SetTruckPlan(TruckPlan{}, &error), "active cargo prevents a plan change that could strand freight");
+    for (int i = 0; i < 600; ++i) {
+        playerChain.Step();
+        playerChainRestored.Step();
+    }
+    Check(playerChainRestored.Save() == playerChain.Save(), "assigned route and cargo continue deterministically after reload");
+    const auto completedPlayerChain = playerChain.GetSnapshot();
+    const auto playerWarehouse = std::find_if(completedPlayerChain.storages.begin(), completedPlayerChain.storages.end(),
+        [playerStorageId](const auto& s) { return s.id == playerStorageId; });
+    Check(playerWarehouse != completedPlayerChain.storages.end() && playerWarehouse->inventory.flour > 0,
+        "player mill output is delivered to the selected player storage");
+    Check(completedPlayerChain.warehouse.flour == 0,
+        "delivery to a player storage does not alter the built-in warehouse projection");
+
+    Simulation fullStorageDelivery;
+    const auto overflowStorageCommand = fullStorageDelivery.QueueStoragePlacement(3, 0);
+    const auto overflowRoadCommand = fullStorageDelivery.QueueRoadSegment(2, 0, 3, 0);
+    fullStorageDelivery.Step();
+    Check(overflowStorageCommand && overflowRoadCommand, "full-storage recovery destination and road queue");
+    bool blockedWithCargo = false;
+    for (int i = 0; i < 800; ++i) {
+        const auto current = fullStorageDelivery.GetSnapshot();
+        if (current.warehouse.flour == 5 && current.truckCargo == Resource::Flour && current.truckCargoAmount > 0 &&
+            current.truckStage == TruckStage::DeliverFlourToWarehouse) {
+            blockedWithCargo = true;
+            break;
+        }
+        fullStorageDelivery.Step();
+    }
+    Check(blockedWithCargo, "prototype reaches a full built-in warehouse while retaining flour cargo");
+    if (blockedWithCargo) {
+        const auto beforeRetarget = fullStorageDelivery.GetSnapshot();
+        const auto retargetCommand = fullStorageDelivery.QueueTruckPlan(
+            TruckPlan{Simulation::FarmId, Simulation::MillId, Simulation::FirstPrototypeStorageId});
+        fullStorageDelivery.Step();
+        const auto afterRetarget = fullStorageDelivery.GetSnapshot();
+        const auto result = std::find_if(afterRetarget.constructionResults.begin(), afterRetarget.constructionResults.end(),
+            [retargetCommand](const auto& r) { return r.commandId == retargetCommand; });
+        Check(result != afterRetarget.constructionResults.end() && result->accepted &&
+            afterRetarget.truckPlan.storageId == Simulation::FirstPrototypeStorageId &&
+            afterRetarget.truckCargo == Resource::Flour && afterRetarget.truckCargoAmount == beforeRetarget.truckCargoAmount,
+            "queued retarget preserves blocked flour cargo and changes only its destination");
+        fullStorageDelivery.Step(20);
+        const auto recovered = fullStorageDelivery.GetSnapshot();
+        const auto overflowStorage = std::find_if(recovered.storages.begin(), recovered.storages.end(), [](const auto& s) {
+            return s.id == Simulation::FirstPrototypeStorageId;
+        });
+        Check(overflowStorage != recovered.storages.end() && overflowStorage->inventory.flour > 0,
+            "retargeted flour reaches the replacement storage without cargo loss");
+    }
 
     Simulation fullGrid;
     for (std::int32_t i = 0; i < static_cast<std::int32_t>(Simulation::MaxFacilities); ++i) {
@@ -353,9 +587,13 @@ int main() {
     Check(std::any_of(fullGridFinalResults.begin(), fullGridFinalResults.end(), [](const auto& r) { return !r.accepted; }),
         "facility collection rejects placement beyond its capacity");
 
-    // Enabled road states are visible and persist through version 2 saves.
+    // A closed road state persists only when the assigned plan remains connected.
     Simulation roadState;
-    Check(roadState.SetRoadEnabled(202, false), "road state can close a synthetic road edge");
+    roadState.QueueRoadSegment(-1, 0, -1, 1);
+    roadState.QueueRoadSegment(-1, 1, 0, 1);
+    roadState.QueueRoadSegment(0, 1, 0, 0);
+    roadState.Step();
+    Check(roadState.SetRoadEnabled(202, false), "road state can close a seed edge with a player-built route preserving the plan");
     const auto roadSave = roadState.Save();
     Simulation roadRestored;
     Check(roadRestored.Load(roadSave, &error), "version 3 road state save loads");
@@ -380,7 +618,7 @@ int main() {
     Check(std::all_of(migrated.roads.begin(), migrated.roads.end(),
         [](const openrepublic::sim::RoadView& road) { return road.enabled; }),
         "version 1 default-road fixture migrates with all roads open");
-    Check(v1Target.Save().find("OPENREPUBLIC_SIM 6\n") == 0, "migrated state writes current save version");
+    Check(v1Target.Save().find("OPENREPUBLIC_SIM 7\n") == 0, "migrated state writes current save version");
     Check(v1Target.GetRules().farmGrainPerHarvest == 2 && v1Target.GetRules().farmHarvestIntervalTicks == 2 &&
         v1Target.GetRules().millGrainPerTick == 1, "version 1 migration supplies default rules");
     const auto v2Save = AsVersionTwoSave(v1Source.Save());
@@ -393,7 +631,7 @@ int main() {
         "version 2 migration preserves state and construction collection");
     Check(v2Migrated.rules.farmGrainPerHarvest == 2 && v2Migrated.rules.farmHarvestIntervalTicks == 2 &&
         v2Migrated.rules.millGrainPerTick == 1, "version 2 migration supplies default rules");
-    Check(v2Target.Save().find("OPENREPUBLIC_SIM 6\n") == 0, "v2 migrated state writes current save version");
+    Check(v2Target.Save().find("OPENREPUBLIC_SIM 7\n") == 0, "v2 migrated state writes current save version");
 
     const auto v2ConstructionSave = AsVersionTwoSave(placedSave);
     Simulation v2ConstructionTarget;
@@ -408,24 +646,95 @@ int main() {
     Check(!v3Save.empty(), "test fixture represents the version 3 schema");
     Simulation v3Target;
     Check(v3Target.Load(v3Save, &error), "version 3 save loads through migration path");
-    Check(v3Target.GetSnapshot().facilities.empty() && v3Target.GetSnapshot().prototypeStorages.size() == Simulation::MaxPrototypeStorages,
-        "version 3 migration supplies empty typed facility state while preserving storage");
-    Check(v3Target.Save().find("OPENREPUBLIC_SIM 6\n") == 0, "v3 migrated state writes current save version");
+    Check(v3Target.GetSnapshot().facilities.size() == 2 && v3Target.GetSnapshot().prototypeStorages.size() == Simulation::MaxPrototypeStorages,
+        "version 3 migration supplies built-in entities while preserving storage");
+    Check(v3Target.Save().find("OPENREPUBLIC_SIM 7\n") == 0, "v3 migrated state writes current save version");
     const auto v4Save = AsVersionFourSave(activeFacilitiesSave);
     Check(!v4Save.empty(), "test fixture represents the version 4 schema");
     Simulation v4Target;
     Check(v4Target.Load(v4Save, &error), "version 4 save loads through migration path");
     Check(v4Target.GetSnapshot().facilityPlacementResults.empty(), "version 4 migration starts with no placement acknowledgments");
-    Check(v4Target.Save().find("OPENREPUBLIC_SIM 6\n") == 0, "v4 migrated state writes current save version");
+    Check(v4Target.Save().find("OPENREPUBLIC_SIM 7\n") == 0, "v4 migrated state writes current save version");
     Simulation v5Source;
-    Check(v5Source.SetRoadEnabled(202,false), "v5 migration fixture closes a legacy seed edge");
     const auto v5Save=AsVersionFiveSave(v5Source.Save());
     Simulation v5Target;
     Check(!v5Save.empty()&&v5Target.Load(v5Save,&error), "version 5 saves migrate to the dynamic graph");
     const auto migratedV5Roads=v5Target.GetSnapshot().roads;
     const auto migratedClosed=std::find_if(migratedV5Roads.begin(),migratedV5Roads.end(),[](const auto& road){return road.id==202;});
-    Check(migratedClosed!=migratedV5Roads.end()&&!migratedClosed->enabled, "v5 migration preserves seed edge state and node coordinates");
-    Check(v5Target.Save().find("OPENREPUBLIC_SIM 6\n")==0, "v5 migrated state writes current save version");
+    Check(migratedClosed!=migratedV5Roads.end()&&migratedClosed->enabled, "v5 migration preserves seed edge state and node coordinates");
+    Check(v5Target.Save().find("OPENREPUBLIC_SIM 7\n")==0, "v5 migrated state writes current save version");
+    Simulation v6Source;
+    Check(v6Source.QueueRoadSegment(-1, 0, -1, 1) != 0 &&
+        v6Source.QueueRoadSegment(-1, 1, 0, 1) != 0 &&
+        v6Source.QueueRoadSegment(0, 1, 0, 0) != 0,
+        "v6 fixture creates a player-built bypass edge chain");
+    v6Source.Step();
+    v6Source.Step(3);
+    Check(v6Source.GetSnapshot().farm.grain > 0 && v6Source.SetRoadEnabled(202, false),
+        "v6 fixture retains legacy farm stock and a closed seed edge alongside the player graph");
+    const auto v6Save = AsVersionSixSave(v6Source.Save());
+    Simulation v6Target;
+    const bool loadedV6 = !v6Save.empty() && v6Target.Load(v6Save, &error);
+    Check(loadedV6, "version 6 saves migrate built-ins and dynamic graph into v7");
+    const auto v6Migrated = v6Target.GetSnapshot();
+    Check(v6Migrated.facilities.size() == 2 && v6Migrated.farm.grain == v6Source.GetSnapshot().farm.grain &&
+        v6Migrated.roadNodes.size() == 7 && v6Migrated.roads.size() == 7,
+        "v6 migration preserves nonzero legacy stock plus every player graph node and edge");
+    Check(v6Target.Save().find("OPENREPUBLIC_SIM 7\n") == 0, "v6 migrated state writes current save version");
+
+    auto v6OverlappingSave = AsVersionSixSave(Simulation{}.Save());
+    v6OverlappingSave = WithSaveRecord(v6OverlappingSave, "FACILITIES ", "FACILITIES 1 4001 1 0 0");
+    v6OverlappingSave = WithSaveRecord(v6OverlappingSave, "PROTOTYPE_STORAGES ",
+        "PROTOTYPE_STORAGES 1 3001 2 0");
+    Simulation v6OverlapTarget;
+    const bool loadedV6OverlappingSave = !v6OverlappingSave.empty() && v6OverlapTarget.Load(v6OverlappingSave, &error);
+    if (!loadedV6OverlappingSave) std::cerr << "v6 overlap migration error: " << error << '\n';
+    Check(loadedV6OverlappingSave,
+        "v6 migration accepts placements that overlap built-in cells when that was valid in the old schema");
+    const auto v6OverlapSnapshot = v6OverlapTarget.GetSnapshot();
+    Check(v6OverlapSnapshot.facilities.size() == 3 && v6OverlapSnapshot.facilities[2].gridX == 0 &&
+        v6OverlapSnapshot.facilities[2].gridZ == 0 && v6OverlapSnapshot.storages.size() == 2 &&
+        v6OverlapSnapshot.storages[1].gridX == 2 && v6OverlapSnapshot.storages[1].gridZ == 0,
+        "v6 migration preserves facility/warehouse overlap coordinates");
+    Simulation v6OverlapRoundTrip;
+    Check(v6OverlapRoundTrip.Load(v6OverlapTarget.Save(), &error),
+        "migrated built-in overlaps remain valid after writing and reloading v7");
+
+    Simulation sameNodeRetargetSource;
+    const auto sameNodeStorageId = sameNodeRetargetSource.PlacePrototypeStorage(1, 0);
+    Check(sameNodeStorageId == Simulation::FirstPrototypeStorageId,
+        "same-node recovery fixture places storage on the existing road node");
+    auto sameNodeRetargetSave = sameNodeRetargetSource.Save();
+    sameNodeRetargetSave = WithSaveRecord(sameNodeRetargetSave, "DELIVERED ", "DELIVERED 9");
+    sameNodeRetargetSave = WithSaveRecord(sameNodeRetargetSave, "WAREHOUSE ", "WAREHOUSE 5");
+    sameNodeRetargetSave = WithTruckRecord(sameNodeRetargetSave, "TRUCK 4 3 2 2 1 3 3 4 5");
+    sameNodeRetargetSave = WithSaveRecord(sameNodeRetargetSave, "STORAGES ",
+        "STORAGES 2 1003 2 0 0 5 3001 1 0 0 4");
+    Simulation sameNodeRetarget;
+    const bool loadedSameNodeRetarget = !sameNodeRetargetSave.empty() && sameNodeRetarget.Load(sameNodeRetargetSave, &error);
+    if (!loadedSameNodeRetarget) std::cerr << "same-node retarget fixture error: " << error << '\n';
+    Check(loadedSameNodeRetarget,
+        "same-node recovery fixture loads a full original storage and an en-route flour truck");
+    const auto sameNodeCommand = sameNodeRetarget.QueueTruckPlan(
+        TruckPlan{Simulation::FarmId, Simulation::MillId, sameNodeStorageId});
+    sameNodeRetarget.Step();
+    const auto sameNodeUpdated = sameNodeRetarget.GetSnapshot();
+    const auto sameNodeResult = std::find_if(sameNodeUpdated.constructionResults.begin(),
+        sameNodeUpdated.constructionResults.end(), [sameNodeCommand](const auto& entry) {
+            return entry.commandId == sameNodeCommand;
+        });
+    Check(sameNodeResult != sameNodeUpdated.constructionResults.end() && sameNodeResult->accepted,
+        "storage retarget accepts a valid one-node route when truck is already at replacement storage");
+    const auto sameNodeReplacement = std::find_if(sameNodeUpdated.storages.begin(), sameNodeUpdated.storages.end(),
+        [sameNodeStorageId](const auto& storage) { return storage.id == sameNodeStorageId; });
+    Check(sameNodeReplacement != sameNodeUpdated.storages.end() && sameNodeReplacement->inventory.flour == 5 &&
+        sameNodeUpdated.truckCargoAmount == 1 && sameNodeUpdated.activeRoute == std::vector<openrepublic::sim::EntityId>({4}),
+        "same-node retarget delivers available capacity while preserving residual cargo on a one-node route");
+    Simulation sameNodeRoundTrip;
+    Check(sameNodeRoundTrip.Load(sameNodeRetarget.Save(), &error) &&
+        sameNodeRoundTrip.GetSnapshot().truckCargoAmount == 1 &&
+        sameNodeRoundTrip.GetSnapshot().activeRoute == std::vector<openrepublic::sim::EntityId>({4}),
+        "save/load preserves a partially blocked same-node delivery route");
 
     // Reject serialized enum values before converting them to the enum's
     // uint8_t representation; 257 must not wrap into FacilityType::Farm.
@@ -596,15 +905,14 @@ int main() {
     Check(!customRulesSim.Load(malformedRules, &error), "malformed v3 rule record is rejected");
     Check(customRulesSim.Save() == customBeforeInvalid, "malformed rules record rejection is transactional");
 
-    // A disconnected road graph cannot dispatch cargo; local production remains bounded.
+    // A closure that would disconnect the assigned plan is rejected before mutation.
     Simulation disconnected;
-    Check(disconnected.SetRoadEnabled(202, false), "known synthetic road edge can be disabled");
+    const auto disconnectedRoadStateBefore = disconnected.Save();
+    Check(!disconnected.SetRoadEnabled(202, false), "known synthetic road edge cannot disconnect the assigned plan");
+    Check(disconnected.Save() == disconnectedRoadStateBefore, "plan-disconnecting closure is transactional");
     disconnected.Step(100);
     const auto isolated = disconnected.GetSnapshot();
-    Check(isolated.farm.grain == 12, "disconnected farm production saturates at its storage capacity");
-    Check(isolated.truckNode == Simulation::FarmNodeId, "truck stays at farm when route is disconnected");
-    Check(isolated.truckCargoAmount == 0, "truck does not load cargo without a route");
-    Check(isolated.warehouse.flour == 0, "disconnected graph produces no warehouse delivery");
+    Check(isolated.deliveredFlourTotal > 0, "rejected plan-disconnecting closure leaves transport operating");
 
     // Player-built road segments use the same command IDs and tick boundary as
     // facility placement. A detour around closed edge 202 carries deliveries.
@@ -626,7 +934,8 @@ int main() {
     Check(detourOne==1&&detourTwo==2&&detourThree==3,"road commands share the monotonically increasing construction ID namespace");
     const auto beforeRoadTick=detour.GetSnapshot();
     Check(beforeRoadTick.roads.size()==4&&beforeRoadTick.roadNodes.size()==5,"queued road construction is invisible before Step");
-    Check(detour.SetRoadEnabled(202,false),"edge 202 can be closed before route dispatch");
+    detour.Step();
+    Check(detour.SetRoadEnabled(202,false),"edge 202 can be closed after the player detour preserves all plan legs");
     detour.Step();
     auto detourSnapshot=detour.GetSnapshot();
     Check(detourSnapshot.roads.size()==7&&detourSnapshot.roadNodes.size()==7,"three valid segments apply together at fixed tick boundary");
@@ -681,6 +990,10 @@ int main() {
     // Closing a passed road segment is allowed. Its historical presence in the
     // active route must not make a later save impossible to load.
     Simulation passedRoad;
+    passedRoad.QueueRoadSegment(-2, 0, -2, 1);
+    passedRoad.QueueRoadSegment(-2, 1, -1, 1);
+    passedRoad.QueueRoadSegment(-1, 1, -1, 0);
+    passedRoad.Step();
     passedRoad.Step(3); // Truck is at node 2 on route [1, 2, 3].
     Check(passedRoad.SetRoadEnabled(201, false), "a road behind the truck can be disabled");
     const auto passedRoadBytes = passedRoad.Save();
@@ -750,7 +1063,7 @@ int main() {
     // Invalid loads must not partially mutate the existing object.
     const auto beforeBadLoad = restored.Save();
     auto badVersion = bytes;
-    badVersion.replace(badVersion.find("OPENREPUBLIC_SIM 6"), std::string("OPENREPUBLIC_SIM 6").size(), "OPENREPUBLIC_SIM 9");
+    badVersion.replace(badVersion.find("OPENREPUBLIC_SIM 7"), std::string("OPENREPUBLIC_SIM 7").size(), "OPENREPUBLIC_SIM 9");
     Check(!restored.Load(badVersion, &error), "unsupported save version is rejected");
     Check(restored.Save() == beforeBadLoad, "rejected version leaves state unchanged");
     auto negativeTick = bytes;
@@ -766,6 +1079,65 @@ int main() {
     Check(restored.Save() == beforeBadLoad, "rejected record leaves state unchanged");
     Check(!restored.Load(bytes + "GARBAGE\n", &error), "unexpected trailing data is rejected");
     Check(restored.Save() == beforeBadLoad, "trailing-data rejection leaves state unchanged");
+
+    // Malformed v7 entity/plan records are rejected without changing a live target.
+    Simulation entitySaveSource;
+    const auto emptyEntitySave = entitySaveSource.Save();
+    auto overCapacityStorage = emptyEntitySave;
+    const auto storageRecord = overCapacityStorage.find("STORAGES 1 1003 2 0 0 0");
+    Check(storageRecord != std::string::npos, "v7 built-in storage fixture is present");
+    if (storageRecord != std::string::npos)
+        overCapacityStorage.replace(storageRecord, std::string("STORAGES 1 1003 2 0 0 0").size(), "STORAGES 1 1003 2 0 0 6");
+    const auto overCapacityWarehouseProjection = overCapacityStorage.find("WAREHOUSE 0");
+    Check(overCapacityWarehouseProjection != std::string::npos, "warehouse projection fixture is present");
+    if (overCapacityWarehouseProjection != std::string::npos)
+        overCapacityStorage.replace(overCapacityWarehouseProjection, std::string("WAREHOUSE 0").size(), "WAREHOUSE 6");
+    Check(!restored.Load(overCapacityStorage, &error) && restored.Save() == beforeBadLoad,
+        "over-capacity storage inventory is rejected transactionally");
+    auto overCapacityFarm = emptyEntitySave;
+    overCapacityFarm.replace(overCapacityFarm.find("FARM 0"), std::string("FARM 0").size(), "FARM 13");
+    overCapacityFarm.replace(overCapacityFarm.find("1001 1 -2 0 0 0"), std::string("1001 1 -2 0 0 0").size(),
+        "1001 1 -2 0 13 0");
+    Check(!restored.Load(overCapacityFarm, &error) && restored.Save() == beforeBadLoad,
+        "over-capacity facility inventory is rejected transactionally");
+    auto invalidPlanSave = emptyEntitySave;
+    invalidPlanSave.replace(invalidPlanSave.find("TRUCK_PLAN 1001 1002 1003"),
+        std::string("TRUCK_PLAN 1001 1002 1003").size(), "TRUCK_PLAN 9999 1002 1003");
+    Check(!restored.Load(invalidPlanSave, &error) && restored.Save() == beforeBadLoad,
+        "invalid assigned truck-plan entity is rejected transactionally");
+    Simulation detachedPlanSource;
+    detachedPlanSource.QueueFacilityPlacement(FacilityType::Farm, 6, 6);
+    detachedPlanSource.QueueFacilityPlacement(FacilityType::Mill, 7, 6);
+    detachedPlanSource.Step();
+    auto disconnectedPlanSave = detachedPlanSource.Save();
+    disconnectedPlanSave.replace(disconnectedPlanSave.find("TRUCK_PLAN 1001 1002 1003"),
+        std::string("TRUCK_PLAN 1001 1002 1003").size(), "TRUCK_PLAN 4001 4002 1003");
+    Check(!restored.Load(disconnectedPlanSave, &error) && restored.Save() == beforeBadLoad,
+        "disconnected assigned truck-plan endpoints are rejected transactionally");
+    detachedPlanSource.QueueTruckPlan(TruckPlan{Simulation::FirstFacilityId, Simulation::FirstFacilityId + 1,
+        Simulation::WarehouseId});
+    const auto disconnectedQueuedPlan = detachedPlanSource.Save();
+    Check(!restored.Load(disconnectedQueuedPlan, &error) && restored.Save() == beforeBadLoad,
+        "disconnected queued truck-plan endpoints are rejected transactionally");
+
+    Simulation storageResultSource;
+    storageResultSource.QueueStoragePlacement(5, 5);
+    storageResultSource.QueueStoragePlacement(6, 5);
+    storageResultSource.Step();
+    auto builtInStorageResult = storageResultSource.Save();
+    const auto acceptedStorageResult = builtInStorageResult.find("1 4 1 3001");
+    Check(acceptedStorageResult != std::string::npos, "accepted storage-result fixture is present");
+    if (acceptedStorageResult != std::string::npos)
+        builtInStorageResult.replace(acceptedStorageResult, std::string("1 4 1 3001").size(), "1 4 1 1003");
+    Check(!restored.Load(builtInStorageResult, &error) && restored.Save() == beforeBadLoad,
+        "accepted storage result cannot reference the built-in warehouse");
+    auto duplicateStorageResult = storageResultSource.Save();
+    const auto secondStorageResult = duplicateStorageResult.find("2 4 1 3002");
+    Check(secondStorageResult != std::string::npos, "second accepted storage-result fixture is present");
+    if (secondStorageResult != std::string::npos)
+        duplicateStorageResult.replace(secondStorageResult, std::string("2 4 1 3002").size(), "2 4 1 3001");
+    Check(!restored.Load(duplicateStorageResult, &error) && restored.Save() == beforeBadLoad,
+        "duplicate accepted storage IDs are rejected transactionally");
 
     Simulation terminalTick;
     auto terminalSave = terminalTick.Save();

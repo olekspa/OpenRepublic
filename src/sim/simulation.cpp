@@ -56,19 +56,27 @@ struct Simulation::State {
     Tick tick{};
     SimulationRules rules{};
     std::uint64_t deliveredFlourTotal{};
-    std::uint32_t farmGrain{};
-    std::uint32_t millGrain{};
-    std::uint32_t millFlour{};
-    std::uint32_t warehouseFlour{};
+    // Built-ins and player entities share the same inventory-bearing records.
+    // Legacy scalar members are replaced by lookups so the built-ins are not
+    // economically special after migration.
+    std::vector<PlacedStorageView> storages{{Simulation::WarehouseId, 2, 0, {0,0}}};
     EntityId truckNode{FarmNodeId};
     Resource cargo{Resource::None};
     std::uint32_t cargoAmount{};
     TruckStage stage{TruckStage::LoadGrainAtFarm};
     std::vector<EntityId> route;
     std::size_t routeCursor{};
+    TruckPlan truckPlan{};
     std::vector<PlacedStorageView> prototypeStorages;
-    struct PendingCommand { std::uint64_t commandId; ConstructionCommandType type; FacilityType facilityType; std::int32_t ax, az, bx, bz; };
-    std::vector<FacilityView> facilities;
+    struct PendingCommand {
+        std::uint64_t commandId{};
+        ConstructionCommandType type{ConstructionCommandType::FacilityPlacement};
+        FacilityType facilityType{FacilityType::Farm};
+        std::int32_t ax{}, az{}, bx{}, bz{};
+        TruckPlan plan{};
+    };
+    std::vector<FacilityView> facilities{{Simulation::FarmId, FacilityType::Farm, -2, 0, {0,0}},
+        {Simulation::MillId, FacilityType::Mill, 0, 0, {0,0}}};
     std::vector<PendingCommand> commandQueue;
     std::vector<ConstructionResult> commandResults;
     std::uint64_t nextCommandId{FirstFacilityCommandId};
@@ -83,6 +91,80 @@ struct Simulation::State {
     }
     bool HasNode(EntityId id) const {
         return std::any_of(nodes.begin(), nodes.end(), [id](const RoadNode& n){ return n.id==id; });
+    }
+
+    FacilityView* Facility(EntityId id) {
+        const auto it = std::find_if(facilities.begin(), facilities.end(), [id](const FacilityView& f){return f.id==id;});
+        return it == facilities.end() ? nullptr : &*it;
+    }
+    const FacilityView* Facility(EntityId id) const {
+        const auto it = std::find_if(facilities.begin(), facilities.end(), [id](const FacilityView& f){return f.id==id;});
+        return it == facilities.end() ? nullptr : &*it;
+    }
+    PlacedStorageView* Storage(EntityId id) {
+        const auto it = std::find_if(storages.begin(), storages.end(), [id](const PlacedStorageView& s){return s.id==id;});
+        return it == storages.end() ? nullptr : &*it;
+    }
+    const PlacedStorageView* Storage(EntityId id) const {
+        const auto it = std::find_if(storages.begin(), storages.end(), [id](const PlacedStorageView& s){return s.id==id;});
+        return it == storages.end() ? nullptr : &*it;
+    }
+    EntityId NodeFor(std::int32_t x, std::int32_t z) const {
+        const auto* node = NodeAt(x, z);
+        return node ? node->id : 0;
+    }
+    EntityId NodeForFacility(EntityId id) const {
+        const auto* f = Facility(id);
+        return f ? NodeFor(f->gridX, f->gridZ) : 0;
+    }
+    EntityId NodeForStorage(EntityId id) const {
+        const auto* s = Storage(id);
+        return s ? NodeFor(s->gridX, s->gridZ) : 0;
+    }
+    bool PlanEndpointsConnected(const TruckPlan& plan) const {
+        const auto* farm = Facility(plan.farmId);
+        const auto* mill = Facility(plan.millId);
+        const auto* storage = Storage(plan.storageId);
+        const auto farmNode = NodeForFacility(plan.farmId);
+        const auto millNode = NodeForFacility(plan.millId);
+        const auto storageNode = NodeForStorage(plan.storageId);
+        return farm && farm->type == FacilityType::Farm && mill && mill->type == FacilityType::Mill && storage &&
+            farmNode && millNode && storageNode && !FindRoute(farmNode, millNode).empty() &&
+            !FindRoute(millNode, storageNode).empty() && !FindRoute(storageNode, farmNode).empty();
+    }
+    bool PrepareTruckPlan(const TruckPlan& plan, std::vector<EntityId>& approach) const {
+        const auto farmNode = NodeForFacility(plan.farmId);
+        if (!PlanEndpointsConnected(plan)) return false;
+        approach = FindRoute(truckNode, farmNode);
+        return truckNode == farmNode || approach.size() >= 2;
+    }
+    bool PrepareStorageRetarget(const TruckPlan& plan, std::vector<EntityId>& replacementRoute) const {
+        const auto* oldStorage = Storage(truckPlan.storageId);
+        if (stage != TruckStage::DeliverFlourToWarehouse || cargo != Resource::Flour || cargoAmount == 0 ||
+            plan.farmId != truckPlan.farmId || plan.millId != truckPlan.millId || plan.storageId == truckPlan.storageId ||
+            !oldStorage || oldStorage->inventory.flour < WarehouseFlourCapacity || !PlanEndpointsConnected(plan)) return false;
+        const auto newStorageNode = NodeForStorage(plan.storageId);
+        replacementRoute = FindRoute(truckNode, newStorageNode);
+        return truckNode == newStorageNode || replacementRoute.size() >= 2;
+    }
+    bool TruckPlanBoundarySafe() const {
+        return !cargoAmount && route.empty() && stage == TruckStage::LoadGrainAtFarm &&
+            truckNode == NodeForFacility(truckPlan.farmId);
+    }
+    void ApplyTruckPlan(const TruckPlan& plan, std::vector<EntityId> approach, bool storageRetarget = false) {
+        truckPlan = plan;
+        if (storageRetarget) {
+            // Cargo, resource, and delivery stage stay unchanged; only its
+            // destination route changes. No goods are discarded.
+            route = std::move(approach);
+            routeCursor = 0;
+            return;
+        }
+        if (truckNode != NodeForFacility(plan.farmId)) {
+            stage = TruckStage::ReturnToFarm;
+            route = std::move(approach);
+            routeCursor = 0;
+        }
     }
 
     std::vector<EntityId> FindRoute(EntityId from, EntityId to, EntityId excludedEdgeId = 0) const {
@@ -147,14 +229,21 @@ struct Simulation::State {
     }
 
     void ServiceTruck() {
+        const auto farmNode = NodeForFacility(truckPlan.farmId);
+        const auto millNode = NodeForFacility(truckPlan.millId);
+        const auto storageNode = NodeForStorage(truckPlan.storageId);
+        auto* farm = Facility(truckPlan.farmId);
+        auto* mill = Facility(truckPlan.millId);
+        auto* storage = Storage(truckPlan.storageId);
+        if (!farm || !mill || !storage || !farmNode || !millNode || !storageNode) return;
         switch (stage) {
         case TruckStage::LoadGrainAtFarm: {
-            if (truckNode != FarmNodeId || cargoAmount != 0) return;
-            const auto path = FindRoute(truckNode, MillNodeId);
+            if (truckNode != farmNode || cargoAmount != 0) return;
+            const auto path = FindRoute(truckNode, millNode);
             if (path.size() < 2) return;
-            const auto amount = std::min(TruckCapacity, farmGrain);
+            const auto amount = std::min(TruckCapacity, farm->inventory.grain);
             if (!amount) return;
-            farmGrain -= amount;
+            farm->inventory.grain -= amount;
             cargo = Resource::Grain;
             cargoAmount = amount;
             stage = TruckStage::DeliverGrainToMill;
@@ -163,11 +252,11 @@ struct Simulation::State {
             break;
         }
         case TruckStage::DeliverGrainToMill:
-            if (truckNode != MillNodeId || route.empty() || routeCursor + 1 != route.size()) return;
+            if (truckNode != millNode || route.empty() || routeCursor + 1 != route.size()) return;
             {
-                const auto room = MillGrainCapacity - millGrain;
+                const auto room = MillGrainCapacity - mill->inventory.grain;
                 const auto moved = std::min(room, cargoAmount);
-                millGrain += moved;
+                mill->inventory.grain += moved;
                 cargoAmount -= moved;
                 if (cargoAmount == 0) {
                     cargo = Resource::None;
@@ -178,12 +267,12 @@ struct Simulation::State {
             }
             break;
         case TruckStage::LoadFlourAtMill: {
-            if (truckNode != MillNodeId || cargoAmount != 0) return;
-            const auto path = FindRoute(truckNode, WarehouseNodeId);
+            if (truckNode != millNode || cargoAmount != 0) return;
+            const auto path = FindRoute(truckNode, storageNode);
             if (path.size() < 2) return;
-            const auto amount = std::min(TruckCapacity, millFlour);
+            const auto amount = std::min(TruckCapacity, mill->inventory.flour);
             if (!amount) return;
-            millFlour -= amount;
+            mill->inventory.flour -= amount;
             cargo = Resource::Flour;
             cargoAmount = amount;
             stage = TruckStage::DeliverFlourToWarehouse;
@@ -192,11 +281,11 @@ struct Simulation::State {
             break;
         }
         case TruckStage::DeliverFlourToWarehouse:
-            if (truckNode != WarehouseNodeId || route.empty() || routeCursor + 1 != route.size()) return;
+            if (truckNode != storageNode || route.empty() || routeCursor + 1 != route.size()) return;
             {
-                const auto room = WarehouseFlourCapacity - warehouseFlour;
+                const auto room = WarehouseFlourCapacity - storage->inventory.flour;
                 const auto moved = std::min(room, cargoAmount);
-                warehouseFlour += moved;
+                storage->inventory.flour += moved;
                 if (std::numeric_limits<std::uint64_t>::max() - deliveredFlourTotal < moved)
                     deliveredFlourTotal = std::numeric_limits<std::uint64_t>::max();
                 else
@@ -211,12 +300,12 @@ struct Simulation::State {
             }
             break;
         case TruckStage::ReturnToFarm:
-            if (truckNode == FarmNodeId) {
+            if (truckNode == farmNode) {
                 stage = TruckStage::LoadGrainAtFarm;
                 route.clear();
                 routeCursor = 0;
             } else if (route.empty()) {
-                StartRoute(FarmNodeId);
+                StartRoute(farmNode);
             }
             break;
         }
@@ -225,7 +314,7 @@ struct Simulation::State {
     bool CellOccupied(std::int32_t x, std::int32_t z) const {
         return std::any_of(facilities.begin(), facilities.end(), [x, z](const FacilityView& f) {
             return f.gridX == x && f.gridZ == z;
-        }) || std::any_of(prototypeStorages.begin(), prototypeStorages.end(), [x, z](const PlacedStorageView& s) {
+        }) || std::any_of(storages.begin(), storages.end(), [x, z](const PlacedStorageView& s) {
             return s.gridX == x && s.gridZ == z;
         });
     }
@@ -238,12 +327,12 @@ struct Simulation::State {
                 const bool validType = request.facilityType == FacilityType::Farm || request.facilityType == FacilityType::Mill;
                 const bool validCell = request.ax >= Simulation::PrototypeGridMin && request.ax <= Simulation::PrototypeGridMax &&
                     request.az >= Simulation::PrototypeGridMin && request.az <= Simulation::PrototypeGridMax && !CellOccupied(request.ax, request.az);
-                accepted = validType && validCell && facilities.size() < Simulation::MaxFacilities;
+                accepted = validType && validCell && facilities.size() < Simulation::MaxFacilities + 2;
                 if (accepted) {
-                    entity = Simulation::FirstFacilityId + static_cast<EntityId>(facilities.size());
-                    facilities.push_back(FacilityView{entity, request.facilityType, request.ax, request.az});
+                    entity = Simulation::FirstFacilityId + static_cast<EntityId>(facilities.size() - 2);
+                    facilities.push_back(FacilityView{entity, request.facilityType, request.ax, request.az, {0,0}});
                 }
-            } else {
+            } else if (request.type == ConstructionCommandType::RoadSegment) {
                 const auto dx = static_cast<std::int64_t>(request.bx) - request.ax;
                 const auto dz = static_cast<std::int64_t>(request.bz) - request.az;
                 const bool inBounds = request.ax >= Simulation::PrototypeGridMin && request.ax <= Simulation::PrototypeGridMax &&
@@ -275,6 +364,26 @@ struct Simulation::State {
                     entity = nextRoadId++;
                     edges.push_back(Edge{entity,aid,bid,true});
                 }
+            } else if (request.type == ConstructionCommandType::StoragePlacement) {
+                const bool inBounds = request.ax >= Simulation::PrototypeGridMin && request.ax <= Simulation::PrototypeGridMax &&
+                    request.az >= Simulation::PrototypeGridMin && request.az <= Simulation::PrototypeGridMax;
+                accepted = inBounds && prototypeStorages.size() < Simulation::MaxPrototypeStorages &&
+                    storages.size() < Simulation::MaxStorages && !CellOccupied(request.ax, request.az);
+                if (accepted) {
+                    entity = Simulation::FirstPrototypeStorageId + static_cast<EntityId>(prototypeStorages.size());
+                    const PlacedStorageView placed{entity, request.ax, request.az, {0,0}};
+                    prototypeStorages.push_back(placed);
+                    storages.push_back(placed);
+                }
+            } else if (request.type == ConstructionCommandType::TruckPlan) {
+                std::vector<EntityId> approach;
+                bool storageRetarget = false;
+                accepted = TruckPlanBoundarySafe() && PrepareTruckPlan(request.plan, approach);
+                if (!accepted) {
+                    storageRetarget = PrepareStorageRetarget(request.plan, approach);
+                    accepted = storageRetarget;
+                }
+                if (accepted) ApplyTruckPlan(request.plan, std::move(approach), storageRetarget);
             }
             commandResults.push_back(ConstructionResult{request.commandId, request.type, accepted, entity});
         }
@@ -294,20 +403,16 @@ void Simulation::Step() {
     // process/output limits are explicit OpenRepublic prototype constraints.
     ++state_->tick;
     state_->ApplyCommands();
-    const auto extraFarms = static_cast<std::uint32_t>(std::count_if(state_->facilities.begin(), state_->facilities.end(),
-        [](const FacilityView& f) { return f.type == FacilityType::Farm; }));
-    const auto extraMills = static_cast<std::uint32_t>(std::count_if(state_->facilities.begin(), state_->facilities.end(),
-        [](const FacilityView& f) { return f.type == FacilityType::Mill; }));
-    const auto farmRate = state_->rules.farmGrainPerHarvest * (1U + extraFarms);
-    const auto millRate = state_->rules.millGrainPerTick * (1U + extraMills);
-    if (state_->tick % state_->rules.farmHarvestIntervalTicks == 0 && state_->farmGrain < FarmGrainCapacity) {
-        state_->farmGrain += std::min(farmRate, FarmGrainCapacity - state_->farmGrain);
-    }
-    if (state_->millGrain > 0 && state_->millFlour < MillFlourCapacity) {
-        const auto processed = std::min({state_->millGrain, millRate,
-            MillFlourCapacity - state_->millFlour});
-        state_->millGrain -= processed;
-        state_->millFlour += processed;
+    for (auto& facility : state_->facilities) {
+        if (facility.type == FacilityType::Farm && state_->tick % state_->rules.farmHarvestIntervalTicks == 0) {
+            facility.inventory.grain += std::min(state_->rules.farmGrainPerHarvest,
+                FarmGrainCapacity - facility.inventory.grain);
+        } else if (facility.type == FacilityType::Mill && facility.inventory.grain > 0) {
+            const auto processed = std::min({facility.inventory.grain, state_->rules.millGrainPerTick,
+                MillFlourCapacity - facility.inventory.flour});
+            facility.inventory.grain -= processed;
+            facility.inventory.flour += processed;
+        }
     }
     if (!state_->route.empty() && state_->routeCursor + 1 < state_->route.size()) {
         state_->MoveOneEdge();
@@ -334,11 +439,18 @@ Snapshot Simulation::GetSnapshot() const {
     for (const auto& result : state_->commandResults)
         if (result.type == ConstructionCommandType::FacilityPlacement)
             legacyResults.push_back(FacilityPlacementResult{result.commandId,result.accepted,result.entityId});
+    std::vector<PendingTruckPlanView> pendingTruckPlans;
+    for (const auto& request : state_->commandQueue)
+        if (request.type == ConstructionCommandType::TruckPlan)
+            pendingTruckPlans.push_back(PendingTruckPlanView{request.commandId, request.plan});
+    const auto* farm = state_->Facility(FarmId);
+    const auto* mill = state_->Facility(MillId);
+    const auto* warehouse = state_->Storage(WarehouseId);
     return Snapshot{
         state_->tick,
-        InventoryView{state_->farmGrain, 0},
-        InventoryView{state_->millGrain, state_->millFlour},
-        InventoryView{0, state_->warehouseFlour},
+        farm ? farm->inventory : InventoryView{},
+        mill ? mill->inventory : InventoryView{},
+        warehouse ? warehouse->inventory : InventoryView{},
         state_->truckNode,
         state_->cargo,
         state_->cargoAmount,
@@ -348,6 +460,9 @@ Snapshot Simulation::GetSnapshot() const {
         state_->routeCursor,
         state_->prototypeStorages,
         state_->facilities,
+        state_->storages,
+        state_->truckPlan,
+        std::move(pendingTruckPlans),
         std::move(legacyResults),
         state_->commandResults,
         std::move(roadNodes),
@@ -385,7 +500,9 @@ EntityId Simulation::PlacePrototypeStorage(std::int32_t gridX, std::int32_t grid
         [gridX, gridZ](const PlacedStorageView& item) { return item.gridX == gridX && item.gridZ == gridZ; });
     if (duplicate != state_->prototypeStorages.end()) return 0;
     const auto id = FirstPrototypeStorageId + static_cast<EntityId>(state_->prototypeStorages.size());
-    state_->prototypeStorages.push_back(PlacedStorageView{id, gridX, gridZ});
+    const PlacedStorageView placed{id, gridX, gridZ, {0,0}};
+    state_->prototypeStorages.push_back(placed);
+    state_->storages.push_back(placed);
     return id;
 }
 
@@ -409,6 +526,31 @@ std::uint64_t Simulation::QueueRoadSegment(std::int32_t ax, std::int32_t az, std
     return id;
 }
 
+std::uint64_t Simulation::QueueStoragePlacement(std::int32_t gridX, std::int32_t gridZ) {
+    if (state_->tick == std::numeric_limits<Tick>::max() ||
+        state_->commandQueue.size() >= MaxQueuedFacilityPlacements ||
+        state_->commandQueue.size() + state_->commandResults.size() >= MaxUnacknowledgedFacilityResults ||
+        state_->nextCommandId == std::numeric_limits<std::uint64_t>::max()) return 0;
+    const auto id = state_->nextCommandId++;
+    state_->commandQueue.push_back(State::PendingCommand{id, ConstructionCommandType::StoragePlacement,
+        FacilityType::Farm, gridX, gridZ, 0, 0});
+    return id;
+}
+
+std::uint64_t Simulation::QueueTruckPlan(const TruckPlan& plan) {
+    if (state_->tick == std::numeric_limits<Tick>::max() ||
+        state_->commandQueue.size() >= MaxQueuedFacilityPlacements ||
+        state_->commandQueue.size() + state_->commandResults.size() >= MaxUnacknowledgedFacilityResults ||
+        state_->nextCommandId == std::numeric_limits<std::uint64_t>::max()) return 0;
+    const auto id = state_->nextCommandId++;
+    State::PendingCommand request{};
+    request.commandId = id;
+    request.type = ConstructionCommandType::TruckPlan;
+    request.plan = plan;
+    state_->commandQueue.push_back(request);
+    return id;
+}
+
 bool Simulation::AcknowledgeConstructionResult(std::uint64_t commandId) {
     const auto it = std::find_if(state_->commandResults.begin(), state_->commandResults.end(),
         [commandId](const ConstructionResult& result) { return result.commandId == commandId; });
@@ -423,17 +565,44 @@ bool Simulation::AcknowledgeFacilityPlacementResult(std::uint64_t commandId) {
     return it != state_->commandResults.end() && AcknowledgeConstructionResult(commandId);
 }
 
+bool Simulation::SetTruckPlan(const TruckPlan& plan, std::string* error) {
+    std::vector<EntityId> approach;
+    bool storageRetarget = false;
+    bool valid = state_->TruckPlanBoundarySafe() && state_->PrepareTruckPlan(plan, approach);
+    if (!valid) {
+        storageRetarget = state_->PrepareStorageRetarget(plan, approach);
+        valid = storageRetarget;
+    }
+    if (!valid) {
+        if (error) *error = "plan requires connected endpoints and either an idle truck or a full-storage flour retarget";
+        return false;
+    }
+    state_->ApplyTruckPlan(plan, std::move(approach), storageRetarget);
+    if (error) error->clear();
+    return true;
+}
+
 bool Simulation::SetRoadEnabled(EntityId edgeId, bool enabled) {
     const auto it = std::find_if(state_->edges.begin(), state_->edges.end(), [edgeId](const Edge& edge) { return edge.id == edgeId; });
     if (it == state_->edges.end()) return false;
-    if (!enabled && state_->RouteUses(edgeId)) {
-        // Compute against the graph with this edge excluded before mutating
-        // anything. A rejected closure must preserve both graph and truck state.
-        auto alternate = state_->FindRoute(state_->truckNode, state_->route.back(), edgeId);
-        if (alternate.size() < 2) return false;
+    if (it->enabled == enabled) return true;
+    if (!enabled) {
+        // Trial the graph change. Preserve both graph and truck route if this
+        // would disconnect any assigned logistics leg or the active trip.
         it->enabled = false;
-        state_->route = std::move(alternate);
-        state_->routeCursor = 0;
+        if (!state_->PlanEndpointsConnected(state_->truckPlan)) {
+            it->enabled = true;
+            return false;
+        }
+        if (state_->RouteUses(edgeId)) {
+            auto alternate = state_->FindRoute(state_->truckNode, state_->route.back());
+            if (alternate.size() < 2) {
+                it->enabled = true;
+                return false;
+            }
+            state_->route = std::move(alternate);
+            state_->routeCursor = 0;
+        }
         return true;
     }
     it->enabled = enabled;
@@ -442,12 +611,15 @@ bool Simulation::SetRoadEnabled(EntityId edgeId, bool enabled) {
 
 std::string Simulation::Save() const {
     std::ostringstream out;
-    out << "OPENREPUBLIC_SIM 6\n"
+    const auto* farm = state_->Facility(FarmId);
+    const auto* mill = state_->Facility(MillId);
+    const auto* warehouse = state_->Storage(WarehouseId);
+    out << "OPENREPUBLIC_SIM 7\n"
         << "TICK " << state_->tick << '\n'
         << "DELIVERED " << state_->deliveredFlourTotal << '\n'
-        << "FARM " << state_->farmGrain << '\n'
-        << "MILL " << state_->millGrain << ' ' << state_->millFlour << '\n'
-        << "WAREHOUSE " << state_->warehouseFlour << '\n'
+        << "FARM " << (farm ? farm->inventory.grain : 0) << '\n'
+        << "MILL " << (mill ? mill->inventory.grain : 0) << ' ' << (mill ? mill->inventory.flour : 0) << '\n'
+        << "WAREHOUSE " << (warehouse ? warehouse->inventory.flour : 0) << '\n'
         << "TRUCK " << state_->truckNode << ' ' << static_cast<unsigned>(state_->stage) << ' '
         << static_cast<unsigned>(state_->cargo) << ' ' << state_->cargoAmount << ' '
         << state_->routeCursor << ' ' << state_->route.size();
@@ -463,11 +635,20 @@ std::string Simulation::Save() const {
         << state_->rules.farmHarvestIntervalTicks << ' ' << state_->rules.millGrainPerTick << '\n'
         << "FACILITIES " << state_->facilities.size();
     for (const auto& facility : state_->facilities)
-        out << ' ' << facility.id << ' ' << static_cast<unsigned>(facility.type) << ' ' << facility.gridX << ' ' << facility.gridZ;
+        out << ' ' << facility.id << ' ' << static_cast<unsigned>(facility.type) << ' ' << facility.gridX << ' ' << facility.gridZ
+            << ' ' << facility.inventory.grain << ' ' << facility.inventory.flour;
+    out << '\n' << "STORAGES " << state_->storages.size();
+    for (const auto& storage : state_->storages)
+        out << ' ' << storage.id << ' ' << storage.gridX << ' ' << storage.gridZ << ' '
+            << storage.inventory.grain << ' ' << storage.inventory.flour;
+    out << '\n' << "TRUCK_PLAN " << state_->truckPlan.farmId << ' ' << state_->truckPlan.millId << ' ' << state_->truckPlan.storageId;
     out << '\n' << "CONSTRUCTION_QUEUE " << state_->nextCommandId << ' ' << state_->commandQueue.size();
-    for (const auto& request : state_->commandQueue)
+    for (const auto& request : state_->commandQueue) {
         out << ' ' << request.commandId << ' ' << static_cast<unsigned>(request.type) << ' '
             << static_cast<unsigned>(request.facilityType) << ' ' << request.ax << ' ' << request.az << ' ' << request.bx << ' ' << request.bz;
+        if (request.type == ConstructionCommandType::TruckPlan)
+            out << ' ' << request.plan.farmId << ' ' << request.plan.millId << ' ' << request.plan.storageId;
+    }
     out << '\n' << "CONSTRUCTION_RESULTS " << state_->commandResults.size();
     for (const auto& result : state_->commandResults)
         out << ' ' << result.commandId << ' ' << static_cast<unsigned>(result.type) << ' '
@@ -485,16 +666,17 @@ bool Simulation::Load(std::string_view data, std::string* error) {
     std::string tag;
     unsigned version = 0;
     if (!(in >> tag) || tag != "OPENREPUBLIC_SIM" || !ReadUnsigned(in, version)) return fail("invalid save header");
-    if (version < 1 || version > 6) return fail("unsupported save version");
+    if (version < 1 || version > 7) return fail("unsupported save version");
 
     State candidate;
     std::uint64_t routeSize = 0;
     unsigned stage = 0, cargo = 0;
+    std::uint32_t legacyFarmGrain = 0, legacyMillGrain = 0, legacyMillFlour = 0, legacyWarehouseFlour = 0;
     if (!(in >> tag) || tag != "TICK" || !ReadUnsigned(in, candidate.tick)) return fail("invalid tick record");
     if (!(in >> tag) || tag != "DELIVERED" || !ReadUnsigned(in, candidate.deliveredFlourTotal)) return fail("invalid delivered-total record");
-    if (!(in >> tag) || tag != "FARM" || !ReadUnsigned(in, candidate.farmGrain)) return fail("invalid farm record");
-    if (!(in >> tag) || tag != "MILL" || !ReadUnsigned(in, candidate.millGrain) || !ReadUnsigned(in, candidate.millFlour)) return fail("invalid mill record");
-    if (!(in >> tag) || tag != "WAREHOUSE" || !ReadUnsigned(in, candidate.warehouseFlour)) return fail("invalid warehouse record");
+    if (!(in >> tag) || tag != "FARM" || !ReadUnsigned(in, legacyFarmGrain)) return fail("invalid farm record");
+    if (!(in >> tag) || tag != "MILL" || !ReadUnsigned(in, legacyMillGrain) || !ReadUnsigned(in, legacyMillFlour)) return fail("invalid mill record");
+    if (!(in >> tag) || tag != "WAREHOUSE" || !ReadUnsigned(in, legacyWarehouseFlour)) return fail("invalid warehouse record");
     if (!(in >> tag) || tag != "TRUCK" || !ReadUnsigned(in, candidate.truckNode) || !ReadUnsigned(in, stage) ||
         !ReadUnsigned(in, cargo) || !ReadUnsigned(in, candidate.cargoAmount) ||
         !ReadUnsigned(in, candidate.routeCursor) || !ReadUnsigned(in, routeSize)) return fail("invalid truck record");
@@ -556,7 +738,8 @@ bool Simulation::Load(std::string_view data, std::string* error) {
     if (version >= 4) {
         std::uint64_t count = 0;
         if (!(in >> tag) || tag != "FACILITIES" || !ReadUnsigned(in, count)) return fail("invalid facilities record");
-        if (count > MaxFacilities) return fail("too many facilities");
+        if (count > MaxFacilities + 2) return fail("too many facilities");
+        candidate.facilities.clear();
         candidate.facilities.reserve(static_cast<std::size_t>(count));
         for (std::uint64_t i = 0; i < count; ++i) {
             FacilityView facility;
@@ -566,7 +749,26 @@ bool Simulation::Load(std::string_view data, std::string* error) {
             if (type != static_cast<unsigned>(FacilityType::Farm) && type != static_cast<unsigned>(FacilityType::Mill))
                 return fail("unknown serialized facility type");
             facility.type = static_cast<FacilityType>(type);
+            if (version >= 7 && (!ReadUnsigned(in, facility.inventory.grain) || !ReadUnsigned(in, facility.inventory.flour)))
+                return fail("invalid facility inventory");
             candidate.facilities.push_back(facility);
+        }
+        if (version >= 7) {
+            std::uint64_t storageEntityCount = 0;
+            if (!(in >> tag) || tag != "STORAGES" || !ReadUnsigned(in, storageEntityCount) ||
+                storageEntityCount == 0 || storageEntityCount > MaxStorages) return fail("invalid storage entities record");
+            candidate.storages.clear();
+            candidate.storages.reserve(static_cast<std::size_t>(storageEntityCount));
+            for (std::uint64_t i = 0; i < storageEntityCount; ++i) {
+                PlacedStorageView storage{};
+                if (!ReadUnsigned(in, storage.id) || !ReadSigned(in, storage.gridX) || !ReadSigned(in, storage.gridZ) ||
+                    !ReadUnsigned(in, storage.inventory.grain) || !ReadUnsigned(in, storage.inventory.flour))
+                    return fail("invalid storage entity");
+                candidate.storages.push_back(storage);
+            }
+            if (!(in >> tag) || tag != "TRUCK_PLAN" || !ReadUnsigned(in, candidate.truckPlan.farmId) ||
+                !ReadUnsigned(in, candidate.truckPlan.millId) || !ReadUnsigned(in, candidate.truckPlan.storageId))
+                return fail("invalid truck plan");
         }
         std::uint64_t queueCount = 0;
         if (version >= 6) {
@@ -581,6 +783,9 @@ bool Simulation::Load(std::string_view data, std::string* error) {
                 if (type > std::numeric_limits<std::uint8_t>::max() || facilityType > std::numeric_limits<std::uint8_t>::max())
                     return fail("queued construction enum exceeds representation");
                 request.type=static_cast<ConstructionCommandType>(type); request.facilityType=static_cast<FacilityType>(facilityType);
+                if (version >= 7 && request.type == ConstructionCommandType::TruckPlan &&
+                    (!ReadUnsigned(in, request.plan.farmId) || !ReadUnsigned(in, request.plan.millId) ||
+                     !ReadUnsigned(in, request.plan.storageId))) return fail("invalid queued truck plan");
                 candidate.commandQueue.push_back(request);
             }
         } else if (!(in >> tag) || tag != "PLACEMENT_QUEUE" || !ReadUnsigned(in, candidate.nextCommandId) ||
@@ -620,13 +825,36 @@ bool Simulation::Load(std::string_view data, std::string* error) {
     std::string extra;
     if (in >> extra) return fail("unexpected trailing save data");
 
+    if (version < 7) {
+        if (version >= 4) {
+            candidate.facilities.insert(candidate.facilities.begin(), {
+                FacilityView{FarmId, FacilityType::Farm, -2, 0, {}},
+                FacilityView{MillId, FacilityType::Mill, 0, 0, {}}});
+        }
+        auto* farm = candidate.Facility(FarmId);
+        auto* mill = candidate.Facility(MillId);
+        auto* warehouse = candidate.Storage(WarehouseId);
+        if (!farm || !mill || !warehouse) return fail("legacy built-in entities are missing");
+        farm->inventory.grain = legacyFarmGrain;
+        mill->inventory = InventoryView{legacyMillGrain, legacyMillFlour};
+        warehouse->inventory.flour = legacyWarehouseFlour;
+        for (const auto& legacyStorage : candidate.prototypeStorages)
+            candidate.storages.push_back(PlacedStorageView{legacyStorage.id, legacyStorage.gridX, legacyStorage.gridZ, {}});
+        candidate.truckPlan = TruckPlan{};
+    } else {
+        const auto* farm = candidate.Facility(FarmId);
+        const auto* mill = candidate.Facility(MillId);
+        const auto* warehouse = candidate.Storage(WarehouseId);
+        if (!farm || !mill || !warehouse || farm->inventory.grain != legacyFarmGrain ||
+            mill->inventory.grain != legacyMillGrain || mill->inventory.flour != legacyMillFlour ||
+            warehouse->inventory.flour != legacyWarehouseFlour) return fail("legacy inventory projections disagree with entity inventories");
+    }
+
     if (candidate.rules.farmGrainPerHarvest < 1 || candidate.rules.farmGrainPerHarvest > FarmGrainCapacity ||
         candidate.rules.farmHarvestIntervalTicks < 1 || candidate.rules.farmHarvestIntervalTicks > 10000 ||
         candidate.rules.millGrainPerTick < 1 || candidate.rules.millGrainPerTick > MillGrainCapacity)
         return fail("simulation rules are outside supported bounds");
-    if (candidate.farmGrain > FarmGrainCapacity || candidate.millGrain > MillGrainCapacity ||
-        candidate.millFlour > MillFlourCapacity || candidate.warehouseFlour > WarehouseFlourCapacity) return fail("inventory exceeds capacity");
-    if (candidate.deliveredFlourTotal < candidate.warehouseFlour) return fail("delivered total is below current warehouse stock");
+    std::uint64_t allStoredFlour = 0;
     for (std::size_t i = 0; i < candidate.prototypeStorages.size(); ++i) {
         const auto& storage = candidate.prototypeStorages[i];
         if (storage.id != FirstPrototypeStorageId + i) return fail("prototype storage IDs are not canonical");
@@ -637,18 +865,51 @@ bool Simulation::Load(std::string_view data, std::string* error) {
                 candidate.prototypeStorages[j].gridZ == storage.gridZ) return fail("duplicate prototype storage cell");
         }
     }
+    if (candidate.facilities.size() < 2 || candidate.facilities.size() > MaxFacilities + 2 ||
+        candidate.facilities[0].id != FarmId || candidate.facilities[0].type != FacilityType::Farm ||
+        candidate.facilities[0].gridX != -2 || candidate.facilities[0].gridZ != 0 ||
+        candidate.facilities[1].id != MillId || candidate.facilities[1].type != FacilityType::Mill ||
+        candidate.facilities[1].gridX != 0 || candidate.facilities[1].gridZ != 0)
+        return fail("built-in farm and mill entities are invalid");
+    if (candidate.storages.empty() || candidate.storages.size() > MaxStorages ||
+        candidate.storages[0].id != WarehouseId || candidate.storages[0].gridX != 2 || candidate.storages[0].gridZ != 0)
+        return fail("built-in warehouse entity is invalid");
+    for (std::size_t i = 0; i < candidate.storages.size(); ++i) {
+        const auto& storage = candidate.storages[i];
+        const EntityId expectedId = i == 0 ? WarehouseId : FirstPrototypeStorageId + static_cast<EntityId>(i - 1);
+        if (storage.id != expectedId || storage.gridX < PrototypeGridMin || storage.gridX > PrototypeGridMax ||
+            storage.gridZ < PrototypeGridMin || storage.gridZ > PrototypeGridMax || storage.inventory.grain > WarehouseFlourCapacity ||
+            storage.inventory.flour > WarehouseFlourCapacity) return fail("storage entity is invalid or over capacity");
+        allStoredFlour += storage.inventory.flour;
+        for (std::size_t j = 1; j < i; ++j)
+            if (candidate.storages[j].gridX == storage.gridX && candidate.storages[j].gridZ == storage.gridZ)
+                return fail("duplicate storage entity cell");
+    }
+    if (candidate.deliveredFlourTotal < allStoredFlour) return fail("delivered total is below current stored flour");
     for (std::size_t i = 0; i < candidate.facilities.size(); ++i) {
         const auto& facility = candidate.facilities[i];
-        if (facility.id != FirstFacilityId + i) return fail("facility IDs are not canonical");
+        const EntityId expectedId = i < 2 ? (i == 0 ? FarmId : MillId) : FirstFacilityId + static_cast<EntityId>(i - 2);
+        if (facility.id != expectedId) return fail("facility IDs are not canonical");
         if (facility.type != FacilityType::Farm && facility.type != FacilityType::Mill) return fail("unknown facility type");
+        if ((facility.type == FacilityType::Farm && (facility.inventory.grain > FarmGrainCapacity || facility.inventory.flour != 0)) ||
+            (facility.type == FacilityType::Mill && (facility.inventory.grain > MillGrainCapacity || facility.inventory.flour > MillFlourCapacity)))
+            return fail("facility inventory exceeds type capacity");
         if (facility.gridX < PrototypeGridMin || facility.gridX > PrototypeGridMax ||
             facility.gridZ < PrototypeGridMin || facility.gridZ > PrototypeGridMax) return fail("facility cell is out of bounds");
-        for (std::size_t j = 0; j < i; ++j)
+        for (std::size_t j = 2; j < i; ++j)
             if (candidate.facilities[j].gridX == facility.gridX && candidate.facilities[j].gridZ == facility.gridZ)
                 return fail("duplicate facility cell");
-        for (const auto& storage : candidate.prototypeStorages)
-            if (storage.gridX == facility.gridX && storage.gridZ == facility.gridZ) return fail("facility overlaps prototype storage");
+        for (std::size_t j = 1; j < candidate.storages.size(); ++j)
+            if (candidate.storages[j].gridX == facility.gridX && candidate.storages[j].gridZ == facility.gridZ)
+                return fail("facility overlaps storage");
     }
+    if (candidate.storages.size() != candidate.prototypeStorages.size() + 1)
+        return fail("storage entity set does not match placed storage metadata");
+    for (std::size_t i = 0; i < candidate.prototypeStorages.size(); ++i)
+        if (candidate.storages[i + 1].id != candidate.prototypeStorages[i].id ||
+            candidate.storages[i + 1].gridX != candidate.prototypeStorages[i].gridX ||
+            candidate.storages[i + 1].gridZ != candidate.prototypeStorages[i].gridZ)
+            return fail("placed storage metadata disagrees with storage entities");
     if (candidate.nodes.size() < 5 || candidate.nodes.size() > MaxRoadNodes || candidate.edges.size() < 4 || candidate.edges.size() > MaxRoadSegments)
         return fail("road graph exceeds supported limits");
     for (std::size_t i=0;i<candidate.nodes.size();++i) {
@@ -678,28 +939,68 @@ bool Simulation::Load(std::string_view data, std::string* error) {
     }
     if (candidate.nodes[0].id!=FarmNodeId || candidate.nodes[2].id!=MillNodeId || candidate.nodes[4].id!=WarehouseNodeId)
         return fail("road service anchors are invalid");
+    const auto* assignedFarm = candidate.Facility(candidate.truckPlan.farmId);
+    const auto* assignedMill = candidate.Facility(candidate.truckPlan.millId);
+    const auto* assignedStorage = candidate.Storage(candidate.truckPlan.storageId);
+    const auto assignedFarmNode = candidate.NodeForFacility(candidate.truckPlan.farmId);
+    const auto assignedMillNode = candidate.NodeForFacility(candidate.truckPlan.millId);
+    const auto assignedStorageNode = candidate.NodeForStorage(candidate.truckPlan.storageId);
+    if (!assignedFarm || assignedFarm->type != FacilityType::Farm || !assignedMill || assignedMill->type != FacilityType::Mill ||
+        !assignedStorage || !assignedFarmNode || !assignedMillNode || !assignedStorageNode)
+        return fail("truck plan endpoints are invalid");
+    if (!candidate.PlanEndpointsConnected(candidate.truckPlan))
+        return fail("assigned truck plan has a disconnected logistics leg");
 
     std::uint64_t previousCommand = 0;
     if (candidate.nextCommandId == 0) return fail("next construction command ID is invalid");
     for (const auto& request : candidate.commandQueue) {
         if (request.commandId <= previousCommand || request.commandId >= candidate.nextCommandId) return fail("queued command IDs are not canonical");
         if (previousCommand != 0 && request.commandId != previousCommand + 1) return fail("queued command IDs are not contiguous");
-        if (request.type != ConstructionCommandType::FacilityPlacement && request.type != ConstructionCommandType::RoadSegment) return fail("unknown queued command type");
+        if (request.type != ConstructionCommandType::FacilityPlacement && request.type != ConstructionCommandType::RoadSegment &&
+            (version < 7 || (request.type != ConstructionCommandType::TruckPlan && request.type != ConstructionCommandType::StoragePlacement)))
+            return fail("unknown queued command type");
         previousCommand = request.commandId;
     }
     if (!candidate.commandQueue.empty() && candidate.commandQueue.back().commandId != candidate.nextCommandId-1) return fail("queued commands are not latest command suffix");
     if (candidate.tick==std::numeric_limits<Tick>::max()&&!candidate.commandQueue.empty()) return fail("terminal tick cannot contain queued commands");
+    // Validate pending plan semantics against the world produced by all earlier
+    // queued construction commands. A plan may legitimately reference a farm,
+    // mill, storage, or road that does not exist until this queue is applied.
+    if (std::any_of(candidate.commandQueue.begin(), candidate.commandQueue.end(), [](const State::PendingCommand& request) {
+        return request.type == ConstructionCommandType::TruckPlan;
+    })) {
+        auto preview = candidate;
+        preview.ApplyCommands();
+        for (const auto& result : preview.commandResults) {
+            const bool wasQueuedPlan = std::any_of(candidate.commandQueue.begin(), candidate.commandQueue.end(), [&result](const State::PendingCommand& request) {
+                return request.commandId == result.commandId && request.type == ConstructionCommandType::TruckPlan;
+            });
+            if (wasQueuedPlan && !result.accepted)
+                return fail("queued truck plan has invalid or disconnected endpoints");
+        }
+    }
     std::uint64_t previousResult=0; EntityId previousFacility=0, previousRoad=204;
+    EntityId previousStorage=FirstPrototypeStorageId-1;
     for (const auto& result : candidate.commandResults) {
         if (result.commandId<=previousResult||result.commandId>=candidate.nextCommandId) return fail("construction result IDs are not canonical");
-        if (result.type!=ConstructionCommandType::FacilityPlacement&&result.type!=ConstructionCommandType::RoadSegment) return fail("unknown construction result type");
+        if (result.type!=ConstructionCommandType::FacilityPlacement&&result.type!=ConstructionCommandType::RoadSegment&&
+            (version < 7 || (result.type != ConstructionCommandType::TruckPlan && result.type != ConstructionCommandType::StoragePlacement)))
+            return fail("unknown construction result type");
         if (result.accepted) {
             if (result.type==ConstructionCommandType::FacilityPlacement) {
-                if (result.entityId<FirstFacilityId||result.entityId>=FirstFacilityId+candidate.facilities.size()||result.entityId<=previousFacility) return fail("facility result references invalid facility");
+                if (result.entityId<FirstFacilityId||result.entityId>=FirstFacilityId+candidate.facilities.size()-2||result.entityId<=previousFacility) return fail("facility result references invalid facility");
                 previousFacility=result.entityId;
-            } else {
+            } else if (result.type==ConstructionCommandType::RoadSegment) {
                 if (result.entityId<FirstDynamicRoadId||result.entityId>=candidate.nextRoadId||result.entityId<=previousRoad) return fail("road result references invalid edge");
                 previousRoad=result.entityId;
+            } else if (result.type==ConstructionCommandType::TruckPlan) {
+                if (result.entityId != 0) return fail("truck-plan result must not reference an entity");
+            } else {
+                const auto placed = std::find_if(candidate.prototypeStorages.begin(), candidate.prototypeStorages.end(),
+                    [&result](const PlacedStorageView& s) { return s.id == result.entityId; });
+                if (placed == candidate.prototypeStorages.end() || result.entityId <= previousStorage)
+                    return fail("storage result references invalid or duplicate placed storage");
+                previousStorage = result.entityId;
             }
         } else if (result.entityId!=0) return fail("rejected construction result has entity ID");
         previousResult=result.commandId;
@@ -715,7 +1016,9 @@ bool Simulation::Load(std::string_view data, std::string* error) {
     if (candidate.route.empty()) {
         if (candidate.routeCursor != 0) return fail("empty route has nonzero cursor");
     } else {
-        if (candidate.route.size() < 2 || candidate.routeCursor >= candidate.route.size()) return fail("invalid route cursor");
+        // A one-node route is a valid zero-distance leg when a destination is
+        // colocated with the truck, including a partially blocked delivery.
+        if (candidate.routeCursor >= candidate.route.size()) return fail("invalid route cursor");
         if (candidate.route[candidate.routeCursor] != candidate.truckNode) return fail("truck node does not match route cursor");
         for (std::size_t i = 0; i < candidate.route.size(); ++i) {
             if (!candidate.HasNode(candidate.route[i])) return fail("route references unknown node");
@@ -735,25 +1038,25 @@ bool Simulation::Load(std::string_view data, std::string* error) {
     }
     switch (candidate.stage) {
     case TruckStage::LoadGrainAtFarm:
-        if (candidate.truckNode != FarmNodeId || candidate.cargoAmount || !candidate.route.empty()) return fail("invalid farm loading state");
+        if (candidate.truckNode != assignedFarmNode || candidate.cargoAmount || !candidate.route.empty()) return fail("invalid farm loading state");
         break;
     case TruckStage::DeliverGrainToMill:
         if (candidate.cargo != Resource::Grain || candidate.cargoAmount == 0 || candidate.route.empty() ||
-            candidate.route.back() != MillNodeId)
+            candidate.route.back() != assignedMillNode)
             return fail("invalid grain delivery state");
         break;
     case TruckStage::LoadFlourAtMill:
-        if (candidate.truckNode != MillNodeId || candidate.cargoAmount || !candidate.route.empty()) return fail("invalid mill loading state");
+        if (candidate.truckNode != assignedMillNode || candidate.cargoAmount || !candidate.route.empty()) return fail("invalid mill loading state");
         break;
     case TruckStage::DeliverFlourToWarehouse:
         if (candidate.cargo != Resource::Flour || candidate.cargoAmount == 0 || candidate.route.empty() ||
-            candidate.route.back() != WarehouseNodeId)
+            candidate.route.back() != assignedStorageNode)
             return fail("invalid flour delivery state");
         break;
     case TruckStage::ReturnToFarm:
         if (candidate.cargoAmount || candidate.cargo != Resource::None) return fail("invalid return state cargo");
-        if (!candidate.route.empty() && candidate.route.back() != FarmNodeId) return fail("invalid return route");
-        if (candidate.route.empty() && candidate.truckNode != WarehouseNodeId && candidate.truckNode != FarmNodeId) return fail("invalid return origin");
+        if (!candidate.route.empty() && candidate.route.back() != assignedFarmNode) return fail("invalid return route");
+        if (candidate.route.empty() && candidate.truckNode != assignedStorageNode && candidate.truckNode != assignedFarmNode) return fail("invalid return origin");
         break;
     }
     *state_ = std::move(candidate);
