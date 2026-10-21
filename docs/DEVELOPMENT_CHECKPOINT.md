@@ -198,3 +198,7 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - **VERIFIED — source/build/test evidence:** the Release client and headless NMF test targets built successfully. Full client CTest passed 11/11 and full headless CTest passed 10/10. Running both suites simultaneously initially exposed a shared temporary-file collision in the existing terrain-reader client test; rerunning the suites sequentially passed both. `git diff --check` passed.
 - **OBSERVED — local WRSR sample:** one private model's identifier set matched its sibling MTL identifier set. This single sample and the build-specific static loader review do not establish general NMF support, geometry layout, WRSR visual fidelity, or standalone-use rights.
 - No WRSR game was launched; no original asset, save, Steam installation file, or Rival Republics data was modified or added. The REA evidence bundle remains in the private research area. The code and public evidence documentation are ready for final scoped diff review and publication; broader NMF support and M1/playable-alpha acceptance remain open.
+
+**2026-10-21 15:48 EDT (19:48 UTC) — publication receipt**
+
+- The reviewed header-profile reader, synthetic tests, and evidence-bounded documentation were committed as `2ec56a9` (`Add bounded NMF header profile reader`) and pushed to `origin/main`. Client Release CTest passed 11/11 and headless Release CTest passed 10/10. No proprietary file or private reverse-engineering output was added to the repository; broader NMF support and the playable-slice gates remain open.
