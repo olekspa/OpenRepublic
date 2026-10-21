@@ -1,5 +1,6 @@
 #include "OpenRepublicApplication.h"
 #include "ModelImporter.h"
+#include "wiHelper.h"
 #include "openrepublic/content/glb_container.h"
 #include "openrepublic/content/glb_semantic.h"
 #include "openrepublic/content/mtl_preview_color.h"
@@ -20,6 +21,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <cwctype>
 #include <exception>
 #include <filesystem>
@@ -90,8 +92,9 @@ namespace openrepublic
 		{
 		public:
 			explicit NmfPreviewCaptureRenderPath(std::vector<std::filesystem::path> outputPaths,
-				const XMFLOAT3& cameraTarget, float cameraDistance)
-				: outputPaths(std::move(outputPaths)), cameraTarget(cameraTarget), cameraDistance(cameraDistance)
+				const XMFLOAT3& cameraTarget, float cameraDistance, bool requireDepthCoverage)
+				: outputPaths(std::move(outputPaths)), cameraTarget(cameraTarget), cameraDistance(cameraDistance),
+				requireDepthCoverage(requireDepthCoverage)
 			{
 			}
 
@@ -135,6 +138,36 @@ namespace openrepublic
 					return;
 				}
 
+				if (requireDepthCoverage)
+				{
+					std::uint64_t coveredPixels = 0;
+					std::string coverageError;
+					if (!CountOpaqueDepthCoverage(depthBuffer_Main, coveredPixels, coverageError))
+					{
+						wilog("[OpenRepublic] NMF preview raster coverage unavailable for view %zu: %s",
+							nextCapture, coverageError.c_str());
+						PostQuitMessage(1);
+						nextCapture = outputPaths.size();
+						return;
+					}
+					if (coveredPixels == 0)
+					{
+						wilog("[OpenRepublic] NMF preview has no opaque depth coverage in view %zu; capture rejected",
+							nextCapture);
+						PostQuitMessage(1);
+						nextCapture = outputPaths.size();
+						return;
+					}
+					const wi::graphics::TextureDesc& desc = depthBuffer_Main.GetDesc();
+					const double coverage = 100.0 * static_cast<double>(coveredPixels) /
+						(static_cast<double>(desc.width) * static_cast<double>(desc.height));
+					wilog("[OpenRepublic] NMF preview raster coverage: view=%zu pixels=%llu/%llu (%.3f%%) depth=D32_FLOAT_S8X24_UINT",
+						nextCapture,
+						static_cast<unsigned long long>(coveredPixels),
+						static_cast<unsigned long long>(desc.width) * desc.height,
+						coverage);
+				}
+
 				const auto& outputPath = outputPaths[nextCapture];
 				const std::string filename = outputPath.string();
 				if (!wi::helper::saveTextureToFile(GetRenderResult3D(), filename))
@@ -157,11 +190,58 @@ namespace openrepublic
 			}
 
 		private:
+			static bool CountOpaqueDepthCoverage(const wi::graphics::Texture& depthTexture,
+				std::uint64_t& coveredPixels, std::string& error)
+			{
+				using wi::graphics::Format;
+				const wi::graphics::TextureDesc& desc = depthTexture.GetDesc();
+				if (!depthTexture.IsValid() || desc.format != Format::D32_FLOAT_S8X24_UINT ||
+					desc.sample_count != 1 || desc.width == 0 || desc.height == 0 ||
+					desc.mip_levels != 1 || desc.array_size != 1)
+				{
+					error = "main depth buffer does not match the single-sample D32_FLOAT_S8X24_UINT profile";
+					return false;
+				}
+
+				const std::uint64_t pixelCount = static_cast<std::uint64_t>(desc.width) * desc.height;
+				if (pixelCount > std::numeric_limits<std::size_t>::max() / sizeof(float))
+				{
+					error = "depth plane size exceeds the host address range";
+					return false;
+				}
+				const std::size_t depthPlaneBytes = static_cast<std::size_t>(pixelCount) * sizeof(float);
+				wi::vector<std::uint8_t> readback;
+				if (!wi::helper::saveTextureToMemory(depthTexture, readback) || readback.size() < depthPlaneBytes)
+				{
+					error = "Wicked Engine depth readback failed or returned a truncated depth plane";
+					return false;
+				}
+
+				coveredPixels = 0;
+				for (std::size_t pixelIndex = 0; pixelIndex < static_cast<std::size_t>(pixelCount); ++pixelIndex)
+				{
+					float depth = 0.0f;
+					std::memcpy(&depth, readback.data() + pixelIndex * sizeof(float), sizeof(depth));
+					if (!std::isfinite(depth) || depth < 0.0f || depth > 1.0f)
+					{
+						error = "depth plane contains a value outside the finite [0, 1] range";
+						return false;
+					}
+					// Wicked's main camera uses reversed Z with a 0.0 clear depth.
+					if (depth > 0.0f)
+					{
+						++coveredPixels;
+					}
+				}
+				return true;
+			}
+
 			std::vector<std::filesystem::path> outputPaths;
 			XMFLOAT3 cameraTarget{};
 			float cameraDistance = 12.0f;
 			std::uint32_t warmupFramesRemaining = 60;
 			std::size_t nextCapture = 0;
+			bool requireDepthCoverage = false;
 		};
 
 		std::string PendingTruckPlanCommandLabel(const openrepublic::agent_api::AgentApi& api,
@@ -1413,7 +1493,7 @@ namespace openrepublic
 				wi::renderer::SetForceUnlit(true);
 			}
 			renderPath = std::make_unique<NmfPreviewCaptureRenderPath>(std::move(nmfCapturePaths),
-				nmfPreviewCameraTarget, nmfPreviewCameraDistance);
+				nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfUnlitPreview);
 		}
 		else
 		{

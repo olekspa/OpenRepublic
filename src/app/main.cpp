@@ -202,6 +202,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		{
 			nmfCaptureArgumentError = "--capture-preview cannot be combined with --terrain-probe";
 		}
+		else if (!sceneProbePath.empty() || !glbProbePath.empty())
+		{
+			nmfCaptureArgumentError = "--capture-preview requires an isolated NMF scene and cannot be combined with --scene-probe or --glb-probe";
+		}
 		for (std::size_t i = 0; i < nmfCapturePaths.size() && nmfCaptureArgumentError.empty(); ++i)
 		{
 			const auto& path = nmfCapturePaths[i];
