@@ -27,10 +27,15 @@ namespace openrepublic
 		constexpr float kCameraMoveSpeed = 5.0f;
 		constexpr float kMaxCameraMoveDeltaSeconds = 0.1f;
 		constexpr float kWheelZoomSpeed = 0.9f;
+		constexpr float kPlacementGridSpacing = 1.25f;
+		constexpr float kPlacementGridHalfExtent =
+			(static_cast<float>(openrepublic::sim::Simulation::PrototypeGridMax) + 0.5f) * kPlacementGridSpacing;
 		constexpr XMFLOAT4 kFarmColor(0.24f, 0.52f, 0.28f, 1.0f);
 		constexpr XMFLOAT4 kMillColor(0.72f, 0.43f, 0.20f, 1.0f);
 		constexpr XMFLOAT4 kWarehouseColor(0.43f, 0.50f, 0.58f, 1.0f);
 		constexpr XMFLOAT4 kPrototypeStorageColor(0.32f, 0.55f, 0.70f, 1.0f);
+		constexpr XMFLOAT4 kPlacedFarmColor(0.36f, 0.68f, 0.34f, 1.0f);
+		constexpr XMFLOAT4 kPlacedMillColor(0.82f, 0.54f, 0.27f, 1.0f);
 		constexpr XMFLOAT4 kSelectedBuildingColor(1.0f, 0.78f, 0.20f, 1.0f);
 		constexpr XMFLOAT4 kRoadColor(0.22f, 0.24f, 0.27f, 1.0f);
 		constexpr XMFLOAT4 kClosedRoadColor(0.68f, 0.20f, 0.16f, 1.0f);
@@ -298,7 +303,14 @@ namespace openrepublic
 
 		// Synthetic OpenRepublic-authored content only. The view follows snapshots;
 		// no Wicked Engine scene object owns or changes simulation state.
-		previewWorld.Entity_CreatePlane("OpenRepublic ground");
+		const wi::ecs::Entity ground = previewWorld.Entity_CreatePlane("OpenRepublic synthetic construction ground");
+		if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(ground))
+		{
+			// The buildable area and visible synthetic ground use the same finite grid bounds.
+			transform->Scale(XMFLOAT3(kPlacementGridHalfExtent, 1.0f, kPlacementGridHalfExtent));
+			transform->UpdateTransform();
+		}
+		SetEntityColor(ground, XMFLOAT4(0.20f, 0.27f, 0.20f, 1.0f));
 
 		auto createBlock = [this](const char* name, float x, float y, const XMFLOAT3& scale, const XMFLOAT4& color)
 		{
@@ -484,6 +496,34 @@ namespace openrepublic
 		});
 		gui.AddWidget(&placeStorageButton);
 
+		buildFarmButton.Create("BuildSyntheticFarmButton");
+		buildFarmButton.SetText("Build farm");
+		StyleButton(buildFarmButton);
+		buildFarmButton.SetSize(XMFLOAT2(100, 28));
+		buildFarmButton.SetPos(XMFLOAT2(18, 54));
+		buildFarmButton.OnClick([this](const wi::gui::EventArgs&) {
+			BeginFacilityPlacement(openrepublic::sim::FacilityType::Farm);
+		});
+		gui.AddWidget(&buildFarmButton);
+
+		buildMillButton.Create("BuildSyntheticMillButton");
+		buildMillButton.SetText("Build mill");
+		StyleButton(buildMillButton);
+		buildMillButton.SetSize(XMFLOAT2(100, 28));
+		buildMillButton.SetPos(XMFLOAT2(122, 54));
+		buildMillButton.OnClick([this](const wi::gui::EventArgs&) {
+			BeginFacilityPlacement(openrepublic::sim::FacilityType::Mill);
+		});
+		gui.AddWidget(&buildMillButton);
+
+		cancelPlacementButton.Create("CancelFacilityPlacementButton");
+		cancelPlacementButton.SetText("Cancel build");
+		StyleButton(cancelPlacementButton);
+		cancelPlacementButton.SetSize(XMFLOAT2(110, 28));
+		cancelPlacementButton.SetPos(XMFLOAT2(226, 54));
+		cancelPlacementButton.OnClick([this](const wi::gui::EventArgs&) { CancelFacilityPlacement(); });
+		gui.AddWidget(&cancelPlacementButton);
+
 		saveButton.Create("SimulationSaveButton");
 		saveButton.SetText("Save demo");
 		StyleButton(saveButton);
@@ -516,7 +556,7 @@ namespace openrepublic
 		simulationStatus.margin_left = 10;
 		simulationStatus.margin_top = 7;
 		simulationStatus.SetSize(XMFLOAT2(860, 100));
-		simulationStatus.SetPos(XMFLOAT2(18, 54));
+		simulationStatus.SetPos(XMFLOAT2(18, 90));
 		simulationStatus.SetWrapEnabled(true);
 		gui.AddWidget(&simulationStatus);
 
@@ -559,7 +599,8 @@ namespace openrepublic
 		const bool guiHasFocus = renderPath->GetGUI().HasFocus();
 		if (!guiHasFocus && wi::input::Press(wi::input::KEYBOARD_BUTTON_ESCAPE))
 		{
-			SelectBuilding(wi::ecs::INVALID_ENTITY);
+			if (activeFacilityPlacement.has_value()) CancelFacilityPlacement();
+			else SelectBuilding(wi::ecs::INVALID_ENTITY);
 		}
 		if (!guiHasFocus && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT))
 		{
@@ -621,7 +662,28 @@ namespace openrepublic
 		{
 			if (entity == prototypeStorageEntities[i]) return prototypeStorageIds[i];
 		}
+		for (std::size_t i = 0; i < facilityEntities.size() && i < facilityIds.size(); ++i)
+		{
+			if (entity == facilityEntities[i]) return facilityIds[i];
+		}
 		return {};
+	}
+
+	void OpenRepublicApplication::BeginFacilityPlacement(openrepublic::sim::FacilityType type)
+	{
+		activeFacilityPlacement = type;
+		SelectBuilding(wi::ecs::INVALID_ENTITY);
+		uiNotice = std::string("Choose a ground cell for the synthetic ") +
+			(type == openrepublic::sim::FacilityType::Farm ? "farm" : "mill") +
+			"; press Esc or Cancel build to leave placement mode.";
+		UpdateStatusLabel();
+	}
+
+	void OpenRepublicApplication::CancelFacilityPlacement()
+	{
+		activeFacilityPlacement.reset();
+		uiNotice = "Facility placement cancelled.";
+		UpdateStatusLabel();
 	}
 
 	void OpenRepublicApplication::SelectBuilding(wi::ecs::Entity selected)
@@ -633,6 +695,12 @@ namespace openrepublic
 		for (const wi::ecs::Entity entity : prototypeStorageEntities)
 		{
 			SetEntityColor(entity, selectedBuilding == entity ? kSelectedBuildingColor : kPrototypeStorageColor);
+		}
+		for (std::size_t i = 0; i < facilityEntities.size() && i < facilityTypes.size(); ++i)
+		{
+			const XMFLOAT4 baseColor = facilityTypes[i] == openrepublic::sim::FacilityType::Farm
+				? kPlacedFarmColor : kPlacedMillColor;
+			SetEntityColor(facilityEntities[i], selectedBuilding == facilityEntities[i] ? kSelectedBuildingColor : baseColor);
 		}
 
 		if (window != nullptr)
@@ -659,6 +727,48 @@ namespace openrepublic
 
 		const wi::primitive::Ray ray = wi::renderer::GetPickRay(
 			static_cast<long>(pointer.x), static_cast<long>(pointer.y), *renderPath, *renderPath->camera);
+		if (activeFacilityPlacement.has_value())
+		{
+			if (!std::isfinite(ray.origin.y) || !std::isfinite(ray.direction.y) || std::abs(ray.direction.y) < 1e-6f)
+			{
+				uiNotice = "Placement ray is parallel to the ground; adjust the camera.";
+				UpdateStatusLabel();
+				return;
+			}
+			const float distance = -ray.origin.y / ray.direction.y;
+			if (!std::isfinite(distance) || distance < ray.TMin || distance > ray.TMax)
+			{
+				uiNotice = "No ground cell at this pointer location.";
+				UpdateStatusLabel();
+				return;
+			}
+			const float worldX = ray.origin.x + ray.direction.x * distance;
+			const float worldZ = ray.origin.z + ray.direction.z * distance;
+			const float gridXFloat = std::round(worldX / kPlacementGridSpacing);
+			const float gridZFloat = std::round(worldZ / kPlacementGridSpacing);
+			if (!std::isfinite(gridXFloat) || !std::isfinite(gridZFloat) ||
+				gridXFloat < openrepublic::sim::Simulation::PrototypeGridMin || gridXFloat > openrepublic::sim::Simulation::PrototypeGridMax ||
+				gridZFloat < openrepublic::sim::Simulation::PrototypeGridMin || gridZFloat > openrepublic::sim::Simulation::PrototypeGridMax)
+			{
+				uiNotice = "Placement location is outside the prototype construction grid.";
+				UpdateStatusLabel();
+				return;
+			}
+			const auto gridX = static_cast<std::int32_t>(gridXFloat);
+			const auto gridZ = static_cast<std::int32_t>(gridZFloat);
+			const std::uint64_t commandId = simulation.QueueFacilityPlacement(*activeFacilityPlacement, gridX, gridZ);
+			if (commandId == 0)
+			{
+				uiNotice = "Could not queue construction; the simulation queue may be full or at its terminal tick.";
+			}
+			else
+			{
+				uiNotice = "Queued synthetic facility placement command " + std::to_string(commandId) +
+					" at grid (" + std::to_string(gridX) + ", " + std::to_string(gridZ) + "); the simulation will validate it at the next tick.";
+			}
+			UpdateStatusLabel();
+			return;
+		}
 		const wi::scene::Scene::RayIntersectionResult hit = previewWorld.Intersects(ray);
 		SelectBuilding(hit.entity);
 	}
@@ -667,6 +777,19 @@ namespace openrepublic
 	{
 		const openrepublic::sim::Snapshot snapshot = simulation.GetSnapshot();
 		SyncPrototypeStorages(snapshot);
+		SyncFacilities(snapshot);
+		for (const auto& result : snapshot.facilityPlacementResults)
+		{
+			if (result.commandId <= lastFacilityPlacementResultCommandId) continue;
+			lastFacilityPlacementResultCommandId = result.commandId;
+			uiNotice = result.accepted
+				? "Construction command " + std::to_string(result.commandId) + " accepted as OR-" + std::to_string(result.facilityId) + "."
+				: "Construction command " + std::to_string(result.commandId) + " rejected: occupied cell or facility limit.";
+			if (!simulation.AcknowledgeFacilityPlacementResult(result.commandId))
+			{
+				uiNotice += " (result acknowledgment was already absent.)";
+			}
+		}
 		for (const auto& road : snapshot.roads)
 		{
 			if (road.id == 202)
@@ -725,6 +848,54 @@ namespace openrepublic
 					static_cast<float>(storage.gridZ) * 1.25f);
 				transform->UpdateTransform();
 			}
+		}
+	}
+
+	void OpenRepublicApplication::SyncFacilities(const openrepublic::sim::Snapshot& snapshot)
+	{
+		bool identityChanged = facilityEntities.size() != snapshot.facilities.size();
+		for (std::size_t i = 0; !identityChanged && i < snapshot.facilities.size(); ++i)
+		{
+			identityChanged = facilityIds[i] != "OR-" + std::to_string(snapshot.facilities[i].id);
+		}
+		if (identityChanged)
+		{
+			for (const wi::ecs::Entity entity : facilityEntities) previewWorld.Entity_Remove(entity);
+			facilityEntities.clear();
+			facilityIds.clear();
+			facilityTypes.clear();
+		}
+		for (std::size_t i = 0; i < snapshot.facilities.size(); ++i)
+		{
+			const auto& facility = snapshot.facilities[i];
+			const std::string openRepublicId = "OR-" + std::to_string(facility.id);
+			if (i >= facilityEntities.size())
+			{
+				const std::string kind = facility.type == openrepublic::sim::FacilityType::Farm ? "farm" : "mill";
+				const wi::ecs::Entity entity = previewWorld.Entity_CreateCube("OpenRepublic synthetic " + kind + " " + openRepublicId);
+				if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(entity))
+				{
+					transform->Scale(XMFLOAT3(0.56f, 0.7f, 0.56f));
+					transform->UpdateTransform();
+				}
+				facilityEntities.push_back(entity);
+				facilityIds.push_back(openRepublicId);
+				facilityTypes.push_back(facility.type);
+			}
+			facilityTypes[i] = facility.type;
+			if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(facilityEntities[i]))
+			{
+				transform->translation_local = XMFLOAT3(
+					static_cast<float>(facility.gridX) * kPlacementGridSpacing, 0.7f,
+					static_cast<float>(facility.gridZ) * kPlacementGridSpacing);
+				transform->UpdateTransform();
+			}
+			const XMFLOAT4 baseColor = facility.type == openrepublic::sim::FacilityType::Farm ? kPlacedFarmColor : kPlacedMillColor;
+			SetEntityColor(facilityEntities[i], selectedBuilding == facilityEntities[i] ? kSelectedBuildingColor : baseColor);
+		}
+		if (selectedBuilding != wi::ecs::INVALID_ENTITY && GetOpenRepublicId(selectedBuilding).empty())
+		{
+			SelectBuilding(wi::ecs::INVALID_ENTITY);
 		}
 	}
 
@@ -795,6 +966,8 @@ namespace openrepublic
 		}
 
 		pendingRules.reset();
+		lastFacilityPlacementResultCommandId = 0;
+		activeFacilityPlacement.reset();
 		simulationPaused = true;
 		simulationAccumulator = 0.0f;
 		pauseButton.SetText("Resume simulation");
@@ -868,6 +1041,7 @@ namespace openrepublic
 			<< " | Mill grain/flour " << snapshot.mill.grain << '/' << snapshot.mill.flour
 			<< " | Warehouse " << snapshot.warehouse.flour << "/5"
 			<< " | Storage " << snapshot.prototypeStorages.size()
+			<< " | Facilities " << snapshot.facilities.size() << " (synthetic)"
 			<< "\nTruck node " << snapshot.truckNode << ", " << snapshot.truckCargoAmount << ' ' << ResourceName(snapshot.truckCargo)
 			<< " | Edge 202 " << (millApproachRoadEnabled ? "open" : "closed")
 			<< " | Rules farm " << snapshot.rules.farmGrainPerHarvest << " every " << snapshot.rules.farmHarvestIntervalTicks

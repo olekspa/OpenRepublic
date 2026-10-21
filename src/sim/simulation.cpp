@@ -17,6 +17,7 @@ constexpr std::uint32_t MillGrainCapacity = 4;
 constexpr std::uint32_t MillFlourCapacity = 4;
 constexpr std::uint32_t WarehouseFlourCapacity = 5;
 constexpr std::uint32_t TruckCapacity = 2;
+constexpr std::uint64_t FirstFacilityCommandId = 1;
 constexpr std::array<EntityId, 5> Nodes{1, 2, 3, 4, 5};
 struct Edge { EntityId id; EntityId a; EntityId b; bool enabled; };
 
@@ -67,6 +68,11 @@ struct Simulation::State {
     std::vector<EntityId> route;
     std::size_t routeCursor{};
     std::vector<PlacedStorageView> prototypeStorages;
+    struct PendingPlacement { std::uint64_t commandId; FacilityType type; std::int32_t gridX; std::int32_t gridZ; };
+    std::vector<FacilityView> facilities;
+    std::vector<PendingPlacement> placementQueue;
+    std::vector<FacilityPlacementResult> placementResults;
+    std::uint64_t nextPlacementCommandId{FirstFacilityCommandId};
     std::array<Edge, 4> edges{{
         {201, 1, 2, true}, {202, 2, 3, true},
         {203, 3, 4, true}, {204, 4, 5, true}
@@ -208,6 +214,31 @@ struct Simulation::State {
             break;
         }
     }
+
+    bool CellOccupied(std::int32_t x, std::int32_t z) const {
+        return std::any_of(facilities.begin(), facilities.end(), [x, z](const FacilityView& f) {
+            return f.gridX == x && f.gridZ == z;
+        }) || std::any_of(prototypeStorages.begin(), prototypeStorages.end(), [x, z](const PlacedStorageView& s) {
+            return s.gridX == x && s.gridZ == z;
+        });
+    }
+
+    void ApplyPlacements() {
+        for (const auto& request : placementQueue) {
+            const bool validType = request.type == FacilityType::Farm || request.type == FacilityType::Mill;
+            const bool validCell = request.gridX >= Simulation::PrototypeGridMin && request.gridX <= Simulation::PrototypeGridMax &&
+                request.gridZ >= Simulation::PrototypeGridMin && request.gridZ <= Simulation::PrototypeGridMax &&
+                !CellOccupied(request.gridX, request.gridZ);
+            const bool accepted = validType && validCell && facilities.size() < Simulation::MaxFacilities;
+            EntityId id = 0;
+            if (accepted) {
+                id = Simulation::FirstFacilityId + static_cast<EntityId>(facilities.size());
+                facilities.push_back(FacilityView{id, request.type, request.gridX, request.gridZ});
+            }
+            placementResults.push_back(FacilityPlacementResult{request.commandId, accepted, id});
+        }
+        placementQueue.clear();
+    }
 };
 
 Simulation::Simulation() : state_(std::make_unique<State>()) {}
@@ -221,11 +252,18 @@ void Simulation::Step() {
     // Synthetic rules are data-driven; the mill conversion remains 1:1 and
     // process/output limits are explicit OpenRepublic prototype constraints.
     ++state_->tick;
+    state_->ApplyPlacements();
+    const auto extraFarms = static_cast<std::uint32_t>(std::count_if(state_->facilities.begin(), state_->facilities.end(),
+        [](const FacilityView& f) { return f.type == FacilityType::Farm; }));
+    const auto extraMills = static_cast<std::uint32_t>(std::count_if(state_->facilities.begin(), state_->facilities.end(),
+        [](const FacilityView& f) { return f.type == FacilityType::Mill; }));
+    const auto farmRate = state_->rules.farmGrainPerHarvest * (1U + extraFarms);
+    const auto millRate = state_->rules.millGrainPerTick * (1U + extraMills);
     if (state_->tick % state_->rules.farmHarvestIntervalTicks == 0 && state_->farmGrain < FarmGrainCapacity) {
-        state_->farmGrain += std::min(state_->rules.farmGrainPerHarvest, FarmGrainCapacity - state_->farmGrain);
+        state_->farmGrain += std::min(farmRate, FarmGrainCapacity - state_->farmGrain);
     }
     if (state_->millGrain > 0 && state_->millFlour < MillFlourCapacity) {
-        const auto processed = std::min({state_->millGrain, state_->rules.millGrainPerTick,
+        const auto processed = std::min({state_->millGrain, millRate,
             MillFlourCapacity - state_->millFlour});
         state_->millGrain -= processed;
         state_->millFlour += processed;
@@ -258,6 +296,8 @@ Snapshot Simulation::GetSnapshot() const {
         state_->route,
         state_->routeCursor,
         state_->prototypeStorages,
+        state_->facilities,
+        state_->placementResults,
         std::move(roads),
         state_->rules
     };
@@ -287,13 +327,31 @@ bool Simulation::SetRules(const SimulationRules& rules, std::string* error) {
 EntityId Simulation::PlacePrototypeStorage(std::int32_t gridX, std::int32_t gridZ) {
     if (gridX < PrototypeGridMin || gridX > PrototypeGridMax ||
         gridZ < PrototypeGridMin || gridZ > PrototypeGridMax ||
-        state_->prototypeStorages.size() >= MaxPrototypeStorages) return 0;
+        state_->prototypeStorages.size() >= MaxPrototypeStorages || state_->CellOccupied(gridX, gridZ)) return 0;
     const auto duplicate = std::find_if(state_->prototypeStorages.begin(), state_->prototypeStorages.end(),
         [gridX, gridZ](const PlacedStorageView& item) { return item.gridX == gridX && item.gridZ == gridZ; });
     if (duplicate != state_->prototypeStorages.end()) return 0;
     const auto id = FirstPrototypeStorageId + static_cast<EntityId>(state_->prototypeStorages.size());
     state_->prototypeStorages.push_back(PlacedStorageView{id, gridX, gridZ});
     return id;
+}
+
+std::uint64_t Simulation::QueueFacilityPlacement(FacilityType type, std::int32_t gridX, std::int32_t gridZ) {
+    if (state_->tick == std::numeric_limits<Tick>::max() ||
+        state_->placementQueue.size() >= MaxQueuedFacilityPlacements ||
+        state_->placementQueue.size() + state_->placementResults.size() >= MaxUnacknowledgedFacilityResults ||
+        state_->nextPlacementCommandId == std::numeric_limits<std::uint64_t>::max()) return 0;
+    const auto id = state_->nextPlacementCommandId++;
+    state_->placementQueue.push_back(State::PendingPlacement{id, type, gridX, gridZ});
+    return id;
+}
+
+bool Simulation::AcknowledgeFacilityPlacementResult(std::uint64_t commandId) {
+    const auto it = std::find_if(state_->placementResults.begin(), state_->placementResults.end(),
+        [commandId](const FacilityPlacementResult& result) { return result.commandId == commandId; });
+    if (it == state_->placementResults.end()) return false;
+    state_->placementResults.erase(it);
+    return true;
 }
 
 bool Simulation::SetRoadEnabled(EntityId edgeId, bool enabled) {
@@ -306,7 +364,7 @@ bool Simulation::SetRoadEnabled(EntityId edgeId, bool enabled) {
 
 std::string Simulation::Save() const {
     std::ostringstream out;
-    out << "OPENREPUBLIC_SIM 3\n"
+    out << "OPENREPUBLIC_SIM 5\n"
         << "TICK " << state_->tick << '\n'
         << "DELIVERED " << state_->deliveredFlourTotal << '\n'
         << "FARM " << state_->farmGrain << '\n'
@@ -322,7 +380,17 @@ std::string Simulation::Save() const {
     for (const auto& storage : state_->prototypeStorages)
         out << ' ' << storage.id << ' ' << storage.gridX << ' ' << storage.gridZ;
     out << '\n' << "RULES " << state_->rules.farmGrainPerHarvest << ' '
-        << state_->rules.farmHarvestIntervalTicks << ' ' << state_->rules.millGrainPerTick << '\n';
+        << state_->rules.farmHarvestIntervalTicks << ' ' << state_->rules.millGrainPerTick << '\n'
+        << "FACILITIES " << state_->facilities.size();
+    for (const auto& facility : state_->facilities)
+        out << ' ' << facility.id << ' ' << static_cast<unsigned>(facility.type) << ' ' << facility.gridX << ' ' << facility.gridZ;
+    out << '\n' << "PLACEMENT_QUEUE " << state_->nextPlacementCommandId << ' ' << state_->placementQueue.size();
+    for (const auto& request : state_->placementQueue)
+        out << ' ' << request.commandId << ' ' << static_cast<unsigned>(request.type) << ' ' << request.gridX << ' ' << request.gridZ;
+    out << '\n' << "PLACEMENT_RESULTS " << state_->placementResults.size();
+    for (const auto& result : state_->placementResults)
+        out << ' ' << result.commandId << ' ' << (result.accepted ? 1 : 0) << ' ' << result.facilityId;
+    out << '\n';
     return out.str();
 }
 
@@ -335,7 +403,7 @@ bool Simulation::Load(std::string_view data, std::string* error) {
     std::string tag;
     unsigned version = 0;
     if (!(in >> tag) || tag != "OPENREPUBLIC_SIM" || !ReadUnsigned(in, version)) return fail("invalid save header");
-    if (version < 1 || version > 3) return fail("unsupported save version");
+    if (version < 1 || version > 5) return fail("unsupported save version");
 
     State candidate;
     std::uint64_t routeSize = 0;
@@ -382,6 +450,50 @@ bool Simulation::Load(std::string_view data, std::string* error) {
             !ReadUnsigned(in, candidate.rules.farmHarvestIntervalTicks) ||
             !ReadUnsigned(in, candidate.rules.millGrainPerTick)) return fail("invalid simulation rules record");
     }
+    if (version >= 4) {
+        std::uint64_t count = 0;
+        if (!(in >> tag) || tag != "FACILITIES" || !ReadUnsigned(in, count)) return fail("invalid facilities record");
+        if (count > MaxFacilities) return fail("too many facilities");
+        candidate.facilities.reserve(static_cast<std::size_t>(count));
+        for (std::uint64_t i = 0; i < count; ++i) {
+            FacilityView facility;
+            unsigned type = 0;
+            if (!ReadUnsigned(in, facility.id) || !ReadUnsigned(in, type) ||
+                !ReadSigned(in, facility.gridX) || !ReadSigned(in, facility.gridZ)) return fail("invalid facility entry");
+            if (type != static_cast<unsigned>(FacilityType::Farm) && type != static_cast<unsigned>(FacilityType::Mill))
+                return fail("unknown serialized facility type");
+            facility.type = static_cast<FacilityType>(type);
+            candidate.facilities.push_back(facility);
+        }
+        std::uint64_t queueCount = 0;
+        if (!(in >> tag) || tag != "PLACEMENT_QUEUE" || !ReadUnsigned(in, candidate.nextPlacementCommandId) ||
+            !ReadUnsigned(in, queueCount)) return fail("invalid placement queue record");
+        if (queueCount > MaxQueuedFacilityPlacements) return fail("too many queued placements");
+        for (std::uint64_t i = 0; i < queueCount; ++i) {
+            State::PendingPlacement request{};
+            unsigned type = 0;
+            if (!ReadUnsigned(in, request.commandId) || !ReadUnsigned(in, type) ||
+                !ReadSigned(in, request.gridX) || !ReadSigned(in, request.gridZ)) return fail("invalid queued placement entry");
+            if (type > std::numeric_limits<std::uint8_t>::max()) return fail("queued placement type exceeds enum representation");
+            request.type = static_cast<FacilityType>(type);
+            candidate.placementQueue.push_back(request);
+        }
+    }
+    if (version >= 5) {
+        std::uint64_t resultCount = 0;
+        if (!(in >> tag) || tag != "PLACEMENT_RESULTS" || !ReadUnsigned(in, resultCount))
+            return fail("invalid placement results record");
+        if (resultCount > MaxUnacknowledgedFacilityResults) return fail("too many unacknowledged placement results");
+        candidate.placementResults.reserve(static_cast<std::size_t>(resultCount));
+        for (std::uint64_t i = 0; i < resultCount; ++i) {
+            FacilityPlacementResult result;
+            unsigned accepted = 0;
+            if (!ReadUnsigned(in, result.commandId) || !ReadUnsigned(in, accepted) || !ReadUnsigned(in, result.facilityId) || accepted > 1)
+                return fail("invalid placement result entry");
+            result.accepted = accepted != 0;
+            candidate.placementResults.push_back(result);
+        }
+    }
     std::string extra;
     if (in >> extra) return fail("unexpected trailing save data");
 
@@ -402,6 +514,54 @@ bool Simulation::Load(std::string_view data, std::string* error) {
                 candidate.prototypeStorages[j].gridZ == storage.gridZ) return fail("duplicate prototype storage cell");
         }
     }
+    for (std::size_t i = 0; i < candidate.facilities.size(); ++i) {
+        const auto& facility = candidate.facilities[i];
+        if (facility.id != FirstFacilityId + i) return fail("facility IDs are not canonical");
+        if (facility.type != FacilityType::Farm && facility.type != FacilityType::Mill) return fail("unknown facility type");
+        if (facility.gridX < PrototypeGridMin || facility.gridX > PrototypeGridMax ||
+            facility.gridZ < PrototypeGridMin || facility.gridZ > PrototypeGridMax) return fail("facility cell is out of bounds");
+        for (std::size_t j = 0; j < i; ++j)
+            if (candidate.facilities[j].gridX == facility.gridX && candidate.facilities[j].gridZ == facility.gridZ)
+                return fail("duplicate facility cell");
+        for (const auto& storage : candidate.prototypeStorages)
+            if (storage.gridX == facility.gridX && storage.gridZ == facility.gridZ) return fail("facility overlaps prototype storage");
+    }
+    std::uint64_t previousCommand = 0;
+    if (candidate.nextPlacementCommandId == 0) return fail("next placement command ID is invalid");
+    for (const auto& request : candidate.placementQueue) {
+        if (request.commandId <= previousCommand || request.commandId >= candidate.nextPlacementCommandId)
+            return fail("queued placement command IDs are not canonical");
+        if (previousCommand != 0 &&
+            (previousCommand == std::numeric_limits<std::uint64_t>::max() || request.commandId != previousCommand + 1))
+            return fail("queued placement command IDs are not contiguous");
+        previousCommand = request.commandId;
+    }
+    if (!candidate.placementQueue.empty() &&
+        candidate.placementQueue.back().commandId != candidate.nextPlacementCommandId - 1)
+        return fail("queued placements are not the latest command ID suffix");
+    if (candidate.tick == std::numeric_limits<Tick>::max() && !candidate.placementQueue.empty())
+        return fail("terminal tick cannot contain queued placements");
+    std::uint64_t previousResult = 0;
+    EntityId previousAcceptedFacility = 0;
+    for (const auto& result : candidate.placementResults) {
+        if (result.commandId <= previousResult || result.commandId >= candidate.nextPlacementCommandId)
+            return fail("placement result command IDs are not canonical");
+        if (result.accepted) {
+            if (result.facilityId < FirstFacilityId || result.facilityId >= FirstFacilityId + candidate.facilities.size())
+                return fail("accepted placement result references unknown facility");
+            if (result.facilityId <= previousAcceptedFacility)
+                return fail("accepted placement result facility IDs are not strictly increasing");
+            previousAcceptedFacility = result.facilityId;
+        } else if (result.facilityId != 0) return fail("rejected placement result has a facility ID");
+        previousResult = result.commandId;
+    }
+    for (const auto& request : candidate.placementQueue) {
+        if (request.commandId <= previousResult || request.commandId >= candidate.nextPlacementCommandId)
+            return fail("outstanding placement command IDs are not globally ordered");
+        previousResult = request.commandId;
+    }
+    if (candidate.placementQueue.size() + candidate.placementResults.size() > MaxUnacknowledgedFacilityResults)
+        return fail("too many pending placement acknowledgments");
     if (!HasNode(candidate.truckNode)) return fail("truck references unknown node");
     if (stage > static_cast<unsigned>(TruckStage::ReturnToFarm) || cargo > static_cast<unsigned>(Resource::Flour)) return fail("unknown truck stage or cargo resource");
     if (candidate.cargoAmount > TruckCapacity || ((candidate.cargoAmount == 0) != (candidate.cargo == Resource::None))) return fail("invalid cargo amount/resource pair");

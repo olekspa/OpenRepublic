@@ -32,6 +32,21 @@ struct PlacedStorageView {
     std::int32_t gridZ{};
 };
 
+enum class FacilityType : std::uint8_t { Farm = 1, Mill = 2 };
+
+struct FacilityView {
+    EntityId id{};
+    FacilityType type{FacilityType::Farm};
+    std::int32_t gridX{};
+    std::int32_t gridZ{};
+};
+
+struct FacilityPlacementResult {
+    std::uint64_t commandId{};
+    bool accepted{};
+    EntityId facilityId{};
+};
+
 struct RoadView {
     EntityId id{};
     EntityId a{};
@@ -58,6 +73,10 @@ struct Snapshot {
     std::vector<EntityId> activeRoute;
     std::size_t routeCursor{};
     std::vector<PlacedStorageView> prototypeStorages;
+    std::vector<FacilityView> facilities;
+    // Unacknowledged results, ordered by command ID. A caller should acknowledge
+    // results after consuming them; they survive later ticks and save/load.
+    std::vector<FacilityPlacementResult> facilityPlacementResults;
     std::vector<RoadView> roads;
     SimulationRules rules;
 };
@@ -74,7 +93,11 @@ public:
     static constexpr EntityId MillNodeId = 3;
     static constexpr EntityId WarehouseNodeId = 5;
     static constexpr EntityId FirstPrototypeStorageId = 3001;
+    static constexpr EntityId FirstFacilityId = 4001;
     static constexpr std::size_t MaxPrototypeStorages = 8;
+    static constexpr std::size_t MaxFacilities = 16;
+    static constexpr std::size_t MaxQueuedFacilityPlacements = 16;
+    static constexpr std::size_t MaxUnacknowledgedFacilityResults = 16;
     static constexpr std::int32_t PrototypeGridMin = -16;
     static constexpr std::int32_t PrototypeGridMax = 16;
 
@@ -94,6 +117,14 @@ public:
 
     // Non-WRSR synthetic placement prototype. Returns zero on invalid or duplicate cells.
     EntityId PlacePrototypeStorage(std::int32_t gridX, std::int32_t gridZ);
+
+    // Queue a synthetic Farm or Mill construction request. Requests are
+    // validated and applied in submission order at the start of the next
+    // fixed simulation tick. Returns zero if the bounded command/result capacity
+    // is full or the simulation has reached its terminal tick.
+    std::uint64_t QueueFacilityPlacement(FacilityType type, std::int32_t gridX, std::int32_t gridZ);
+    // Remove a result after the caller has consumed it. Returns false if unknown.
+    bool AcknowledgeFacilityPlacementResult(std::uint64_t commandId);
 
     // Toggle a synthetic road edge for scenario construction and connectivity checks.
     // Edge IDs in the default scenario are 201..204.

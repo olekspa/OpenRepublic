@@ -40,18 +40,40 @@ std::string RemoveSaveRecord(std::string data, const std::string& prefix) {
 }
 
 std::string AsVersionOneSave(std::string data) {
-    const auto header = data.find("OPENREPUBLIC_SIM 3");
+    const auto header = data.find("OPENREPUBLIC_SIM 5");
     if (header == std::string::npos) return {};
-    data.replace(header, std::string("OPENREPUBLIC_SIM 3").size(), "OPENREPUBLIC_SIM 1");
+    data.replace(header, std::string("OPENREPUBLIC_SIM 5").size(), "OPENREPUBLIC_SIM 1");
     data = RemoveSaveRecord(std::move(data), "PROTOTYPE_STORAGES ");
-    return RemoveSaveRecord(std::move(data), "RULES ");
+    data = RemoveSaveRecord(std::move(data), "RULES ");
+    data = RemoveSaveRecord(std::move(data), "FACILITIES ");
+    data = RemoveSaveRecord(std::move(data), "PLACEMENT_QUEUE ");
+    return RemoveSaveRecord(std::move(data), "PLACEMENT_RESULTS ");
 }
 
 std::string AsVersionTwoSave(std::string data) {
-    const auto header = data.find("OPENREPUBLIC_SIM 3");
+    const auto header = data.find("OPENREPUBLIC_SIM 5");
     if (header == std::string::npos) return {};
-    data.replace(header, std::string("OPENREPUBLIC_SIM 3").size(), "OPENREPUBLIC_SIM 2");
-    return RemoveSaveRecord(std::move(data), "RULES ");
+    data.replace(header, std::string("OPENREPUBLIC_SIM 5").size(), "OPENREPUBLIC_SIM 2");
+    data = RemoveSaveRecord(std::move(data), "RULES ");
+    data = RemoveSaveRecord(std::move(data), "FACILITIES ");
+    data = RemoveSaveRecord(std::move(data), "PLACEMENT_QUEUE ");
+    return RemoveSaveRecord(std::move(data), "PLACEMENT_RESULTS ");
+}
+
+std::string AsVersionThreeSave(std::string data) {
+    const auto header = data.find("OPENREPUBLIC_SIM 5");
+    if (header == std::string::npos) return {};
+    data.replace(header, std::string("OPENREPUBLIC_SIM 5").size(), "OPENREPUBLIC_SIM 3");
+    data = RemoveSaveRecord(std::move(data), "FACILITIES ");
+    data = RemoveSaveRecord(std::move(data), "PLACEMENT_QUEUE ");
+    return RemoveSaveRecord(std::move(data), "PLACEMENT_RESULTS ");
+}
+
+std::string AsVersionFourSave(std::string data) {
+    const auto header = data.find("OPENREPUBLIC_SIM 5");
+    if (header == std::string::npos) return {};
+    data.replace(header, std::string("OPENREPUBLIC_SIM 5").size(), "OPENREPUBLIC_SIM 4");
+    return RemoveSaveRecord(std::move(data), "PLACEMENT_RESULTS ");
 }
 }
 
@@ -88,9 +110,9 @@ int main() {
     Check(customRulesSim.GetSnapshot().mill.grain == 0 && customRulesSim.GetSnapshot().mill.flour == 2,
         "custom mill throughput processes two grain into one-to-one flour");
     const auto customSave = customRulesSim.Save();
-    Check(customSave.find("OPENREPUBLIC_SIM 3\n") == 0, "rules are persisted in version 3 saves");
+    Check(customSave.find("OPENREPUBLIC_SIM 5\n") == 0, "rules are persisted in version 5 saves");
     Simulation customRestored;
-    Check(customRestored.Load(customSave, &error), "version 3 custom-rules save loads");
+    Check(customRestored.Load(customSave, &error), "version 5 custom-rules save loads");
     Check(customRestored.GetRules().farmGrainPerHarvest == 3 && customRestored.GetRules().farmHarvestIntervalTicks == 1 &&
         customRestored.GetRules().millGrainPerTick == 2, "v3 load restores active rules");
     Check(customRestored.Save() == customSave, "v3 custom-rules save/load is canonical");
@@ -144,13 +166,146 @@ int main() {
 
     // Save/load preserves construction and replays the next placement identically.
     const auto placedSave = placement.Save();
-    Check(placedSave.find("OPENREPUBLIC_SIM 3\n") == 0, "construction uses the current version 3 save format");
+    Check(placedSave.find("OPENREPUBLIC_SIM 5\n") == 0, "construction uses the current version 5 save format");
     Simulation placementRestored;
     Check(placementRestored.Load(placedSave, &error), "version 3 save with construction loads");
     Check(placementRestored.Save() == placedSave, "construction save/load round-trip is canonical");
     Check(placement.PlacePrototypeStorage(0, 12) == placementRestored.PlacePrototypeStorage(0, 12),
         "next stable structure ID matches after save/load");
     Check(placement.Save() == placementRestored.Save(), "future construction state replays after save/load");
+
+    // Typed facilities are simulation-owned commands. Requests validate at a
+    // tick boundary, reserve cells in request order, and affect synthetic rates.
+    using openrepublic::sim::FacilityType;
+    Simulation construction;
+    const auto farmCommand = construction.QueueFacilityPlacement(FacilityType::Farm, 2, 3);
+    const auto duplicateCommand = construction.QueueFacilityPlacement(FacilityType::Mill, 2, 3);
+    const auto invalidTypeCommand = construction.QueueFacilityPlacement(static_cast<FacilityType>(99), 4, 3);
+    Check(farmCommand == 1 && duplicateCommand == 2 && invalidTypeCommand == 3,
+        "facility placement commands receive stable submission IDs");
+    Check(construction.GetSnapshot().facilities.empty() && construction.GetSnapshot().facilityPlacementResults.empty(),
+        "queued facilities are not visible before a fixed tick boundary");
+    const auto queuedSave = construction.Save();
+    Simulation queuedRestored;
+    Check(queuedRestored.Load(queuedSave, &error), "save preserves queued facility commands");
+    Check(queuedRestored.Save() == queuedSave, "queued facility save/load is canonical");
+    construction.Step();
+    queuedRestored.Step();
+    auto constructionSnapshot = construction.GetSnapshot();
+    Check(constructionSnapshot.facilityPlacementResults.size() == 3,
+        "snapshot reports every placement result from the tick boundary");
+    Check(constructionSnapshot.facilityPlacementResults[0].accepted &&
+        constructionSnapshot.facilityPlacementResults[0].facilityId == Simulation::FirstFacilityId,
+        "valid farm placement is accepted with canonical stable ID");
+    Check(!constructionSnapshot.facilityPlacementResults[1].accepted &&
+        constructionSnapshot.facilityPlacementResults[1].facilityId == 0,
+        "later command targeting an occupied cell is rejected");
+    Check(!constructionSnapshot.facilityPlacementResults[2].accepted,
+        "unknown facility type is rejected at the tick boundary");
+    Check(constructionSnapshot.facilities.size() == 1 && constructionSnapshot.facilities[0].type == FacilityType::Farm,
+        "snapshot exposes the accepted typed facility");
+    Check(construction.Save() == queuedRestored.Save(), "queued placement continuation is deterministic after reload");
+    Check(construction.PlacePrototypeStorage(2, 3) == 0,
+        "prototype storage cannot overlap a constructed facility");
+
+    Simulation acknowledged;
+    const auto firstAckCommand = acknowledged.QueueFacilityPlacement(FacilityType::Farm, 1, 1);
+    acknowledged.Step();
+    const auto secondAckCommand = acknowledged.QueueFacilityPlacement(FacilityType::Mill, 2, 1);
+    acknowledged.Step();
+    auto acknowledgedSnapshot = acknowledged.GetSnapshot();
+    Check(acknowledgedSnapshot.facilityPlacementResults.size() == 2 &&
+        acknowledgedSnapshot.facilityPlacementResults[0].commandId == firstAckCommand &&
+        acknowledgedSnapshot.facilityPlacementResults[1].commandId == secondAckCommand,
+        "unacknowledged results remain ordered and visible across later ticks");
+    const auto acknowledgmentsSave = acknowledged.Save();
+    Simulation acknowledgmentsRestored;
+    Check(acknowledgmentsRestored.Load(acknowledgmentsSave, &error),
+        "save/load preserves placement results before caller retrieval");
+    Check(acknowledgmentsRestored.GetSnapshot().facilityPlacementResults.size() == 2 &&
+        acknowledgmentsRestored.Save() == acknowledgmentsSave,
+        "restored placement acknowledgments retain their canonical order");
+    Check(acknowledgmentsRestored.AcknowledgeFacilityPlacementResult(firstAckCommand),
+        "caller can acknowledge a retrieved placement result");
+    Check(!acknowledgmentsRestored.AcknowledgeFacilityPlacementResult(firstAckCommand),
+        "acknowledging the same result twice reports it is absent");
+    Simulation acknowledgedAgain;
+    Check(acknowledgedAgain.Load(acknowledgmentsRestored.Save(), &error) &&
+        acknowledgedAgain.GetSnapshot().facilityPlacementResults.size() == 1 &&
+        acknowledgedAgain.GetSnapshot().facilityPlacementResults[0].commandId == secondAckCommand,
+        "acknowledged result stays removed across save/load");
+
+    Simulation manyAcknowledgments;
+    std::size_t completedAcknowledgments = 0;
+    for (std::int32_t i = 0; i < 20; ++i) {
+        const auto commandId = manyAcknowledgments.QueueFacilityPlacement(
+            FacilityType::Farm, Simulation::PrototypeGridMax + 1, i);
+        manyAcknowledgments.Step();
+        const auto resultSnapshot = manyAcknowledgments.GetSnapshot().facilityPlacementResults;
+        const auto result = std::find_if(resultSnapshot.begin(), resultSnapshot.end(),
+            [commandId](const auto& item) { return item.commandId == commandId; });
+        Check(commandId != 0 && result != resultSnapshot.end() && !result->accepted,
+            "placement acknowledgment stream remains usable beyond sixteen total outcomes");
+        if (commandId != 0 && result != resultSnapshot.end() &&
+            manyAcknowledgments.AcknowledgeFacilityPlacementResult(commandId)) ++completedAcknowledgments;
+    }
+    Check(completedAcknowledgments == 20 && manyAcknowledgments.GetSnapshot().facilityPlacementResults.empty(),
+        "caller can process and acknowledge more than sixteen placement outcomes over time");
+    Simulation invalidCellCommand;
+    Check(invalidCellCommand.QueueFacilityPlacement(FacilityType::Farm, Simulation::PrototypeGridMax + 1, 0) != 0,
+        "out-of-bounds request enters the command stream for boundary validation");
+    const auto invalidCellSave = invalidCellCommand.Save();
+    Simulation invalidCellRestored;
+    Check(invalidCellRestored.Load(invalidCellSave, &error), "save preserves queued invalid-cell request");
+    invalidCellRestored.Step();
+    Check(!invalidCellRestored.GetSnapshot().facilityPlacementResults[0].accepted,
+        "out-of-bounds request is rejected at the tick boundary");
+
+    Simulation accelerated;
+    Check(accelerated.QueueFacilityPlacement(FacilityType::Farm, -3, 0) != 0 &&
+        accelerated.QueueFacilityPlacement(FacilityType::Mill, 3, 0) != 0,
+        "synthetic farm and mill requests queue");
+    accelerated.Step();
+    Check(accelerated.GetSnapshot().facilities.size() == 2,
+        "both non-overlapping facility types are committed at the boundary");
+    accelerated.Step(5);
+    Check(accelerated.GetSnapshot().mill.grain == 0 &&
+        accelerated.GetSnapshot().truckCargo == Resource::Flour && accelerated.GetSnapshot().truckCargoAmount == 2,
+        "placed mill rate processes the delivered grain at its synthetic throughput");
+    accelerated.Step(4);
+    Check(accelerated.GetSnapshot().deliveredFlourTotal > 0,
+        "the truck consumes facility-produced flour in the active delivery chain");
+    const auto activeFacilitiesSave = accelerated.Save();
+    Simulation facilitiesRestored;
+    Check(facilitiesRestored.Load(activeFacilitiesSave, &error), "save with typed facilities loads");
+    Check(facilitiesRestored.Save() == activeFacilitiesSave, "typed facility save/load is canonical");
+    accelerated.Step(140);
+    facilitiesRestored.Step(140);
+    Check(facilitiesRestored.Save() == accelerated.Save(), "typed facility simulation resumes deterministically after reload");
+
+    Simulation fullGrid;
+    for (std::int32_t i = 0; i < static_cast<std::int32_t>(Simulation::MaxFacilities); ++i) {
+        Check(fullGrid.QueueFacilityPlacement(FacilityType::Farm, i - 8, -8) != 0,
+            "bounded facility requests fit in command queue");
+    }
+    Check(fullGrid.QueueFacilityPlacement(FacilityType::Farm, 9, -8) == 0,
+        "facility command queue rejects overflow before enqueue");
+    fullGrid.Step();
+    const auto fullGridResults = fullGrid.GetSnapshot().facilityPlacementResults;
+    Check(std::count_if(fullGridResults.begin(), fullGridResults.end(), [](const auto& r) { return r.accepted; }) == 16,
+        "facility collection accepts its documented capacity");
+    Check(fullGrid.QueueFacilityPlacement(FacilityType::Mill, 9, -8) == 0,
+        "unacknowledged result capacity bounds further construction commands");
+    Check(fullGrid.AcknowledgeFacilityPlacementResult(fullGridResults[0].commandId),
+        "acknowledging a result frees command/result capacity");
+    Check(fullGrid.QueueFacilityPlacement(FacilityType::Mill, 9, -8) != 0,
+        "queue can accept commands after prior tick is applied and space is available");
+    fullGrid.Step();
+    const auto fullGridFinalResults = fullGrid.GetSnapshot().facilityPlacementResults;
+    Check(fullGridFinalResults.size() == 16,
+        "result history retains the placement outcome from each tick");
+    Check(std::any_of(fullGridFinalResults.begin(), fullGridFinalResults.end(), [](const auto& r) { return !r.accepted; }),
+        "facility collection rejects placement beyond its capacity");
 
     // Enabled road states are visible and persist through version 2 saves.
     Simulation roadState;
@@ -179,7 +334,7 @@ int main() {
     Check(std::all_of(migrated.roads.begin(), migrated.roads.end(),
         [](const openrepublic::sim::RoadView& road) { return road.enabled; }),
         "version 1 default-road fixture migrates with all roads open");
-    Check(v1Target.Save().find("OPENREPUBLIC_SIM 3\n") == 0, "migrated state writes current save version");
+    Check(v1Target.Save().find("OPENREPUBLIC_SIM 5\n") == 0, "migrated state writes current save version");
     Check(v1Target.GetRules().farmGrainPerHarvest == 2 && v1Target.GetRules().farmHarvestIntervalTicks == 2 &&
         v1Target.GetRules().millGrainPerTick == 1, "version 1 migration supplies default rules");
     const auto v2Save = AsVersionTwoSave(v1Source.Save());
@@ -192,7 +347,7 @@ int main() {
         "version 2 migration preserves state and construction collection");
     Check(v2Migrated.rules.farmGrainPerHarvest == 2 && v2Migrated.rules.farmHarvestIntervalTicks == 2 &&
         v2Migrated.rules.millGrainPerTick == 1, "version 2 migration supplies default rules");
-    Check(v2Target.Save().find("OPENREPUBLIC_SIM 3\n") == 0, "v2 migrated state writes current save version");
+    Check(v2Target.Save().find("OPENREPUBLIC_SIM 5\n") == 0, "v2 migrated state writes current save version");
 
     const auto v2ConstructionSave = AsVersionTwoSave(placedSave);
     Simulation v2ConstructionTarget;
@@ -203,6 +358,165 @@ int main() {
     Check(v2ConstructionSnapshot.rules.farmGrainPerHarvest == 2 &&
         v2ConstructionSnapshot.rules.farmHarvestIntervalTicks == 2 &&
         v2ConstructionSnapshot.rules.millGrainPerTick == 1, "version 2 construction migration supplies default rules");
+    const auto v3Save = AsVersionThreeSave(placedSave);
+    Check(!v3Save.empty(), "test fixture represents the version 3 schema");
+    Simulation v3Target;
+    Check(v3Target.Load(v3Save, &error), "version 3 save loads through migration path");
+    Check(v3Target.GetSnapshot().facilities.empty() && v3Target.GetSnapshot().prototypeStorages.size() == Simulation::MaxPrototypeStorages,
+        "version 3 migration supplies empty typed facility state while preserving storage");
+    Check(v3Target.Save().find("OPENREPUBLIC_SIM 5\n") == 0, "v3 migrated state writes current save version");
+    const auto v4Save = AsVersionFourSave(activeFacilitiesSave);
+    Check(!v4Save.empty(), "test fixture represents the version 4 schema");
+    Simulation v4Target;
+    Check(v4Target.Load(v4Save, &error), "version 4 save loads through migration path");
+    Check(v4Target.GetSnapshot().facilityPlacementResults.empty(), "version 4 migration starts with no placement acknowledgments");
+    Check(v4Target.Save().find("OPENREPUBLIC_SIM 5\n") == 0, "v4 migrated state writes current save version");
+
+    // Reject serialized enum values before converting them to the enum's
+    // uint8_t representation; 257 must not wrap into FacilityType::Farm.
+    Simulation malformedEnumTarget;
+    Check(malformedEnumTarget.Load(activeFacilitiesSave, &error), "enum validation target starts with valid facilities");
+    const auto malformedEnumBefore = malformedEnumTarget.Save();
+    auto badFacilityType = activeFacilitiesSave;
+    const auto facilityTypeRecord = badFacilityType.find("FACILITIES 2 4001 ");
+    Check(facilityTypeRecord != std::string::npos, "facility enum fixture is found");
+    if (facilityTypeRecord != std::string::npos) {
+        const auto rawType = facilityTypeRecord + std::string("FACILITIES 2 4001 ").size();
+        badFacilityType.replace(rawType, 1, "257");
+    }
+    Check(!malformedEnumTarget.Load(badFacilityType, &error), "serialized facility type 257 is rejected before narrowing");
+    Check(malformedEnumTarget.Save() == malformedEnumBefore, "invalid facility enum load is transactional");
+    auto badQueuedType = queuedSave;
+    const auto queueRecord = badQueuedType.find("PLACEMENT_QUEUE ");
+    Check(queueRecord != std::string::npos, "queued enum fixture is found");
+    if (queueRecord != std::string::npos) {
+        const auto firstEntry = badQueuedType.find("1 1 2 3", queueRecord);
+        Check(firstEntry != std::string::npos, "queued placement enum entry is found");
+        if (firstEntry != std::string::npos) badQueuedType.replace(firstEntry + 2, 1, "257");
+    }
+    Check(!malformedEnumTarget.Load(badQueuedType, &error), "serialized queued type 257 is rejected before narrowing");
+    Check(malformedEnumTarget.Save() == malformedEnumBefore, "invalid queued enum load is transactional");
+
+    Simulation mixedOutstandingIds;
+    const auto completedBeforeQueue = mixedOutstandingIds.QueueFacilityPlacement(FacilityType::Farm, 1, 2);
+    mixedOutstandingIds.Step();
+    const auto retainedResultId = mixedOutstandingIds.QueueFacilityPlacement(FacilityType::Mill, 2, 2);
+    mixedOutstandingIds.Step();
+    Check(mixedOutstandingIds.AcknowledgeFacilityPlacementResult(completedBeforeQueue),
+        "mixed-ID fixture acknowledges its earlier result");
+    const auto queuedAfterResultId = mixedOutstandingIds.QueueFacilityPlacement(FacilityType::Farm, 3, 2);
+    const auto mixedOutstandingSave = mixedOutstandingIds.Save();
+    Simulation mixedIdLoadTarget;
+    mixedIdLoadTarget.Step(9);
+    const auto mixedIdTargetBefore = mixedIdLoadTarget.Save();
+    auto overlappingOutstandingIds = mixedOutstandingSave;
+    const auto outstandingQueueTag = overlappingOutstandingIds.find("PLACEMENT_QUEUE ");
+    Check(outstandingQueueTag != std::string::npos, "mixed outstanding queue record is found");
+    if (outstandingQueueTag != std::string::npos) {
+        const auto queueEntry = overlappingOutstandingIds.find("PLACEMENT_QUEUE 4 1 ", outstandingQueueTag);
+        Check(queueEntry != std::string::npos, "mixed outstanding queue entry is found");
+        if (queueEntry != std::string::npos) {
+            const auto idStart = queueEntry + std::string("PLACEMENT_QUEUE 4 1 ").size();
+            overlappingOutstandingIds.replace(idStart, std::to_string(queuedAfterResultId).size(),
+                std::to_string(retainedResultId));
+        }
+    }
+    Check(!mixedOutstandingSave.empty() &&
+        !mixedIdLoadTarget.Load(overlappingOutstandingIds, &error),
+        "overlap between result and queue IDs is rejected");
+    Check(mixedIdLoadTarget.Save() == mixedIdTargetBefore,
+        "overlapping outstanding IDs fail transactionally");
+
+    auto invertedOutstandingIds = mixedOutstandingSave;
+    const auto inversionTag = invertedOutstandingIds.find("PLACEMENT_QUEUE ");
+    if (inversionTag != std::string::npos) {
+        const auto queueEntry = invertedOutstandingIds.find("PLACEMENT_QUEUE 4 1 ", inversionTag);
+        if (queueEntry != std::string::npos) {
+            const auto idStart = queueEntry + std::string("PLACEMENT_QUEUE 4 1 ").size();
+            invertedOutstandingIds.replace(idStart, std::to_string(queuedAfterResultId).size(),
+                std::to_string(completedBeforeQueue));
+        }
+    }
+    Check(!mixedIdLoadTarget.Load(invertedOutstandingIds, &error),
+        "out-of-order result-to-queue IDs are rejected");
+    Check(mixedIdLoadTarget.Save() == mixedIdTargetBefore,
+        "out-of-order outstanding IDs fail transactionally");
+
+    Simulation queuedSuffix;
+    queuedSuffix.QueueFacilityPlacement(FacilityType::Farm, 0, 6);
+    queuedSuffix.QueueFacilityPlacement(FacilityType::Mill, 1, 6);
+    queuedSuffix.QueueFacilityPlacement(FacilityType::Farm, 2, 6);
+    const auto queuedSuffixSave = queuedSuffix.Save(); // Queue IDs 1,2,3; next ID 4.
+    Simulation queuedSuffixLoadTarget;
+    queuedSuffixLoadTarget.Step(13);
+    const auto queuedSuffixTargetBefore = queuedSuffixLoadTarget.Save();
+    auto queueWithGap = queuedSuffixSave;
+    const auto gapTag = queueWithGap.find("PLACEMENT_QUEUE 4 3 ");
+    Check(gapTag != std::string::npos, "queued suffix fixture is found");
+    if (gapTag != std::string::npos) {
+        queueWithGap.replace(gapTag, std::string("PLACEMENT_QUEUE 4 3 ").size(), "PLACEMENT_QUEUE 4 2 ");
+        const auto secondEntry = queueWithGap.find("2 2 1 6 ", gapTag);
+        Check(secondEntry != std::string::npos, "second queued suffix entry is found");
+        if (secondEntry != std::string::npos) queueWithGap.erase(secondEntry, std::string("2 2 1 6 ").size());
+    }
+    Check(!queuedSuffixLoadTarget.Load(queueWithGap, &error),
+        "gap within persisted queued command suffix is rejected");
+    Check(queuedSuffixLoadTarget.Save() == queuedSuffixTargetBefore,
+        "queued command gap rejection is transactional");
+
+    Simulation queuedNotLatest;
+    queuedNotLatest.QueueFacilityPlacement(FacilityType::Farm, 0, 6);
+    queuedNotLatest.QueueFacilityPlacement(FacilityType::Mill, 1, 6);
+    auto queueNotLatest = queuedNotLatest.Save(); // Queue IDs 1,2; next ID 3.
+    const auto latestTag = queueNotLatest.find("PLACEMENT_QUEUE 3 2 ");
+    if (latestTag != std::string::npos) queueNotLatest.replace(latestTag, std::string("PLACEMENT_QUEUE 3 2 ").size(),
+        "PLACEMENT_QUEUE 4 2 ");
+    Check(!queuedSuffixLoadTarget.Load(queueNotLatest, &error),
+        "queue whose final ID does not precede next ID is rejected");
+    Check(queuedSuffixLoadTarget.Save() == queuedSuffixTargetBefore,
+        "non-latest queued suffix rejection is transactional");
+
+    Simulation acceptedResultIds;
+    acceptedResultIds.QueueFacilityPlacement(FacilityType::Farm, -2, 4);
+    acceptedResultIds.Step();
+    acceptedResultIds.QueueFacilityPlacement(FacilityType::Mill, 2, 4);
+    acceptedResultIds.Step();
+    const auto acceptedResultSave = acceptedResultIds.Save();
+    Simulation facilityResultLoadTarget;
+    facilityResultLoadTarget.Step(11);
+    const auto facilityResultTargetBefore = facilityResultLoadTarget.Save();
+    auto duplicateFacilityResult = acceptedResultSave;
+    const auto resultRecord = duplicateFacilityResult.find("PLACEMENT_RESULTS 2 ");
+    Check(resultRecord != std::string::npos, "two accepted-result fixture is found");
+    if (resultRecord != std::string::npos) {
+        const auto secondResult = duplicateFacilityResult.find("2 1 4002", resultRecord);
+        Check(secondResult != std::string::npos, "second accepted-result record is found");
+        if (secondResult != std::string::npos)
+            duplicateFacilityResult.replace(secondResult + std::string("2 1 ").size(), 4, "4001");
+    }
+    Check(!facilityResultLoadTarget.Load(duplicateFacilityResult, &error),
+        "duplicate accepted facility references are rejected");
+    Check(facilityResultLoadTarget.Save() == facilityResultTargetBefore,
+        "duplicate accepted facility references fail transactionally");
+
+    auto reversedFacilityResults = acceptedResultSave;
+    const auto reversedRecord = reversedFacilityResults.find("PLACEMENT_RESULTS 2 ");
+    if (reversedRecord != std::string::npos) {
+        const auto firstFacility = reversedFacilityResults.find("1 1 4001", reversedRecord);
+        const auto secondFacility = reversedFacilityResults.find("2 1 4002", reversedRecord);
+        Check(firstFacility != std::string::npos && secondFacility != std::string::npos,
+            "accepted facility result IDs are located for reversal fixture");
+        if (firstFacility != std::string::npos && secondFacility != std::string::npos) {
+            reversedFacilityResults.replace(secondFacility + std::string("2 1 ").size(), 4, "XXXX");
+            reversedFacilityResults.replace(firstFacility + std::string("1 1 ").size(), 4, "4002");
+            const auto placeholder = reversedFacilityResults.find("XXXX", secondFacility);
+            if (placeholder != std::string::npos) reversedFacilityResults.replace(placeholder, 4, "4001");
+        }
+    }
+    Check(!facilityResultLoadTarget.Load(reversedFacilityResults, &error),
+        "reversed accepted facility-result mapping is rejected");
+    Check(facilityResultLoadTarget.Save() == facilityResultTargetBefore,
+        "reversed accepted facility-result mapping fails transactionally");
 
     // Invalid version 3 construction and rule records fail transactionally.
     Simulation malformedTarget;
@@ -265,7 +579,7 @@ int main() {
     // Invalid loads must not partially mutate the existing object.
     const auto beforeBadLoad = restored.Save();
     auto badVersion = bytes;
-    badVersion.replace(badVersion.find("OPENREPUBLIC_SIM 3"), std::string("OPENREPUBLIC_SIM 3").size(), "OPENREPUBLIC_SIM 9");
+    badVersion.replace(badVersion.find("OPENREPUBLIC_SIM 5"), std::string("OPENREPUBLIC_SIM 5").size(), "OPENREPUBLIC_SIM 9");
     Check(!restored.Load(badVersion, &error), "unsupported save version is rejected");
     Check(restored.Save() == beforeBadLoad, "rejected version leaves state unchanged");
     auto negativeTick = bytes;
@@ -281,6 +595,19 @@ int main() {
     Check(restored.Save() == beforeBadLoad, "rejected record leaves state unchanged");
     Check(!restored.Load(bytes + "GARBAGE\n", &error), "unexpected trailing data is rejected");
     Check(restored.Save() == beforeBadLoad, "trailing-data rejection leaves state unchanged");
+
+    Simulation terminalTick;
+    auto terminalSave = terminalTick.Save();
+    const auto tickRecord = terminalSave.find("TICK 0");
+    Check(tickRecord != std::string::npos, "terminal tick fixture is found");
+    if (tickRecord != std::string::npos)
+        terminalSave.replace(tickRecord, std::string("TICK 0").size(), "TICK 18446744073709551615");
+    Check(terminalTick.Load(terminalSave, &error), "maximum-tick save loads");
+    const auto terminalBeforeQueue = terminalTick.Save();
+    Check(terminalTick.QueueFacilityPlacement(FacilityType::Farm, 0, 0) == 0,
+        "facility request is rejected at the terminal tick");
+    terminalTick.Step();
+    Check(terminalTick.Save() == terminalBeforeQueue, "terminal tick does not advance or mutate state");
 
     // The save parser must not accept delivery states the simulation cannot
     // produce, even when every listed road segment is individually valid.
