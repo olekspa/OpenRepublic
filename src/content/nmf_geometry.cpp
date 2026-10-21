@@ -192,6 +192,7 @@ bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output, s
 
     std::size_t cursor = kHeaderSize + header.submaterialIdentifiers.size() * 64u;
     NmfStaticGeometry candidate;
+    candidate.submaterialIdentifiers = header.submaterialIdentifiers;
     candidate.objects.reserve(header.objectRecordCount);
     std::size_t totalVertices = 0, totalIndices = 0, totalPartitions = 0, totalPartitionIndices = 0;
 
@@ -301,27 +302,43 @@ bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output, s
                 return Fail(error, "NMF second per-triangle auxiliary stream is truncated");
         }
         totalPartitions += lod.subsetCount;
+        lod.subsets.reserve(lod.subsetCount);
         for (std::uint32_t i = 0; i < lod.subsetCount; ++i) {
             if (!CanRead(bytes, cursor, kPartitionHeaderSize, bytes.size()))
                 return Fail(error, "NMF subset header is truncated");
-            std::uint16_t subsetIndices = 0;
-            if (!ReadU16LE(bytes, cursor + 10, bytes.size(), subsetIndices))
-                return Fail(error, "NMF subset index count is truncated");
+            NmfGeometrySubset subset;
+            if (!ReadU32LE(bytes, cursor, bytes.size(), subset.indexOffset) ||
+                !ReadU32LE(bytes, cursor + 4, bytes.size(), subset.indexCount) ||
+                !ReadU16LE(bytes, cursor + 8, bytes.size(), subset.submaterialIndex) ||
+                !ReadU16LE(bytes, cursor + 10, bytes.size(), subset.auxiliaryIndexCount))
+                return Fail(error, "NMF subset record fields are truncated");
+            if (subset.indexOffset > lod.indices.size() ||
+                subset.indexCount > lod.indices.size() - subset.indexOffset)
+                return Fail(error, "NMF subset draw range is outside its LOD index array");
+            // Each observed subset is submitted as its own indexed triangle draw,
+            // so its start offset need not align with a triangle boundary in the
+            // concatenated LOD index array. Preserve the exact per-draw offset.
+            if (subset.submaterialIndex >= header.submaterialIdentifiers.size())
+                return Fail(error, "NMF subset references a missing submaterial-table entry");
             cursor += kPartitionHeaderSize;
             std::size_t n = 0;
-            if (!CheckedMultiply(subsetIndices, 2, n) || !CanRead(bytes, cursor, n, bytes.size()))
+            if (!CheckedMultiply(subset.auxiliaryIndexCount, 2, n) ||
+                !CanRead(bytes, cursor, n, bytes.size()))
                 return Fail(error, "NMF subset indices are truncated");
-            for (std::uint16_t j = 0; j < subsetIndices; ++j) {
+            subset.auxiliaryIndices.reserve(subset.auxiliaryIndexCount);
+            for (std::uint16_t j = 0; j < subset.auxiliaryIndexCount; ++j) {
                 std::uint16_t index = 0;
                 if (!ReadU16LE(bytes, cursor + static_cast<std::size_t>(j) * 2, bytes.size(),
                                index) ||
                     index >= vertexCount)
                     return Fail(error, "NMF subset index is outside its vertex array");
+                subset.auxiliaryIndices.push_back(index);
             }
-            if (subsetIndices > kMaxPartitionIndices - totalPartitionIndices)
+            if (subset.auxiliaryIndexCount > kMaxPartitionIndices - totalPartitionIndices)
                 return Fail(error, "NMF aggregate subset indices exceed the bounded profile limit");
-            totalPartitionIndices += subsetIndices;
+            totalPartitionIndices += subset.auxiliaryIndexCount;
             cursor += n;
+            lod.subsets.push_back(std::move(subset));
         }
         totalVertices += vertexCount;
         totalIndices += indexCount;

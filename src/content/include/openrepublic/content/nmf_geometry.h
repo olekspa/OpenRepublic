@@ -32,6 +32,16 @@ struct NmfAabb {
     NmfPosition maximum{};
 };
 
+struct NmfGeometrySubset {
+    // Build-scoped draw range and submaterial-table index used by the original
+    // loader/render path. Other records remain opaque auxiliary provenance.
+    std::uint32_t indexOffset{};
+    std::uint32_t indexCount{};
+    std::uint16_t submaterialIndex{};
+    std::uint16_t auxiliaryIndexCount{};
+    std::vector<std::uint16_t> auxiliaryIndices;
+};
+
 struct NmfStaticLod {
     std::uint32_t lodSizeField{};
     std::uint32_t subsetCount{};
@@ -42,6 +52,7 @@ struct NmfStaticLod {
     // Flag 0x8 has a 12-byte per-vertex stream branch; its meaning is inferred.
     std::vector<NmfVec3Attribute> attribute0x8;
     std::vector<std::uint32_t> indices;
+    std::vector<NmfGeometrySubset> subsets;
 };
 
 struct NmfStaticObject {
@@ -61,6 +72,9 @@ struct NmfStaticObject {
 };
 
 struct NmfStaticGeometry {
+    // Header identifiers are retained so observed subset indices stay linked
+    // to their table entries without assigning MTL value or texture semantics.
+    std::vector<std::string> submaterialIdentifiers;
     std::vector<NmfStaticObject> objects;
 };
 
@@ -69,9 +83,11 @@ struct NmfStaticGeometry {
 // LOD are accepted. Root/no-child and identity-matrix gates are sample-only;
 // raw metadata is preserved, matrices are not applied, and nonzero +0x10/+0x18
 // LOD fields are rejected based on an inferred morph interpretation. Recognized
-// auxiliary and subset streams are bounds-checked then discarded. The flagged
-// 0x8 vec3 stream is retained without assigning meaning; other stream and
-// material semantics remain unsupported.
+// auxiliary vertex streams are bounds-checked then discarded. Subset draw
+// ranges and their submaterial-table indices are retained based on the
+// build-scoped loader/render evidence; auxiliary subset indices remain opaque.
+// The flagged 0x8 vec3 stream is retained without assigning meaning; MTL value
+// and texture semantics remain unsupported.
 // On failure, output is unchanged.
 bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output,
                             std::string* error = nullptr);

@@ -1,5 +1,6 @@
 #include "openrepublic/content/nmf_geometry.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -54,7 +55,13 @@ struct LodSpec {
     std::uint32_t flags{};
     std::uint32_t field0x10{};
     std::uint32_t field0x18{};
-    std::vector<std::vector<std::uint16_t>> subsets;
+    struct Subset {
+        std::uint32_t indexOffset{};
+        std::uint32_t indexCount{3};
+        std::uint16_t submaterialIndex{};
+        std::vector<std::uint16_t> auxiliaryIndices;
+    };
+    std::vector<Subset> subsets;
 };
 struct ObjectSpec {
     std::uint32_t type{};
@@ -78,7 +85,20 @@ std::vector<float> Identity() {
 }
 std::string Fixture(const std::vector<ObjectSpec>& objects) {
     std::string b(20, '\0');
+    std::uint32_t submaterialCount = 0;
+    for (const auto& object : objects)
+        for (const auto& lod : object.lods)
+            for (const auto& subset : lod.subsets)
+                submaterialCount = std::max(submaterialCount,
+                    static_cast<std::uint32_t>(subset.submaterialIndex) + 1);
+    WriteU32(b, 8, submaterialCount);
     WriteU32(b, 12, static_cast<std::uint32_t>(objects.size()));
+    for (std::uint32_t i = 0; i < submaterialCount; ++i) {
+        const std::string identifier = "fixture-submaterial-" + std::to_string(i);
+        const auto record = b.size();
+        b.resize(record + 64, '\0');
+        std::memcpy(b.data() + record, identifier.data(), identifier.size());
+    }
     for (const auto& o : objects) {
         const auto start = b.size();
         b.resize(start + 0xe8, '\0');
@@ -146,9 +166,11 @@ std::string Fixture(const std::vector<ObjectSpec>& objects) {
             for (const auto& subset : lod.subsets) {
                 auto sh = b.size();
                 b.resize(sh + 12, '\0');
-                WriteU32(b, sh + 4, static_cast<std::uint32_t>(lod.indices.size()));
-                WriteU16(b, sh + 10, static_cast<std::uint16_t>(subset.size()));
-                for (auto i : subset)
+                WriteU32(b, sh, subset.indexOffset);
+                WriteU32(b, sh + 4, subset.indexCount);
+                WriteU16(b, sh + 8, subset.submaterialIndex);
+                WriteU16(b, sh + 10, static_cast<std::uint16_t>(subset.auxiliaryIndices.size()));
+                for (auto i : subset.auxiliaryIndices)
                     AppendU16(b, i);
             }
         }
@@ -159,8 +181,8 @@ std::string Fixture(const std::vector<ObjectSpec>& objects) {
 void UpdateLength(std::string& b) {
     WriteU32(b, 16, static_cast<std::uint32_t>(b.size()));
 }
-std::size_t FirstLodData() {
-    return 20 + 0xe8 + 0x1c;
+std::size_t FirstLodData(bool hasSubmaterials = false) {
+    return 20 + (hasSubmaterials ? 64 : 0) + 0xe8 + 0x1c;
 }
 std::size_t FirstVec3Stream(const LodSpec& l) {
     return FirstLodData() + l.indices.size() * 2 + l.positions.size() * 12;
@@ -172,11 +194,13 @@ void ExpectFailure(std::string b, const std::string& label) {
     sentinel.objectIndex = 71;
     sentinel.lod.indices = {77};
     out.objects.push_back(sentinel);
+    out.submaterialIdentifiers = {"sentinel-submaterial"};
     std::string error;
     Check(!ParseNmfStaticGeometry(b, out, &error) && !error.empty(),
           label + " fails with diagnostic");
     Check(out.objects.size() == 1 && out.objects[0].objectIndex == 71 &&
-              out.objects[0].lod.indices == std::vector<std::uint32_t>{77},
+              out.objects[0].lod.indices == std::vector<std::uint32_t>{77} &&
+              out.submaterialIdentifiers == std::vector<std::string>{"sentinel-submaterial"},
           label + " leaves output transactional");
 }
 
@@ -301,16 +325,49 @@ void TestAllAuxiliaryBranchesAndTruncation() {
     }
 
     ObjectSpec withSubset;
-    withSubset.lods[0].subsets = {{0, 1, 2}};
+    withSubset.lods[0].subsets = {{0, 3, 0, {0, 1, 2}}};
     NmfStaticGeometry out;
     std::string error;
     Check(ParseNmfStaticGeometry(Fixture({withSubset}), out, &error),
           "subset header and index branch parses");
+    Check(out.submaterialIdentifiers == std::vector<std::string>{"fixture-submaterial-0"},
+          "submaterial identifiers are retained");
+    Check(out.objects.size() == 1 && out.objects[0].lod.subsets.size() == 1 &&
+              out.objects[0].lod.subsets[0].indexOffset == 0 &&
+              out.objects[0].lod.subsets[0].indexCount == 3 &&
+              out.objects[0].lod.subsets[0].submaterialIndex == 0 &&
+              out.objects[0].lod.subsets[0].auxiliaryIndices == std::vector<std::uint16_t>{0, 1, 2},
+          "subset draw range, table index, and opaque auxiliary indices are retained");
+    ObjectSpec twoSubmaterials;
+    twoSubmaterials.lods[0].positions = {{-1, 0, -1}, {1, 0, -1}, {1, 1, 1}, {-1, 1, 1}};
+    twoSubmaterials.lods[0].indices = {0, 1, 2, 0, 2, 3};
+    twoSubmaterials.lods[0].subsets = {{0, 3, 0, {}}, {3, 3, 1, {}}};
+    Check(ParseNmfStaticGeometry(Fixture({twoSubmaterials}), out, &error) &&
+              out.submaterialIdentifiers ==
+                  std::vector<std::string>{"fixture-submaterial-0", "fixture-submaterial-1"} &&
+              out.objects[0].lod.subsets.size() == 2 &&
+              out.objects[0].lod.subsets[1].indexOffset == 3 &&
+              out.objects[0].lod.subsets[1].indexCount == 3 &&
+              out.objects[0].lod.subsets[1].submaterialIndex == 1,
+          "multiple submaterial index ranges retain their table mapping");
+    ObjectSpec unalignedSubsetStart;
+    unalignedSubsetStart.lods[0].indices = {0, 1, 2, 2, 1, 0};
+    unalignedSubsetStart.lods[0].subsets = {{1, 3, 0, {}}};
+    Check(ParseNmfStaticGeometry(Fixture({unalignedSubsetStart}), out, &error) &&
+              out.objects[0].lod.subsets.size() == 1 &&
+              out.objects[0].lod.subsets[0].indexOffset == 1,
+          "subset start index is preserved without assuming top-level triangle alignment");
     auto badSubset = Fixture({withSubset});
     // LOD header + base indices + positions reaches the first 12-byte subset record.
-    const auto subsetHeader = FirstLodData() + 3 * 2 + 3 * 12;
+    const auto subsetHeader = FirstLodData(true) + 3 * 2 + 3 * 12;
     WriteU16(badSubset, subsetHeader + 12 + 4, 3);
     ExpectFailure(std::move(badSubset), "subset index outside vertex array");
+    auto badSubsetRange = Fixture({withSubset});
+    WriteU32(badSubsetRange, subsetHeader, 1);
+    ExpectFailure(std::move(badSubsetRange), "subset draw range outside index array");
+    auto missingSubmaterial = Fixture({withSubset});
+    WriteU16(missingSubmaterial, subsetHeader + 8, 1);
+    ExpectFailure(std::move(missingSubmaterial), "subset references missing submaterial");
     auto shortSubset = Fixture({withSubset});
     shortSubset.resize(shortSubset.size() - 1);
     UpdateLength(shortSubset);

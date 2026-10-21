@@ -66,6 +66,16 @@ namespace openrepublic
 		constexpr double kMaxTerrainPreviewHeight = 1000.0;
 		constexpr std::size_t kMaxNmfPreviewDisplaySpan = 10;
 		constexpr double kNmfPreviewCenterX = 8.0;
+		constexpr XMFLOAT4 kNmfDebugMaterialPalette[] = {
+			XMFLOAT4(0.70f, 0.35f, 0.24f, 1.0f),
+			XMFLOAT4(0.28f, 0.52f, 0.72f, 1.0f),
+			XMFLOAT4(0.36f, 0.61f, 0.34f, 1.0f),
+			XMFLOAT4(0.78f, 0.65f, 0.36f, 1.0f),
+			XMFLOAT4(0.54f, 0.40f, 0.68f, 1.0f),
+			XMFLOAT4(0.30f, 0.64f, 0.62f, 1.0f),
+			XMFLOAT4(0.76f, 0.43f, 0.59f, 1.0f),
+			XMFLOAT4(0.58f, 0.56f, 0.48f, 1.0f),
+		};
 		// Current synthetic storage capacity also shown by the demo stock readout.
 		constexpr std::uint32_t kStorageFlourCapacity = 5;
 		constexpr std::uintmax_t kMaxTerrainMetadataBytes = 64u * 1024u;
@@ -124,6 +134,25 @@ namespace openrepublic
 			}
 
 			return true;
+		}
+
+		bool HasValidMeshSubsetRanges(const wi::scene::MeshComponent& mesh)
+		{
+			for (const auto& subset : mesh.subsets)
+			{
+				if (subset.indexOffset > mesh.indices.size() ||
+					subset.indexCount > mesh.indices.size() - subset.indexOffset ||
+					subset.indexCount % 3 != 0)
+				{
+					return false;
+				}
+			}
+			return !mesh.subsets.empty();
+		}
+
+		const XMFLOAT4& NmfDebugMaterialColor(std::size_t index)
+		{
+			return kNmfDebugMaterialPalette[index % std::size(kNmfDebugMaterialPalette)];
 		}
 
 		bool ValidateEmbeddedGlbProfile(const std::vector<std::uint8_t>& bytes,
@@ -578,6 +607,13 @@ namespace openrepublic
 			const double displayScale = static_cast<double>(kMaxNmfPreviewDisplaySpan) / maximumExtent;
 			const double centerX = (minimumX + maximumX) * 0.5;
 			const double centerZ = (minimumZ + maximumZ) * 0.5;
+			struct PreviewDrawRange
+			{
+				std::uint32_t indexOffset{};
+				std::uint32_t indexCount{};
+				std::uint32_t submaterialIndex = std::numeric_limits<std::uint32_t>::max();
+			};
+			std::vector<PreviewDrawRange> drawRanges;
 			std::vector<XMFLOAT3> positions;
 			std::vector<std::uint32_t> indices;
 			positions.reserve(vertexCount);
@@ -590,6 +626,7 @@ namespace openrepublic
 					return false;
 				}
 				const auto baseVertex = static_cast<std::uint32_t>(positions.size());
+				const auto baseIndex = static_cast<std::uint32_t>(indices.size());
 				for (const auto& position : object.lod.positions)
 				{
 					positions.emplace_back(
@@ -607,15 +644,78 @@ namespace openrepublic
 					}
 					indices.push_back(baseVertex + index);
 				}
+				if (object.lod.subsets.empty())
+				{
+					drawRanges.push_back({ baseIndex,
+						static_cast<std::uint32_t>(object.lod.indices.size()),
+						std::numeric_limits<std::uint32_t>::max() });
+				}
+				else
+				{
+					for (const auto& subset : object.lod.subsets)
+					{
+						// Each subset is a separate indexed draw: preserve its start offset,
+						// and match the observed renderer's indexCount / 3 triangle count.
+						const std::uint32_t renderIndexCount = (subset.indexCount / 3) * 3;
+						if (renderIndexCount == 0)
+						{
+							continue;
+						}
+						if (subset.indexOffset > std::numeric_limits<std::uint32_t>::max() - baseIndex)
+						{
+							error = "NMF subset render offset exceeds the renderer's 32-bit range";
+							return false;
+						}
+						drawRanges.push_back({ baseIndex + subset.indexOffset,
+							renderIndexCount, subset.submaterialIndex });
+					}
+				}
+			}
+			if (drawRanges.empty())
+			{
+				error = "NMF geometry has no complete subset triangle range to preview";
+				return false;
 			}
 
 			meshEntity = scene.Entity_CreateMeshFromData("OpenRepublic bounded NMF geometry preview",
 				indices.size(), indices.data(), positions.size(), positions.data());
+			std::vector<wi::ecs::Entity> submaterialEntities(geometry.submaterialIdentifiers.size(),
+				wi::ecs::INVALID_ENTITY);
 			if (wi::scene::MeshComponent* mesh = scene.meshes.GetComponent(meshEntity))
 			{
 				if (!HasValidIndexedTriangleData(*mesh))
 				{
 					error = "Wicked Engine rejected the normalized NMF triangle data";
+					return false;
+				}
+				mesh->subsets.clear();
+				for (const PreviewDrawRange& drawRange : drawRanges)
+				{
+					wi::ecs::Entity materialEntity = meshEntity;
+					if (drawRange.submaterialIndex != std::numeric_limits<std::uint32_t>::max())
+					{
+						if (drawRange.submaterialIndex >= submaterialEntities.size())
+						{
+							error = "NMF subset references a missing submaterial debug entry";
+							return false;
+						}
+						materialEntity = submaterialEntities[drawRange.submaterialIndex];
+						if (materialEntity == wi::ecs::INVALID_ENTITY)
+						{
+							materialEntity = scene.Entity_CreateMaterial("OpenRepublic NMF submaterial index " +
+								std::to_string(drawRange.submaterialIndex) + " debug color");
+							submaterialEntities[drawRange.submaterialIndex] = materialEntity;
+						}
+					}
+
+					wi::scene::MeshComponent::MeshSubset& renderSubset = mesh->subsets.emplace_back();
+					renderSubset.indexOffset = drawRange.indexOffset;
+					renderSubset.indexCount = drawRange.indexCount;
+					renderSubset.materialID = materialEntity;
+				}
+				if (!HasValidMeshSubsetRanges(*mesh))
+				{
+					error = "NMF normalized subset ranges are invalid for Wicked Engine";
 					return false;
 				}
 				mesh->CreateRenderData();
@@ -625,8 +725,26 @@ namespace openrepublic
 				error = "Wicked Engine did not create the NMF mesh component";
 				return false;
 			}
+			for (std::size_t materialIndex = 0; materialIndex < submaterialEntities.size(); ++materialIndex)
+			{
+				const wi::ecs::Entity materialEntity = submaterialEntities[materialIndex];
+				if (materialEntity == wi::ecs::INVALID_ENTITY)
+				{
+					continue;
+				}
+				wi::scene::MaterialComponent* material = scene.materials.GetComponent(materialEntity);
+				if (material == nullptr)
+				{
+					error = "Wicked Engine did not create an NMF submaterial debug component";
+					return false;
+				}
+				material->SetBaseColor(NmfDebugMaterialColor(materialIndex));
+				material->CreateRenderData(true);
+			}
 			if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(meshEntity))
 			{
+				// Keep unpartitioned ranges on a generic material. A table entry is
+				// assigned only when an observed subset explicitly references it.
 				material->SetBaseColor(XMFLOAT4(0.66f, 0.55f, 0.42f, 1.0f));
 				material->CreateRenderData(true);
 			}
@@ -637,12 +755,19 @@ namespace openrepublic
 			}
 
 			std::size_t triangleCount = 0;
-			for (const auto& object : geometry.objects)
-				triangleCount += object.lod.indices.size() / 3;
+			for (const PreviewDrawRange& drawRange : drawRanges)
+				triangleCount += drawRange.indexCount / 3;
+			const std::size_t mappedSubmaterialCount = static_cast<std::size_t>(std::count_if(
+				submaterialEntities.begin(), submaterialEntities.end(), [](wi::ecs::Entity entity) {
+					return entity != wi::ecs::INVALID_ENTITY;
+				}));
 			description = "Bounded static NMF geometry preview: " +
 				std::to_string(geometry.objects.size()) + " objects (one LOD each), " +
 				std::to_string(vertexCount) + " vertices, " +
-				std::to_string(triangleCount) + " triangles. Geometry is uniformly normalized to a 10-unit display span at x=8 with one debug material. If present, the flagged 0x8 vec3 stream is not applied; Wicked Engine generates smooth normals. Source placement, game units, original materials, texture semantics, and visual fidelity remain unverified.";
+				std::to_string(triangleCount) + " rendered triangles in " +
+				std::to_string(drawRanges.size()) + " index-range groups. Geometry is uniformly normalized to a 10-unit display span at x=8; " +
+				std::to_string(mappedSubmaterialCount) + " observed submaterial-table entries use a deterministic debug-color palette. " +
+				"This is not original MTL shading or texture binding. Auxiliary subset indices are retained but not rendered. If present, the flagged 0x8 vec3 stream is not applied; Wicked Engine generates smooth normals. Source placement, game units, original material values, texture semantics, and visual fidelity remain unverified.";
 			error.clear();
 			return true;
 		}
