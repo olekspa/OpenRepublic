@@ -99,3 +99,10 @@ Only these tracked project files were modified for the current M0 increment: `sr
 
 - Final staged diff review and `git diff --cached --check` passed. Committed as `304a9e2` (`Add bounded embedded GLB semantic validation`) and pushed to `origin/main`.
 - The repository changes cover a narrow trusted-local GLB semantic profile, exact-snapshot import, synthetic semantic tests, and updated evidence/checkpoint documentation. They do not close the outstanding M0 UI runtime gate, visual/material fidelity checks, importer sandboxing, direct NMF parsing, or rights review.
+
+**2026-10-21 14:25:18 EDT (18:25:18 UTC) — bounded local scratch GLB runtime probe**
+
+- The current Release client passed one pre-existing private model-derived scratch GLB through the embedded GLB semantic preflight and pinned Wicked importer. The application log reported 3 meshes, 2 materials, and 4 transforms; the client process exited with code 0.
+- This is **VERIFIED structural import evidence** for that one local input. It is not a visual comparison, image decode/material-fidelity result, direct NMF support, broad WRSR compatibility, or asset-distribution permission. No screenshot comparison was performed.
+- The input and its provenance remain private; no model, texture, save, game binary, private path, or asset-derived payload was added to the repository. WRSR was not launched, and no Steam installation or save was modified.
+- A separate post-run cleanup helper emitted an unavailable `System.Windows.Forms.SendKeys` type error after the app had exited; this did not alter the app's exit code or the recorded import result.
