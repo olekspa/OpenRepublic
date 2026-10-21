@@ -1,7 +1,7 @@
 # OpenRepublic project plan
 
 **Prepared:** 21 October 2026
-**Status:** Initial research and repository setup complete; feasibility work not yet started
+**Status:** Research, public repo, and Wicked Engine pin/build complete; blank-scene runtime and OpenRepublic implementation remain pending
 **Project:** independent WRSR-compatible client and simulation engine
 
 ## 1. Mission
@@ -108,6 +108,13 @@ The 14 days are an intensive planning envelope, not a deadline guarantee. Record
 | F3: terrain/coordinates | Use a small map/region; compare two known landmarks and elevation references. Treat save-derived object coordinates as candidates until independently checked. | A repeatable region view with recorded coordinate transform and tolerance, or a concise blocker report. |
 | F4: placement/viewer | Build an OpenRepublic scene manifest, camera, object selection, and metadata inspector. Keep originals untouched. | Replayable viewer scene with source IDs/provenance and two landmark alignment checks. |
 | F5: go/conditional/pivot | Review build reliability, representative-format coverage, effort, rights questions, and remaining unknowns. | A decision memo: proceed to world slice, spend a bounded follow-up on one blocker, or pivot to synthetic/open content. |
+
+### Current F0 status (21 October 2026)
+
+- Pinned upstream Wicked Engine revision `4f93f3fd4f337aeb38dbfe410701b83024ccdd42` as a Git submodule.
+- Built `Editor_Windows` and the upstream `Template_Windows` sample in Release/x64 with VS 2022/MSVC 14.44 by passing `PlatformToolset=v143`. Upstream project files request v145, which is not installed here; no upstream files were modified.
+- The compile emitted warnings from bundled `lodepng` and `zstd` sources. The build succeeded, and those vendor warnings were not suppressed or patched.
+- Runtime launch, blank-scene visual output, graphics API selection, and OpenRepublic code are not yet verified. The build output is local and ignored by Git.
 
 If authentic terrain or placements are blocked, an accurate isolated viewer or a synthetic but fully inspectable world is a conditional result. Do not spend the sprint adding graphics effects while import, coordinates, or source provenance remain unresolved.
 

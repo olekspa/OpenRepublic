@@ -8,7 +8,7 @@ OpenRepublic aims to preserve the original game's economic and logistical depth 
 
 ## Project status
 
-**Research and planning. There is no playable build yet.** The repository currently contains project direction, an evidence-led research summary, and a staged feasibility plan. It does not contain WRSR game assets, executable code, or an engine dependency checkout.
+**Research and feasibility. There is no OpenRepublic playable build yet.** The repository contains project direction, evidence-led research, and a staged feasibility plan, and pins Wicked Engine. Its upstream Windows editor and template sample compiled successfully under the installed VS 2022 toolchain with a local v143 override. The sample has not been launched; OpenRepublic has no app, renderer code, or game-content importer yet. The repository contains no WRSR assets or saves.
 
 The first engineering gate is a repeatable Wicked Engine build and a blank scene. The next gate is a read-only, local content-viewer experiment. Importing some assets would not, by itself, mean that maps, saves, mods, or simulation behavior are compatible.
 
@@ -26,18 +26,20 @@ Local-only loading and non-redistribution are project safeguards. They do not es
 
 - [Project plan and staged feasibility sprint](docs/PROJECT_PLAN.md)
 - [Research findings and source links](docs/RESEARCH_FINDINGS.md)
-- [Toolchain readiness](docs/TOOLCHAIN_STATUS.md)
+- [Toolchain readiness and first build receipt](docs/TOOLCHAIN_STATUS.md)
+- [Pinned dependency and license inventory](docs/DEPENDENCIES.md)
 - [Reverse-engineering evidence ledger](docs/REVERSE_ENGINEERING_LEDGER.md)
 - [Project decisions](docs/DECISIONS.md)
 - [Contribution and evidence rules](CONTRIBUTING.md)
 
 ## First milestones
 
-1. Build the pinned Wicked Engine revision in a clean Windows developer environment and open a blank scene.
-2. Inventory candidate formats and approved local tooling without altering the game installation.
-3. Prove one representative asset/material path and one small terrain/world-coordinate path, or document the blocker and switch to a synthetic/open interchange fixture.
-4. Build a camera, selection, and world inspector on an independent scene model.
-5. Add one end-to-end road, vehicle, cargo, storage, and production loop before broadening the simulation.
+1. [x] Pin Wicked Engine and compile its upstream editor and template sample using VS 2022/MSVC v143.
+2. [ ] Launch the template sample and record the graphics backend and a blank-scene screenshot.
+3. [ ] Inventory candidate formats and approved local tooling without altering the game installation.
+4. [ ] Prove one representative asset/material path and one small terrain/world-coordinate path, or document the blocker and switch to a synthetic/open interchange fixture.
+5. [ ] Build an OpenRepublic-owned camera, selection, and world inspector.
+6. [ ] Add one end-to-end road, vehicle, cargo, storage, and production loop before broadening the simulation.
 
 Schedules are planning ranges, not guarantees. A viewer that renders selected local assets is an early feasibility result, not a completed port.
 

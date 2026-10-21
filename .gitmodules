@@ -1,0 +1,3 @@
+[submodule "third_party/WickedEngine"]
+	path = third_party/WickedEngine
+	url = https://github.com/turanszkij/WickedEngine.git

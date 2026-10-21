@@ -25,7 +25,7 @@ Transfer a candidate only with: source artifact, game build/hash if relevant, ve
 
 ### Engine and research tools
 
-Wicked Engine's upstream repository is MIT-licensed and documents a C++ framework, rendering/editor tooling, Lua scripting, and DirectX 12 on Windows with Vulkan available. It is a reasonable first rendering choice, but its cost, data model, import pipeline, and performance for this project still need a local build and benchmark.
+Wicked Engine's upstream repository is MIT-licensed and documents a C++ framework, rendering/editor tooling, Lua scripting, and DirectX 12 on Windows with Vulkan available. Revision `4f93f3fd4f337aeb38dbfe410701b83024ccdd42` is now pinned as a submodule. The upstream editor and template sample compile with the installed VS 2022/MSVC v143 override; runtime, graphics output, data model suitability, import pipeline, and performance remain to be evaluated.
 
 REA can present bounded static analysis and Ghidra operations to agents. The current project docs describe Windows Ghidra support as experimental and read-only P0; its documented prerequisites include Node 22.19+ or 24.11+, operator-installed Ghidra 12.1.x, and a full JDK 21 or newer. REA does not remove the need to install/manage Ghidra and Java. Use it only for a focused unanswered question and recheck package release scope before setup.
 
