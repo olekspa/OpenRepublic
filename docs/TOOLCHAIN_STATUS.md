@@ -117,14 +117,20 @@ Static review of the `Load NMF` handler identifies a file-dialog path followed b
 2. [x] Create and build the first OpenRepublic-owned synthetic-scene app; confirm Wicked Engine initialization and clean window shutdown.
 3. [x] Visually verify OpenRepublic synthetic scene pixels.
 4. [x] Implement the synthetic scene, pause/step/road HUD, object picking, and wheel zoom; [x] runtime-check the current scene and these controls. [x] Add simulation-owned prototype storage placement and GUI save/load; [x] runtime-check a save/load restoration. [x] Add isolated Lua rule loading and tick-boundary reload; [x] verify running/paused reload and rejection preservation in the app. [ ] Verify keyboard movement and record the actual render API, graphics driver, GPU, and build configuration.
-5. [ ] Identify and validate one supported local model/material import path and one terrain/world-coordinate path without copying original assets to Git. Static ModelViewer control flow contains an out-of-directory error branch, but its scope across file operations is unresolved; test the synthetic/open interchange path while pursuing a bounded local asset route.
+5. [~] Identify and validate local content paths without copying original assets to Git. The bounded R32F terrain decode/preview is complete for one copied sample; direct model/material loading and verified terrain/world coordinates remain open. Static ModelViewer control flow contains an out-of-directory error branch whose scope across file operations is unresolved.
 6. [x] Prepare a portable REA/Ghidra/JDK path for the ModelViewer question. REA's current Windows Ghidra scope is experimental; keep analysis read-only and all tool outputs private.
-7. [x] Configure and build the independent fixed-step C++ simulation in Windows-client and headless-only configurations. Client CTest passed 2/2 (simulation and Lua rules); headless CTest passed 1/1.
+7. [x] Configure and build the independent fixed-step C++ simulation in Windows-client and headless-only configurations. Current client CTest passed 3/3 (simulation, terrain reader, Lua rules); headless CTest passed 2/2 (simulation, terrain reader).
 8. Keep Python/Node/C# experiments separate from the authoritative simulation until profiling justifies a production role.
 
 ## Launch observation
 
 The project owner reports that `steam.exe -applaunch 784150` starts the game, while launching the game's launcher executable directly and using `rungameid` fail. This was not independently tested during the repository setup task. Do not use a game launch as a build check; document the exact Steam/game version if a future controlled in-game comparison needs it.
+
+## Bounded R32F terrain reader and runtime preview
+
+On 21 October 2026, the Windows Release/x64 build compiled `OpenRepublicContent` and the `--terrain-probe` app route. Client CTest passed 3/3 (simulation, terrain reader, Lua rules); the separate headless build passed 2/2 (simulation, terrain reader). Terrain-reader fixtures cover valid decoding plus malformed/truncated DDS headers and payloads, unsupported topology/format, non-finite samples, size bounds, transactional failure, and terrain metadata syntax/dimension checks.
+
+The app was launched against one **copied local save** heightmap in the separate Rival Republics research tree, with its sibling `script.ini`. The log recorded a 2048x2048 R32F input and 257x257 decimated mesh; the app screenshot showed a visible terrain surface after matching Wicked Engine's built-in plane winding. A first screenshot exposed a backface-culling error; the winding was corrected and the new screenshot showed the front-facing surface. The input remained read-only and no proprietary asset entered Git. The preview uses a centered display frame, preserves source row order, and applies a candidate height mapping with explicit 5x vertical display exaggeration. It does not establish world origin, row orientation, map alignment, material masks, water/buildability, or accurate height semantics. Adapter memory/performance measurements and broader format coverage are still open.
 
 ## Sources
 

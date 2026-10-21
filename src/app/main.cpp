@@ -48,6 +48,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
 	std::filesystem::path sceneProbePath;
 	std::filesystem::path glbProbePath;
+	std::filesystem::path terrainProbePath;
 	if (arguments != nullptr)
 	{
 		for (int i = 1; i < argumentCount; ++i)
@@ -60,11 +61,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			{
 				glbProbePath = arguments[++i];
 			}
+			else if (std::wstring_view(arguments[i]) == L"--terrain-probe" && i + 1 < argumentCount)
+			{
+				terrainProbePath = arguments[++i];
+			}
 		}
 		LocalFree(arguments);
 	}
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));
+	application.SetTerrainProbePath(std::move(terrainProbePath));
 
 	WNDCLASSEXW windowClass{};
 	windowClass.cbSize = sizeof(windowClass);

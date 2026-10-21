@@ -1,5 +1,6 @@
 #include "OpenRepublicApplication.h"
 #include "ModelImporter.h"
+#include "openrepublic/content/terrain_dds.h"
 
 #ifdef OPENREPUBLIC_WITH_LUA_RULES
 #include "openrepublic/scripting/lua_rules_loader.h"
@@ -8,9 +9,13 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <limits>
 #include <sstream>
 #include <utility>
 
@@ -34,6 +39,172 @@ namespace openrepublic
 		constexpr wi::Color kUiTextColor(242, 247, 255, 255);
 		constexpr char kSimulationSaveFile[] = "OpenRepublic-demo.save";
 		constexpr char kDemoRulesFile[] = "data/rules/demo_rules.lua";
+		constexpr std::uint32_t kTerrainPreviewMaxSide = 257;
+		constexpr double kTerrainDisplayUnitsPerMeter = 0.001;
+		constexpr double kTerrainVerticalPreviewScale = 0.005; // 5x vertical exaggeration at the display scale.
+		constexpr double kRawPreviewVerticalScale = 5.0;
+		constexpr double kMaxTerrainPreviewHeight = 1000.0;
+		constexpr std::uintmax_t kMaxTerrainMetadataBytes = 64u * 1024u;
+
+		bool CreateTerrainPreview(wi::scene::Scene& scene, const std::filesystem::path& heightmapPath,
+			wi::ecs::Entity& terrainEntity, std::string& description, std::string& error)
+		{
+			openrepublic::content::Heightmap heightmap;
+			if (!openrepublic::content::LoadLegacyR32F(heightmapPath, heightmap, &error))
+			{
+				return false;
+			}
+			if (heightmap.width < 2 || heightmap.height < 2)
+			{
+				error = "terrain preview requires at least a 2 x 2 heightmap";
+				return false;
+			}
+
+			const std::filesystem::path metadataPath = heightmapPath.parent_path() / L"script.ini";
+			openrepublic::content::TerrainMetadata metadata;
+			bool hasMetadata = false;
+			std::error_code filesystemError;
+			const bool metadataExists = std::filesystem::exists(metadataPath, filesystemError);
+			if (filesystemError)
+			{
+				error = "could not check for adjacent terrain script.ini metadata";
+				return false;
+			}
+			if (metadataExists)
+			{
+				const auto metadataBytes = std::filesystem::file_size(metadataPath, filesystemError);
+				if (filesystemError || metadataBytes > kMaxTerrainMetadataBytes)
+				{
+					error = "adjacent terrain script.ini is unreadable or exceeds the 64 KiB limit";
+					return false;
+				}
+				std::ifstream metadataStream(metadataPath, std::ios::binary);
+				if (!metadataStream)
+				{
+					error = "could not open adjacent terrain script.ini";
+					return false;
+				}
+				std::string metadataText(static_cast<std::size_t>(metadataBytes), '\0');
+				metadataStream.read(metadataText.data(), static_cast<std::streamsize>(metadataText.size()));
+				if (!metadataStream || metadataStream.peek() != std::char_traits<char>::eof())
+				{
+					error = "terrain script.ini changed during read or could not be read completely";
+					return false;
+				}
+				if (!openrepublic::content::ParseTerrainMetadata(metadataText, heightmap, metadata, &error))
+				{
+					return false;
+				}
+				hasMetadata = true;
+			}
+
+			double minimumHeight = std::numeric_limits<double>::infinity();
+			double maximumHeight = -std::numeric_limits<double>::infinity();
+			for (const float rawHeight : heightmap.samples)
+			{
+				const double height = hasMetadata
+					? static_cast<double>(rawHeight) * metadata.heightScale + metadata.worldPositionY
+					: static_cast<double>(rawHeight);
+				minimumHeight = std::min(minimumHeight, height);
+				maximumHeight = std::max(maximumHeight, height);
+			}
+
+			const double verticalScale = hasMetadata ? kTerrainVerticalPreviewScale : kRawPreviewVerticalScale;
+			const double verticalSpan = (maximumHeight - minimumHeight) * verticalScale;
+			if (!std::isfinite(verticalSpan) || verticalSpan > kMaxTerrainPreviewHeight)
+			{
+				error = "height range is outside the safe preview bounds";
+				return false;
+			}
+
+			const std::uint32_t previewWidth = std::min(heightmap.width, kTerrainPreviewMaxSide);
+			const std::uint32_t previewHeight = std::min(heightmap.height, kTerrainPreviewMaxSide);
+			const double defaultWidth = std::max(1.0, static_cast<double>(heightmap.width) * 0.01);
+			const double defaultDepth = std::max(1.0, static_cast<double>(heightmap.height) * 0.01);
+			const double displayWidth = std::clamp(hasMetadata ? metadata.worldSizeX * kTerrainDisplayUnitsPerMeter : defaultWidth, 1.0, 100.0);
+			const double displayDepth = std::clamp(hasMetadata ? metadata.worldSizeY * kTerrainDisplayUnitsPerMeter : defaultDepth, 1.0, 100.0);
+
+			std::vector<XMFLOAT3> positions;
+			positions.reserve(static_cast<std::size_t>(previewWidth) * previewHeight);
+			for (std::uint32_t z = 0; z < previewHeight; ++z)
+			{
+				const std::uint64_t sourceZNumerator = static_cast<std::uint64_t>(z) * (heightmap.height - 1u);
+				const std::uint32_t sourceZ = static_cast<std::uint32_t>((sourceZNumerator + (previewHeight - 1u) / 2u) / (previewHeight - 1u));
+				for (std::uint32_t x = 0; x < previewWidth; ++x)
+				{
+					const std::uint64_t sourceXNumerator = static_cast<std::uint64_t>(x) * (heightmap.width - 1u);
+					const std::uint32_t sourceX = static_cast<std::uint32_t>((sourceXNumerator + (previewWidth - 1u) / 2u) / (previewWidth - 1u));
+					const std::size_t sourceIndex = static_cast<std::size_t>(sourceZ) * heightmap.width + sourceX;
+					const double sourceHeight = hasMetadata
+						? static_cast<double>(heightmap.samples[sourceIndex]) * metadata.heightScale + metadata.worldPositionY
+						: static_cast<double>(heightmap.samples[sourceIndex]);
+					const double displayY = (sourceHeight - minimumHeight) * verticalScale;
+					if (!std::isfinite(displayY) || displayY > kMaxTerrainPreviewHeight)
+					{
+						error = "a terrain vertex is outside the safe preview bounds";
+						return false;
+					}
+					const float u = static_cast<float>(x) / static_cast<float>(previewWidth - 1u);
+					const float v = static_cast<float>(z) / static_cast<float>(previewHeight - 1u);
+					positions.emplace_back(
+						static_cast<float>((static_cast<double>(u) - 0.5) * displayWidth),
+						static_cast<float>(displayY),
+						static_cast<float>((static_cast<double>(v) - 0.5) * displayDepth));
+				}
+			}
+
+			std::vector<std::uint32_t> indices;
+			indices.reserve(static_cast<std::size_t>(previewWidth - 1u) * (previewHeight - 1u) * 6u);
+			for (std::uint32_t z = 0; z + 1u < previewHeight; ++z)
+			{
+				for (std::uint32_t x = 0; x + 1u < previewWidth; ++x)
+				{
+					const std::uint32_t a = z * previewWidth + x;
+					const std::uint32_t b = a + 1u;
+					const std::uint32_t c = a + previewWidth;
+					const std::uint32_t d = c + 1u;
+					// Match Wicked Engine's Entity_CreatePlane winding so the top surface is front-facing.
+					indices.insert(indices.end(), { a, b, c, b, d, c });
+				}
+			}
+
+			terrainEntity = scene.Entity_CreateMeshFromData("OpenRepublic bounded terrain preview",
+				indices.size(), indices.data(), positions.size(), positions.data());
+			if (wi::scene::MeshComponent* mesh = scene.meshes.GetComponent(terrainEntity))
+			{
+				mesh->CreateRenderData();
+			}
+			else
+			{
+				error = "Wicked Engine did not create the terrain mesh component";
+				return false;
+			}
+			if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(terrainEntity))
+			{
+				material->SetBaseColor(XMFLOAT4(0.34f, 0.48f, 0.27f, 1.0f));
+				material->CreateRenderData(true);
+			}
+			else
+			{
+				error = "Wicked Engine did not create a terrain material component";
+				return false;
+			}
+
+			std::ostringstream summary;
+			summary << "Terrain preview " << heightmap.width << 'x' << heightmap.height << " R32F -> "
+				<< previewWidth << 'x' << previewHeight << " mesh; centered, row order preserved";
+			if (hasMetadata)
+			{
+				summary << "; candidate height raw*" << metadata.heightScale << " + offset " << metadata.worldPositionY
+					<< " (5x vertical preview exaggeration; coordinates/orientation unverified)";
+			}
+			else
+			{
+				summary << "; raw sample-height preview (no adjacent script.ini metadata)";
+			}
+			description = summary.str();
+			return true;
+		}
 
 		bool HasExtensionInsensitive(const std::filesystem::path& path, const wchar_t* extension)
 		{
@@ -97,9 +268,15 @@ namespace openrepublic
 		glbProbePath = std::move(path);
 	}
 
+	void OpenRepublicApplication::SetTerrainProbePath(std::filesystem::path path)
+	{
+		terrainProbePath = std::move(path);
+	}
+
 	void OpenRepublicApplication::Initialize()
 	{
 		wi::Application::Initialize();
+		bool terrainPreviewLoaded = false;
 
 		#ifdef OPENREPUBLIC_WITH_LUA_RULES
 		{
@@ -214,6 +391,23 @@ namespace openrepublic
 			wilog("[OpenRepublic] GLB probe: %s", uiNotice.c_str());
 		}
 
+		if (!terrainProbePath.empty())
+		{
+			wi::ecs::Entity terrainEntity = wi::ecs::INVALID_ENTITY;
+			std::string description;
+			std::string error;
+			if (CreateTerrainPreview(previewWorld, terrainProbePath, terrainEntity, description, error))
+			{
+				terrainPreviewLoaded = true;
+				uiNotice = description;
+			}
+			else
+			{
+				uiNotice = "Terrain probe failed: " + error;
+			}
+			wilog("[OpenRepublic] Terrain probe: %s", uiNotice.c_str());
+		}
+
 		renderPath = std::make_unique<wi::RenderPath3D>();
 		renderPath->scene = &previewWorld;
 		renderPath->setBloomEnabled(false);
@@ -326,8 +520,8 @@ namespace openrepublic
 		gui.AddWidget(&simulationStatus);
 
 		wi::scene::TransformComponent cameraTransform;
-		cameraTransform.Translate(XMFLOAT3(0, 6.5f, -11.5f));
-		cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.43f, 0, 0));
+		cameraTransform.Translate(terrainPreviewLoaded ? XMFLOAT3(0, 18.0f, -27.0f) : XMFLOAT3(0, 6.5f, -11.5f));
+		cameraTransform.RotateRollPitchYaw(XMFLOAT3(terrainPreviewLoaded ? 0.52f : 0.43f, 0, 0));
 		cameraTransform.UpdateTransform();
 		renderPath->camera->TransformCamera(cameraTransform);
 		renderPath->camera->UpdateCamera();

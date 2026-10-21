@@ -11,6 +11,7 @@ option(OPENREPUBLIC_BUILD_TESTS "Build OpenRepublic simulation verification targ
 
 # The authoritative simulation has no graphics or platform dependency.
 add_subdirectory(src/sim)
+add_subdirectory(src/content)
 
 if(OPENREPUBLIC_BUILD_CLIENT)
     if(NOT WIN32)
@@ -43,6 +44,7 @@ endif()
 if(OPENREPUBLIC_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests/sim)
+    add_subdirectory(tests/content)
 
     if(OPENREPUBLIC_BUILD_CLIENT AND TARGET LUA)
         add_subdirectory(tests/scripting)

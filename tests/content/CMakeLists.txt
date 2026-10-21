@@ -1,0 +1,6 @@
+add_executable(OpenRepublicTerrainReaderTests
+    terrain_reader_tests.cpp
+)
+target_link_libraries(OpenRepublicTerrainReaderTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicTerrainReaderTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicTerrainReaderTests COMMAND OpenRepublicTerrainReaderTests)

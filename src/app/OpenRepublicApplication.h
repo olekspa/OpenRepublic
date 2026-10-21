@@ -18,6 +18,7 @@ namespace openrepublic
 	public:
 		void SetSceneProbePath(std::filesystem::path path);
 		void SetGlbProbePath(std::filesystem::path path);
+		void SetTerrainProbePath(std::filesystem::path path);
 		void Initialize() override;
 		void Update(float dt) override;
 
@@ -39,6 +40,7 @@ namespace openrepublic
 		openrepublic::sim::Simulation simulation;
 		std::filesystem::path sceneProbePath;
 		std::filesystem::path glbProbePath;
+		std::filesystem::path terrainProbePath;
 		wi::ecs::Entity farmBuilding = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity millBuilding = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity warehouseBuilding = wi::ecs::INVALID_ENTITY;
