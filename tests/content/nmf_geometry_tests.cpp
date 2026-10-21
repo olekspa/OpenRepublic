@@ -1,6 +1,5 @@
 #include "openrepublic/content/nmf_geometry.h"
 
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -12,342 +11,392 @@
 using namespace openrepublic::content;
 
 namespace {
-
 int failures = 0;
-
-void Check(bool condition, const std::string& label) {
-    if (condition) return;
-    ++failures;
-    std::cerr << "FAIL: " << label << '\n';
+void Check(bool ok, const std::string& label) {
+    if (!ok) {
+        ++failures;
+        std::cerr << "FAIL: " << label << '\n';
+    }
 }
-
-void WriteU16LE(std::string& bytes, std::size_t offset, std::uint16_t value) {
-    bytes[offset] = static_cast<char>(value & 0xffu);
-    bytes[offset + 1] = static_cast<char>((value >> 8) & 0xffu);
+void WriteU16(std::string& b, std::size_t at, std::uint16_t v) {
+    b[at] = static_cast<char>(v & 255u);
+    b[at + 1] = static_cast<char>(v >> 8);
 }
-
-void WriteU32LE(std::string& bytes, std::size_t offset, std::uint32_t value) {
-    for (std::size_t i = 0; i < 4; ++i)
-        bytes[offset + i] = static_cast<char>((value >> (i * 8)) & 0xffu);
+void WriteU32(std::string& b, std::size_t at, std::uint32_t v) {
+    for (unsigned i = 0; i < 4; ++i)
+        b[at + i] = static_cast<char>((v >> (8 * i)) & 255u);
 }
-
-void AppendU16LE(std::string& bytes, std::uint16_t value) {
-    const std::size_t offset = bytes.size();
-    bytes.resize(offset + 2);
-    WriteU16LE(bytes, offset, value);
-}
-
-void AppendU32LE(std::string& bytes, std::uint32_t value) {
-    const std::size_t offset = bytes.size();
-    bytes.resize(offset + 4);
-    WriteU32LE(bytes, offset, value);
-}
-
-void AppendFloatLE(std::string& bytes, float value) {
+void WriteFloat(std::string& b, std::size_t at, float value) {
     std::uint32_t bits = 0;
-    static_assert(sizeof(bits) == sizeof(value), "fixture expects 32-bit floats");
     std::memcpy(&bits, &value, sizeof(bits));
-    AppendU32LE(bytes, bits);
+    WriteU32(b, at, bits);
+}
+void AppendU16(std::string& b, std::uint16_t v) {
+    auto at = b.size();
+    b.resize(at + 2);
+    WriteU16(b, at, v);
+}
+void AppendU32(std::string& b, std::uint32_t v) {
+    auto at = b.size();
+    b.resize(at + 4);
+    WriteU32(b, at, v);
+}
+void AppendFloat(std::string& b, float f) {
+    std::uint32_t bits;
+    std::memcpy(&bits, &f, 4);
+    AppendU32(b, bits);
 }
 
-struct SubmeshSpec {
-    std::vector<NmfPosition> positions;
-    std::vector<std::uint16_t> indices;
-    std::uint32_t flags = 0;
-    std::uint32_t extraVertexSetCount = 0;
-    std::vector<std::vector<std::uint16_t>> partitionIndices;
+struct LodSpec {
+    std::vector<NmfPosition> positions{{-1, 0, -1}, {1, 0, -1}, {0, 1, 1}};
+    std::vector<std::uint16_t> indices{0, 1, 2};
+    std::vector<NmfVec3Attribute> vec3Stream;
+    std::uint32_t flags{};
+    std::uint32_t field0x10{};
+    std::uint32_t field0x18{};
+    std::vector<std::vector<std::uint16_t>> subsets;
 };
-
 struct ObjectSpec {
-    std::uint32_t type = 0;
-    std::vector<SubmeshSpec> submeshes;
+    std::uint32_t type{};
+    std::uint32_t sizeField{1}; // Deliberately not a byte span.
+    std::string rawName{"fixture-node"};
+    std::int16_t parent{-1};
+    std::int16_t children{};
+    std::vector<float> matrixA;
+    std::vector<float> matrixB;
+    std::vector<LodSpec> lods{LodSpec{}};
 };
 
-void AppendZeroes(std::string& bytes, std::size_t count) {
-    bytes.append(count, '\0');
+void Sentinels(std::string& b, std::size_t n, unsigned char value) {
+    b.append(n, static_cast<char>(value));
 }
-
-void AppendSentinel(std::string& bytes, std::size_t count, unsigned char sentinel) {
-    bytes.append(count, static_cast<char>(sentinel));
+std::vector<float> Identity() {
+    std::vector<float> m(16, 0.0f);
+    for (int i = 0; i < 16; i += 5)
+        m[i] = 1.0f;
+    return m;
 }
-
-std::string BuildFixture(const std::vector<ObjectSpec>& objects,
-                         const std::vector<std::string>& identifiers = {}) {
-    std::string bytes(20, '\0');
-    WriteU32LE(bytes, 8, static_cast<std::uint32_t>(identifiers.size()));
-    WriteU32LE(bytes, 12, static_cast<std::uint32_t>(objects.size()));
-    for (const std::string& identifier : identifiers) {
-        const std::size_t offset = bytes.size();
-        bytes.resize(offset + 64, '\0');
-        bytes.replace(offset, identifier.size(), identifier);
-    }
-
-    for (const ObjectSpec& object : objects) {
-        const std::size_t objectStart = bytes.size();
-        bytes.resize(objectStart + 0xe4, '\0');
-        WriteU32LE(bytes, objectStart, object.type);
-        AppendU32LE(bytes, static_cast<std::uint32_t>(object.submeshes.size()));
-        for (const SubmeshSpec& submesh : object.submeshes) {
-            const std::size_t header = bytes.size();
-            bytes.resize(header + 0x1c, '\0');
-            WriteU32LE(bytes, header + 4, static_cast<std::uint32_t>(submesh.positions.size()));
-            WriteU32LE(bytes, header + 8, static_cast<std::uint32_t>(submesh.indices.size()));
-            WriteU32LE(bytes, header + 12, static_cast<std::uint32_t>(submesh.partitionIndices.size()));
-            WriteU32LE(bytes, header + 16, submesh.extraVertexSetCount);
-            WriteU32LE(bytes, header + 20, submesh.flags);
-
-            for (const std::uint16_t index : submesh.indices) AppendU16LE(bytes, index);
-            for (const NmfPosition& position : submesh.positions) {
-                AppendFloatLE(bytes, position.x);
-                AppendFloatLE(bytes, position.y);
-                AppendFloatLE(bytes, position.z);
+std::string Fixture(const std::vector<ObjectSpec>& objects) {
+    std::string b(20, '\0');
+    WriteU32(b, 12, static_cast<std::uint32_t>(objects.size()));
+    for (const auto& o : objects) {
+        const auto start = b.size();
+        b.resize(start + 0xe8, '\0');
+        WriteU32(b, start, o.type);
+        WriteU32(b, start + 4, o.sizeField);
+        for (std::size_t i = 0; i < o.rawName.size() && i < 64; ++i)
+            b[start + 8 + i] = o.rawName[i];
+        WriteU16(b, start + 0x48, static_cast<std::uint16_t>(o.parent));
+        WriteU16(b, start + 0x4a, static_cast<std::uint16_t>(o.children));
+        const auto matrixA = o.matrixA.empty() ? Identity() : o.matrixA;
+        const auto matrixB = o.matrixB.empty() ? Identity() : o.matrixB;
+        for (std::size_t i = 0; i < 16; ++i) {
+            std::uint32_t a, bValue;
+            std::memcpy(&a, &matrixA[i], 4);
+            std::memcpy(&bValue, &matrixB[i], 4);
+            WriteU32(b, start + 0x4c + i * 4, a);
+            WriteU32(b, start + 0x8c + i * 4, bValue);
+        }
+        // AABB min and max; float components are finite and intentionally retained.
+        const float bounds[6] = {-2, -3, -4, 2, 3, 4};
+        for (std::size_t i = 0; i < 6; ++i) {
+            std::uint32_t bits;
+            std::memcpy(&bits, &bounds[i], 4);
+            WriteU32(b, start + 0xcc + i * 4, bits);
+        }
+        WriteU32(b, start + 0xe4, static_cast<std::uint32_t>(o.lods.size()));
+        for (const auto& lod : o.lods) {
+            auto h = b.size();
+            b.resize(h + 0x1c, '\0');
+            WriteU32(b, h, 0x12345678);
+            WriteU32(b, h + 4, static_cast<std::uint32_t>(lod.positions.size()));
+            WriteU32(b, h + 8, static_cast<std::uint32_t>(lod.indices.size()));
+            WriteU32(b, h + 12, static_cast<std::uint32_t>(lod.subsets.size()));
+            WriteU32(b, h + 16, lod.field0x10);
+            WriteU32(b, h + 20, lod.flags);
+            WriteU32(b, h + 24, lod.field0x18);
+            for (auto i : lod.indices)
+                AppendU16(b, i);
+            for (const auto& p : lod.positions) {
+                AppendFloat(b, p.x);
+                AppendFloat(b, p.y);
+                AppendFloat(b, p.z);
             }
-
-            const auto appendArray = [&bytes](std::size_t stride, std::size_t count,
-                                               unsigned char sentinel) {
-                AppendSentinel(bytes, stride * count, sentinel);
-            };
-            unsigned char streamSentinel = 0x31;
-            for (const std::uint32_t flag : {0x8u, 0x10u, 0x20u}) {
-                if ((submesh.flags & flag) != 0)
-                    appendArray(12, submesh.positions.size(), streamSentinel++);
+            unsigned char tag = 0x31;
+            for (auto flag : {0x8u, 0x10u, 0x20u})
+                if (lod.flags & flag) {
+                    if (flag == 0x8 && lod.vec3Stream.size() == lod.positions.size()) {
+                        for (const auto& v : lod.vec3Stream) {
+                            AppendFloat(b, v.x);
+                            AppendFloat(b, v.y);
+                            AppendFloat(b, v.z);
+                        }
+                    } else
+                        Sentinels(b, lod.positions.size() * 12, tag++);
+                }
+            for (auto flag : {0x100u, 0x200u, 0x400u, 0x800u, 0x20000u})
+                if (lod.flags & flag)
+                    Sentinels(b, lod.positions.size() * 8, tag++);
+            if (lod.flags & 0x10000u)
+                Sentinels(b, lod.positions.size() * 4, tag++);
+            if (lod.flags & 0x40000u) {
+                Sentinels(b, (lod.indices.size() / 3) * 16, 0xa1);
+                Sentinels(b, (lod.indices.size() / 3) * 24, 0xb2);
             }
-            for (const std::uint32_t flag : {0x100u, 0x200u, 0x400u, 0x800u, 0x20000u}) {
-                if ((submesh.flags & flag) != 0)
-                    appendArray(8, submesh.positions.size(), streamSentinel++);
-            }
-            if ((submesh.flags & 0x10000u) != 0)
-                appendArray(4, submesh.positions.size(), streamSentinel++);
-            if ((submesh.flags & 0x40000u) != 0) {
-                const std::size_t triangleCount = submesh.indices.size() / 3;
-                appendArray(16, triangleCount, 0xa1);
-                appendArray(24, triangleCount, 0xb2);
-            }
-
-            for (const std::vector<std::uint16_t>& partition : submesh.partitionIndices) {
-                const std::size_t partitionHeader = bytes.size();
-                bytes.resize(partitionHeader + 12, '\0');
-                WriteU32LE(bytes, partitionHeader + 4,
-                    static_cast<std::uint32_t>(submesh.indices.size()));
-                WriteU16LE(bytes, partitionHeader + 8, 0);
-                WriteU16LE(bytes, partitionHeader + 10,
-                    static_cast<std::uint16_t>(partition.size()));
-                for (const std::uint16_t index : partition) AppendU16LE(bytes, index);
+            for (const auto& subset : lod.subsets) {
+                auto sh = b.size();
+                b.resize(sh + 12, '\0');
+                WriteU32(b, sh + 4, static_cast<std::uint32_t>(lod.indices.size()));
+                WriteU16(b, sh + 10, static_cast<std::uint16_t>(subset.size()));
+                for (auto i : subset)
+                    AppendU16(b, i);
             }
         }
-        WriteU32LE(bytes, objectStart + 4,
-            static_cast<std::uint32_t>(bytes.size() - objectStart));
     }
-    WriteU32LE(bytes, 16, static_cast<std::uint32_t>(bytes.size()));
-    return bytes;
+    WriteU32(b, 16, static_cast<std::uint32_t>(b.size()));
+    return b;
+}
+void UpdateLength(std::string& b) {
+    WriteU32(b, 16, static_cast<std::uint32_t>(b.size()));
+}
+std::size_t FirstLodData() {
+    return 20 + 0xe8 + 0x1c;
+}
+std::size_t FirstVec3Stream(const LodSpec& l) {
+    return FirstLodData() + l.indices.size() * 2 + l.positions.size() * 12;
 }
 
-SubmeshSpec BasicSubmesh() {
-    SubmeshSpec submesh;
-    submesh.positions = {{-1.0f, 0.0f, -1.0f}, {1.0f, 0.0f, -1.0f},
-        {0.0f, 1.0f, 1.0f}};
-    submesh.indices = {0, 1, 2};
-    return submesh;
-}
-
-void SetDeclaredLength(std::string& bytes) {
-    WriteU32LE(bytes, 16, static_cast<std::uint32_t>(bytes.size()));
-}
-
-void SetObjectLength(std::string& bytes) {
-    if (bytes.size() >= 20 + 0xe4)
-        WriteU32LE(bytes, 24, static_cast<std::uint32_t>(bytes.size() - 20));
-}
-
-void SetDeclaredAndObjectLengths(std::string& bytes) {
-    SetDeclaredLength(bytes);
-    SetObjectLength(bytes);
-}
-
-std::size_t FirstSubmeshAuxiliaryStart(const SubmeshSpec& submesh) {
-    return 20 + 0xe8 + 0x1c + submesh.indices.size() * sizeof(std::uint16_t) +
-        submesh.positions.size() * 12;
-}
-
-void ExpectFailure(std::string bytes, const std::string& label) {
-    NmfStaticGeometry output;
-    NmfStaticSubmesh sentinel;
+void ExpectFailure(std::string b, const std::string& label) {
+    NmfStaticGeometry out;
+    NmfStaticObject sentinel;
     sentinel.objectIndex = 71;
-    sentinel.submeshIndex = 29;
-    sentinel.positions = {{9.0f, 8.0f, 7.0f}};
-    sentinel.indices = {0};
-    output.submeshes.push_back(sentinel);
+    sentinel.lod.indices = {77};
+    out.objects.push_back(sentinel);
     std::string error;
-    Check(!ParseNmfStaticGeometry(bytes, output, &error) && !error.empty(),
-        label + " rejects with a diagnostic");
-    Check(output.submeshes.size() == 1 && output.submeshes[0].objectIndex == 71 &&
-        output.submeshes[0].positions.size() == 1 && output.submeshes[0].indices ==
-        std::vector<std::uint32_t>{0}, label + " preserves caller output on failure");
+    Check(!ParseNmfStaticGeometry(b, out, &error) && !error.empty(),
+          label + " fails with diagnostic");
+    Check(out.objects.size() == 1 && out.objects[0].objectIndex == 71 &&
+              out.objects[0].lod.indices == std::vector<std::uint32_t>{77},
+          label + " leaves output transactional");
 }
 
-void TestStaticProfileParsesMultipleObjectsAndAuxiliaryStreams() {
-    SubmeshSpec first = BasicSubmesh();
-    first.flags = 0x40139u;
-    first.partitionIndices = {{0, 1, 2}};
-    SubmeshSpec second = BasicSubmesh();
-    second.positions[0].z = -3.0f;
-    const auto bytes = BuildFixture({{0, {first}}, {0, {second}}}, {"synthetic wall"});
-
-    NmfStaticGeometry output;
+void TestMetadataAndSingleLodProfile() {
+    ObjectSpec a;
+    a.sizeField = 1;
+    a.rawName = "first raw";
+    ObjectSpec b;
+    b.rawName = "second raw";
+    b.lods[0].positions[0].z = -3;
+    const auto bytes = Fixture({a, b});
+    NmfStaticGeometry out;
     std::string error = "stale";
-    Check(ParseNmfStaticGeometry(bytes, output, &error),
-        "bounded NMF type-0 geometry with recognized auxiliary streams parses");
-    Check(error.empty(), "geometry parse clears a stale diagnostic");
-    Check(output.submeshes.size() == 2, "multiple object submeshes are retained");
-    if (output.submeshes.size() == 2) {
-        Check(output.submeshes[0].objectIndex == 0 && output.submeshes[0].submeshIndex == 0,
-            "first submesh retains source record indices");
-        Check(output.submeshes[1].objectIndex == 1 && output.submeshes[1].submeshIndex == 0,
-            "second object retains its source record index");
-        Check(output.submeshes[0].positions.size() == 3 &&
-            output.submeshes[0].indices == std::vector<std::uint32_t>({0, 1, 2}),
-            "positions and 16-bit triangle indices normalize to owned vectors");
-        Check(output.submeshes[1].positions[0].z == -3.0f,
-            "later object bytes are found after bounded auxiliary streams");
+    Check(ParseNmfStaticGeometry(bytes, out, &error),
+          "valid root nodes with tiny raw size field parse to exact EOF");
+    Check(error.empty() && out.objects.size() == 2, "parser clears error and retains node order");
+    if (out.objects.size() == 2) {
+        Check(out.objects[0].objectIndex == 0 && out.objects[1].objectIndex == 1,
+              "object indexes remain ordered");
+        Check(out.objects[0].objectSizeField == 1,
+              "unproven +4 field is preserved but not treated as span");
+        Check(out.objects[0].nameBytes[0] == 'f' && out.objects[1].nameBytes[0] == 's',
+              "name bytes stay raw and aligned");
+        Check(out.objects[0].parentIndex == -1 && out.objects[0].childCount == 0,
+              "root sentinel metadata is retained");
+        Check(out.objects[0].nodeMatrixA[0] == 1 && out.objects[0].nodeMatrixB[15] == 1,
+              "raw matrix components are retained");
+        Check(out.objects[0].bounds.minimum.x == -2 && out.objects[0].bounds.maximum.z == 4,
+              "AABB metadata is retained");
+        Check(out.objects[0].lod.lodSizeField == 0x12345678 &&
+                  out.objects[0].lod.positions.size() == 3,
+              "one nested LOD retains header and geometry");
+        Check(out.objects[1].lod.positions[0].z == -3,
+              "following object begins after previous object's counted LOD data");
     }
+    auto twoLods = Fixture({a});
+    WriteU32(twoLods, 20 + 0xe4, 2);
+    ExpectFailure(std::move(twoLods), "multiple LODs");
+    auto nonIdentityA = a;
+    nonIdentityA.matrixA = Identity();
+    nonIdentityA.matrixA[12] = 5;
+    ExpectFailure(Fixture({nonIdentityA}), "nonidentity matrix A outside preview profile");
+    auto nonIdentityB = a;
+    nonIdentityB.matrixB = Identity();
+    nonIdentityB.matrixB[12] = 5;
+    ExpectFailure(Fixture({nonIdentityB}), "nonidentity matrix B outside preview profile");
+    auto nonRoot = a;
+    nonRoot.parent = 0;
+    ExpectFailure(Fixture({nonRoot}), "non-root parent outside preview profile");
+    auto hasChildren = a;
+    hasChildren.children = 1;
+    ExpectFailure(Fixture({hasChildren}), "node with children outside preview profile");
 }
 
-void TestEachAcceptedAuxiliaryStreamBranch() {
-    struct StreamCase {
-        std::uint32_t flag;
-        const char* label;
-    };
-    constexpr StreamCase cases[] = {
-        {0x10000u, "four-byte per-vertex stream"},
-        {0x20000u, "additional eight-byte per-vertex stream"},
-        {0x200u, "UV1 stream"},
-        {0x400u, "UV2 stream"},
-        {0x800u, "UV3 stream"},
-        {0x40000u, "per-triangle 16-byte and 24-byte streams"},
-    };
+void TestFlaggedVec3StreamAndAlignment() {
+    ObjectSpec a;
+    auto& l = a.lods[0];
+    l.flags = 0x8 | 0x10 | 0x20 | 0x100;
+    l.vec3Stream = {{.25f, -.5f, .75f}, {-.25f, .5f, -.75f}, {1, 0, 0}};
+    ObjectSpec b;
+    b.lods[0].positions[0] = {29, -37, 41};
+    auto bytes = Fixture({a, b});
+    NmfStaticGeometry out;
+    std::string error;
+    Check(ParseNmfStaticGeometry(bytes, out, &error),
+          "flagged vec3 and later auxiliary streams parse");
+    Check(out.objects.size() == 2 && out.objects[0].lod.attribute0x8.size() == 3,
+          "flagged stream is retained vertex-aligned");
+    if (out.objects.size() == 2) {
+        const auto& v = out.objects[0].lod.attribute0x8;
+        Check(v[0].x == .25f && v[0].y == -.5f && v[0].z == .75f && v[1].x == -.25f && v[2].x == 1,
+              "vec3 values preserve source order");
+        Check(out.objects[1].lod.positions[0].x == 29 && out.objects[1].lod.positions[0].y == -37 &&
+                  out.objects[1].lod.positions[0].z == 41,
+              "following object alignment accounts for flagged streams");
+    }
+    auto trunc = Fixture({a});
+    trunc.resize(FirstVec3Stream(l) + l.vec3Stream.size() * 12 - 1);
+    UpdateLength(trunc);
+    ExpectFailure(std::move(trunc), "truncated vec3 stream");
+    auto nan = Fixture({a});
+    WriteU32(nan, FirstVec3Stream(l) + 4, 0x7fc00000);
+    ExpectFailure(std::move(nan), "nonfinite flagged vec3 value");
+    ObjectSpec noFlag;
+    Check(ParseNmfStaticGeometry(Fixture({noFlag}), out, &error) &&
+              out.objects[0].lod.attribute0x8.empty(),
+          "unflagged vec3 data is absent");
+}
 
-    for (const StreamCase& streamCase : cases) {
-        SubmeshSpec first = BasicSubmesh();
-        first.flags = streamCase.flag;
-        if (streamCase.flag == 0x40000u) {
-            first.indices = {0, 1, 2, 2, 1, 0};
-        }
-        SubmeshSpec following = BasicSubmesh();
-        following.positions[0] = {17.0f, 23.0f, -31.0f};
-        const auto bytes = BuildFixture({{0, {first, following}}});
+void TestUnknownBitOneDoesNotAdvanceTheStream() {
+    ObjectSpec first;
+    first.lods[0].flags = 0x1;
+    ObjectSpec following;
+    following.lods[0].positions[0] = {17, 23, -31};
+    const auto bytes = Fixture({first, following});
+    NmfStaticGeometry out;
+    std::string error;
+    Check(ParseNmfStaticGeometry(bytes, out, &error),
+          "build-scoped flag 0x1 without a stream branch parses");
+    Check(out.objects.size() == 2 && out.objects[1].lod.positions[0].x == 17,
+          "flag 0x1 consumes no bytes in this profile");
+}
 
-        NmfStaticGeometry output;
+void TestAllAuxiliaryBranchesAndTruncation() {
+    for (const auto flag : {0x10000u, 0x20000u, 0x200u, 0x400u, 0x800u, 0x40000u}) {
+        ObjectSpec a;
+        a.lods[0].flags = flag;
+        if (flag == 0x40000u)
+            a.lods[0].indices = {0, 1, 2, 2, 1, 0};
+        ObjectSpec b;
+        b.lods[0].positions[0] = {17, 23, -31};
+        auto bytes = Fixture({a, b});
+        NmfStaticGeometry out;
         std::string error;
-        Check(ParseNmfStaticGeometry(bytes, output, &error),
-            std::string(streamCase.label) + " parses before a following submesh");
-        Check(output.submeshes.size() == 2,
-            std::string(streamCase.label) + " retains both submeshes");
-        if (output.submeshes.size() == 2) {
-            Check(output.submeshes[1].positions.size() == 3 &&
-                output.submeshes[1].positions[0].x == 17.0f &&
-                output.submeshes[1].positions[0].y == 23.0f &&
-                output.submeshes[1].positions[0].z == -31.0f,
-                std::string(streamCase.label) + " consumes the expected sentinel-sized bytes");
-        }
-
-        auto truncated = BuildFixture({{0, {first}}});
-        truncated.pop_back();
-        SetDeclaredAndObjectLengths(truncated);
-        ExpectFailure(std::move(truncated),
-            std::string("truncated ") + streamCase.label);
+        Check(ParseNmfStaticGeometry(bytes, out, &error), "auxiliary stream branch parses");
+        Check(out.objects.size() == 2 && out.objects[1].lod.positions[0].x == 17,
+              "auxiliary stream consumes expected bytes");
+        auto shortBytes = Fixture({a});
+        shortBytes.pop_back();
+        UpdateLength(shortBytes);
+        ExpectFailure(std::move(shortBytes), "truncated auxiliary stream");
     }
 
-    SubmeshSpec twoTriangles = BasicSubmesh();
-    twoTriangles.flags = 0x40000u;
-    twoTriangles.indices = {0, 1, 2, 2, 1, 0};
-    const auto completeFaceStreams = BuildFixture({{0, {twoTriangles}}});
-    const std::size_t faceStreamStart = FirstSubmeshAuxiliaryStart(twoTriangles);
+    ObjectSpec withSubset;
+    withSubset.lods[0].subsets = {{0, 1, 2}};
+    NmfStaticGeometry out;
+    std::string error;
+    Check(ParseNmfStaticGeometry(Fixture({withSubset}), out, &error),
+          "subset header and index branch parses");
+    auto badSubset = Fixture({withSubset});
+    // LOD header + base indices + positions reaches the first 12-byte subset record.
+    const auto subsetHeader = FirstLodData() + 3 * 2 + 3 * 12;
+    WriteU16(badSubset, subsetHeader + 12 + 4, 3);
+    ExpectFailure(std::move(badSubset), "subset index outside vertex array");
+    auto shortSubset = Fixture({withSubset});
+    shortSubset.resize(shortSubset.size() - 1);
+    UpdateLength(shortSubset);
+    ExpectFailure(std::move(shortSubset), "truncated subset indices");
 
-    auto truncatedSixteenByteFaceStream = completeFaceStreams;
-    truncatedSixteenByteFaceStream.resize(faceStreamStart + 2 * 16 - 1);
-    SetDeclaredAndObjectLengths(truncatedSixteenByteFaceStream);
-    ExpectFailure(std::move(truncatedSixteenByteFaceStream),
-        "truncated 16-byte per-triangle stream before the 24-byte stream");
-
-    auto truncatedTwentyFourByteFaceStream = completeFaceStreams;
-    truncatedTwentyFourByteFaceStream.resize(faceStreamStart + 2 * 16 + 2 * 24 - 1);
-    SetDeclaredAndObjectLengths(truncatedTwentyFourByteFaceStream);
-    ExpectFailure(std::move(truncatedTwentyFourByteFaceStream),
-        "truncated 24-byte per-triangle stream after complete 16-byte stream");
+    ObjectSpec twoTriangles;
+    twoTriangles.lods[0].flags = 0x40000u;
+    twoTriangles.lods[0].indices = {0, 1, 2, 2, 1, 0};
+    const auto faceBytes = Fixture({twoTriangles});
+    const auto faceStart = FirstLodData() + 6 * 2 + 3 * 12;
+    auto short16ByteFace = faceBytes;
+    short16ByteFace.resize(faceStart + 2 * 16 - 1);
+    UpdateLength(short16ByteFace);
+    ExpectFailure(std::move(short16ByteFace), "truncated first per-triangle auxiliary array");
+    auto short24ByteFace = faceBytes;
+    short24ByteFace.resize(faceStart + 2 * 16 + 2 * 24 - 1);
+    UpdateLength(short24ByteFace);
+    ExpectFailure(std::move(short24ByteFace), "truncated second per-triangle auxiliary array");
 }
 
-void TestUnsupportedAndMalformedRecordsFailTransactionally() {
+void TestMalformedInputs() {
     ExpectFailure(std::string(19, '\0'), "short header");
-
-    auto declaredMismatch = BuildFixture({{0, {BasicSubmesh()}}});
-    WriteU32LE(declaredMismatch, 16, static_cast<std::uint32_t>(declaredMismatch.size() - 1));
-    ExpectFailure(std::move(declaredMismatch), "declared file length mismatch");
-
-    auto tooLarge = BuildFixture({{0, {BasicSubmesh()}}});
-    WriteU32LE(tooLarge, 16, static_cast<std::uint32_t>(MaxNmfGeometryBytes + 1));
-    ExpectFailure(std::move(tooLarge), "declared file length mismatch");
-
-    auto unsupportedType = BuildFixture({{1, {BasicSubmesh()}}});
-    ExpectFailure(std::move(unsupportedType), "non-type-0 object");
-
-    auto badObjectSpan = BuildFixture({{0, {BasicSubmesh()}}});
-    WriteU32LE(badObjectSpan, 24, static_cast<std::uint32_t>(badObjectSpan.size()));
-    ExpectFailure(std::move(badObjectSpan), "object span extends beyond its input");
-
-    auto badSubmeshCount = BuildFixture({{0, {BasicSubmesh()}}});
-    WriteU32LE(badSubmeshCount, 20 + 0xe4, 4097);
-    ExpectFailure(std::move(badSubmeshCount), "excessive submesh count");
-
-    auto unknownFlags = BuildFixture({{0, {BasicSubmesh()}}});
-    WriteU32LE(unknownFlags, 20 + 0xe8 + 20, 0x2);
-    ExpectFailure(std::move(unknownFlags), "unknown vertex-stream flag");
-
-    auto additionalVertexSet = BuildFixture({{0, {BasicSubmesh()}}});
-    WriteU32LE(additionalVertexSet, 20 + 0xe8 + 16, 1);
-    ExpectFailure(std::move(additionalVertexSet), "unsupported extra vertex set");
-
-    auto excessiveVertices = BuildFixture({{0, {BasicSubmesh()}}});
-    WriteU32LE(excessiveVertices, 20 + 0xe8 + 4, 65537);
-    ExpectFailure(std::move(excessiveVertices), "vertex count above 16-bit index profile");
-
-    auto nonTriangleIndexCount = BuildFixture({{0, {BasicSubmesh()}}});
-    WriteU32LE(nonTriangleIndexCount, 20 + 0xe8 + 8, 4);
+    auto excessiveObjects = Fixture({ObjectSpec{}});
+    WriteU32(excessiveObjects, 12, 4097);
+    ExpectFailure(std::move(excessiveObjects), "object count exceeds header profile limit");
+    auto badLength = Fixture({ObjectSpec{}});
+    WriteU32(badLength, 16, static_cast<std::uint32_t>(badLength.size() - 1));
+    ExpectFailure(std::move(badLength), "file length mismatch");
+    ObjectSpec badType;
+    badType.type = 1;
+    ExpectFailure(Fixture({badType}), "unsupported object type");
+    auto multiLod = Fixture({ObjectSpec{}});
+    WriteU32(multiLod, 20 + 0xe4, 0);
+    ExpectFailure(std::move(multiLod), "zero LOD count");
+    auto headerField0x10 = Fixture({ObjectSpec{}});
+    WriteU32(headerField0x10, 20 + 0xe8 + 16, 1);
+    ExpectFailure(std::move(headerField0x10), "nonzero raw LOD field +0x10");
+    auto headerField0x18 = Fixture({ObjectSpec{}});
+    WriteU32(headerField0x18, 20 + 0xe8 + 24, 1);
+    ExpectFailure(std::move(headerField0x18), "nonzero raw LOD field +0x18");
+    auto unknownFlags = Fixture({ObjectSpec{}});
+    WriteU32(unknownFlags, 20 + 0xe8 + 20, 0x2);
+    ExpectFailure(std::move(unknownFlags), "unknown vertex flag");
+    auto badIndex = Fixture({ObjectSpec{}});
+    WriteU16(badIndex, FirstLodData() + 4, 3);
+    ExpectFailure(std::move(badIndex), "base index out of bounds");
+    auto excessiveVertexCount = Fixture({ObjectSpec{}});
+    WriteU32(excessiveVertexCount, 20 + 0xe8 + 4, 65537);
+    ExpectFailure(std::move(excessiveVertexCount), "vertex count exceeds 16-bit index profile");
+    auto nonTriangleIndexCount = Fixture({ObjectSpec{}});
+    WriteU32(nonTriangleIndexCount, 20 + 0xe8 + 8, 4);
     ExpectFailure(std::move(nonTriangleIndexCount), "index count not divisible by three");
-
-    auto outOfRangeIndex = BuildFixture({{0, {BasicSubmesh()}}});
-    WriteU16LE(outOfRangeIndex, 20 + 0xe8 + 0x1c + 4, 3);
-    ExpectFailure(std::move(outOfRangeIndex), "base index beyond its vertex array");
-
-    auto outOfRangePartitionIndex = BuildFixture({{0, {[] {
-        auto submesh = BasicSubmesh();
-        submesh.partitionIndices = {{0, 1, 3}};
-        return submesh;
-    }()}}});
-    ExpectFailure(std::move(outOfRangePartitionIndex), "partition index beyond its vertex array");
-
-    auto nonFinitePosition = BuildFixture({{0, {BasicSubmesh()}}});
-    const std::size_t firstPosition = 20 + 0xe8 + 0x1c + 3 * 2;
-    WriteU32LE(nonFinitePosition, firstPosition + 4, 0x7fc00000u);
-    ExpectFailure(std::move(nonFinitePosition), "non-finite position");
-
-    auto truncatedGeometry = BuildFixture({{0, {BasicSubmesh()}}});
-    truncatedGeometry.pop_back();
-    SetDeclaredAndObjectLengths(truncatedGeometry);
-    ExpectFailure(std::move(truncatedGeometry), "truncated position stream");
-
-    auto trailingBytes = BuildFixture({{0, {BasicSubmesh()}}});
-    trailingBytes.push_back('\0');
-    SetDeclaredLength(trailingBytes);
-    ExpectFailure(std::move(trailingBytes), "unclaimed trailing bytes");
+    auto nanPosition = Fixture({ObjectSpec{}});
+    WriteU32(nanPosition, FirstLodData() + 6 + 4, 0x7fc00000);
+    ExpectFailure(std::move(nanPosition), "nonfinite position");
+    auto outOfProfilePosition = Fixture({ObjectSpec{}});
+    WriteFloat(outOfProfilePosition, FirstLodData() + 6, 1000001.0f);
+    ExpectFailure(std::move(outOfProfilePosition), "position outside the numeric profile bound");
+    auto nanMatrix = Fixture({ObjectSpec{}});
+    WriteU32(nanMatrix, 20 + 0x4c, 0x7fc00000);
+    ExpectFailure(std::move(nanMatrix), "nonfinite matrix component");
+    auto nanBounds = Fixture({ObjectSpec{}});
+    WriteU32(nanBounds, 20 + 0xcc + 8, 0x7fc00000);
+    ExpectFailure(std::move(nanBounds), "nonfinite AABB component");
+    auto shortLodHeader = Fixture({ObjectSpec{}});
+    shortLodHeader.resize(20 + 0xe8 + 0x1c - 1);
+    UpdateLength(shortLodHeader);
+    ExpectFailure(std::move(shortLodHeader), "truncated LOD header");
+    auto trailing = Fixture({ObjectSpec{}});
+    trailing.push_back('\0');
+    UpdateLength(trailing);
+    ExpectFailure(std::move(trailing), "trailing unclaimed byte");
+    auto truncated = Fixture({ObjectSpec{}});
+    truncated.resize(truncated.size() - 2);
+    UpdateLength(truncated);
+    ExpectFailure(std::move(truncated), "truncated counted geometry");
 }
-
 } // namespace
 
 int main() {
-    TestStaticProfileParsesMultipleObjectsAndAuxiliaryStreams();
-    TestEachAcceptedAuxiliaryStreamBranch();
-    TestUnsupportedAndMalformedRecordsFailTransactionally();
-    if (failures != 0) {
+    TestMetadataAndSingleLodProfile();
+    TestFlaggedVec3StreamAndAlignment();
+    TestUnknownBitOneDoesNotAdvanceTheStream();
+    TestAllAuxiliaryBranchesAndTruncation();
+    TestMalformedInputs();
+    if (failures) {
         std::cerr << failures << " NMF geometry test(s) failed\n";
         return 1;
     }

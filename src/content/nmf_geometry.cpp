@@ -2,7 +2,6 @@
 
 #include "openrepublic/content/nmf_header.h"
 
-#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -13,31 +12,35 @@ namespace openrepublic::content {
 namespace {
 
 constexpr std::size_t kHeaderSize = 20;
-constexpr std::size_t kObjectHeaderSize = 0xe4;
-constexpr std::size_t kObjectMeshPrefixSize = 0xe8;
-constexpr std::size_t kSubmeshHeaderSize = 0x1c;
+constexpr std::size_t kObjectRecordSize = 0xe8;
+constexpr std::size_t kLodHeaderSize = 0x1c;
 constexpr std::size_t kPartitionHeaderSize = 12;
-constexpr std::uint32_t kFlagNormal = 0x8;
-constexpr std::uint32_t kFlagTangent = 0x10;
-constexpr std::uint32_t kFlagBitangent = 0x20;
-constexpr std::uint32_t kFlagUv0 = 0x100;
-constexpr std::uint32_t kFlagUv1 = 0x200;
-constexpr std::uint32_t kFlagUv2 = 0x400;
-constexpr std::uint32_t kFlagUv3 = 0x800;
-constexpr std::uint32_t kFlagFourByteVertexStream = 0x10000;
-constexpr std::uint32_t kFlagEightByteVertexStream = 0x20000;
-constexpr std::uint32_t kFlagPerTriangleData = 0x40000;
-// Bit zero appears in the local sample but has no associated stream branch in
-// the reviewed loader; accept it without assigning a meaning.
-constexpr std::uint32_t kSupportedFlags = 0x1 | kFlagNormal | kFlagTangent |
-    kFlagBitangent | kFlagUv0 | kFlagUv1 | kFlagUv2 | kFlagUv3 |
-    kFlagFourByteVertexStream | kFlagEightByteVertexStream | kFlagPerTriangleData;
+// The loader has no byte-consumption branch for bit 0x1; its meaning is unknown.
+constexpr std::uint32_t kFlagNoStreamBit0x1 = 0x1;
+constexpr std::uint32_t kFlagAttribute0x8 = 0x8;
+constexpr std::uint32_t kFlagStream0x10Vec3 = 0x10;
+constexpr std::uint32_t kFlagStream0x20Vec3 = 0x20;
+constexpr std::uint32_t kFlagStream0x100EightBytes = 0x100;
+constexpr std::uint32_t kFlagStream0x200EightBytes = 0x200;
+constexpr std::uint32_t kFlagStream0x400EightBytes = 0x400;
+constexpr std::uint32_t kFlagStream0x800EightBytes = 0x800;
+constexpr std::uint32_t kFlagStream0x10000FourBytes = 0x10000;
+constexpr std::uint32_t kFlagStream0x20000EightBytes = 0x20000;
+constexpr std::uint32_t kFlagStream0x40000 = 0x40000;
+constexpr std::size_t kStream0x40000FirstBytesPerTriangle = 16;
+constexpr std::size_t kStream0x40000SecondBytesPerTriangle = 24;
+constexpr std::uint32_t kSupportedFlags =
+    kFlagNoStreamBit0x1 | kFlagAttribute0x8 | kFlagStream0x10Vec3 | kFlagStream0x20Vec3 |
+    kFlagStream0x100EightBytes | kFlagStream0x200EightBytes | kFlagStream0x400EightBytes |
+    kFlagStream0x800EightBytes | kFlagStream0x10000FourBytes | kFlagStream0x20000EightBytes |
+    kFlagStream0x40000;
 constexpr std::size_t kMaxPartitionRecords = 65536;
 constexpr std::size_t kMaxPartitionIndices = MaxNmfGeometryIndices;
 constexpr float kMaxAbsoluteCoordinate = 1000000.0f;
 
 void SetError(std::string* error, const char* message) {
-    if (error != nullptr) *error = message;
+    if (error != nullptr)
+        *error = message;
 }
 
 bool Fail(std::string* error, const char* message) {
@@ -45,272 +48,307 @@ bool Fail(std::string* error, const char* message) {
     return false;
 }
 
-bool CanRead(std::string_view bytes, std::size_t offset, std::size_t count,
-             std::size_t limit) {
+bool CanRead(std::string_view bytes, std::size_t offset, std::size_t count, std::size_t limit) {
     return limit <= bytes.size() && offset <= limit && count <= limit - offset;
 }
 
 bool ReadU16LE(std::string_view bytes, std::size_t offset, std::size_t limit,
                std::uint16_t& value) {
-    if (!CanRead(bytes, offset, sizeof(std::uint16_t), limit)) return false;
-    const auto* data = reinterpret_cast<const unsigned char*>(bytes.data() + offset);
-    value = static_cast<std::uint16_t>(data[0]) |
-        (static_cast<std::uint16_t>(data[1]) << 8);
+    if (!CanRead(bytes, offset, 2, limit))
+        return false;
+    const auto* p = reinterpret_cast<const unsigned char*>(bytes.data() + offset);
+    value = static_cast<std::uint16_t>(p[0]) | (static_cast<std::uint16_t>(p[1]) << 8);
     return true;
 }
 
 bool ReadU32LE(std::string_view bytes, std::size_t offset, std::size_t limit,
                std::uint32_t& value) {
-    if (!CanRead(bytes, offset, sizeof(std::uint32_t), limit)) return false;
-    const auto* data = reinterpret_cast<const unsigned char*>(bytes.data() + offset);
-    value = static_cast<std::uint32_t>(data[0]) |
-        (static_cast<std::uint32_t>(data[1]) << 8) |
-        (static_cast<std::uint32_t>(data[2]) << 16) |
-        (static_cast<std::uint32_t>(data[3]) << 24);
+    if (!CanRead(bytes, offset, 4, limit))
+        return false;
+    const auto* p = reinterpret_cast<const unsigned char*>(bytes.data() + offset);
+    value = static_cast<std::uint32_t>(p[0]) | (static_cast<std::uint32_t>(p[1]) << 8) |
+            (static_cast<std::uint32_t>(p[2]) << 16) | (static_cast<std::uint32_t>(p[3]) << 24);
     return true;
 }
 
-bool ReadFloatLE(std::string_view bytes, std::size_t offset, std::size_t limit,
-                 float& value) {
-    static_assert(sizeof(float) == sizeof(std::uint32_t), "NMF profile expects 32-bit floats");
+bool ReadFloatLE(std::string_view bytes, std::size_t offset, std::size_t limit, float& value) {
+    static_assert(sizeof(float) == sizeof(std::uint32_t));
     std::uint32_t bits = 0;
-    if (!ReadU32LE(bytes, offset, limit, bits)) return false;
+    if (!ReadU32LE(bytes, offset, limit, bits))
+        return false;
     std::memcpy(&value, &bits, sizeof(value));
     return true;
 }
 
-bool CheckedMultiply(std::size_t left, std::size_t right, std::size_t& result) {
-    if (left != 0 && right > std::numeric_limits<std::size_t>::max() / left) return false;
-    result = left * right;
+bool CheckedMultiply(std::size_t a, std::size_t b, std::size_t& result) {
+    if (a != 0 && b > std::numeric_limits<std::size_t>::max() / a)
+        return false;
+    result = a * b;
     return true;
 }
 
-bool SkipBytes(std::string_view bytes, std::size_t& cursor, std::size_t limit,
-               std::size_t count) {
-    if (!CanRead(bytes, cursor, count, limit)) return false;
-    cursor += count;
+bool Skip(std::string_view bytes, std::size_t& cursor, std::size_t limit, std::size_t n) {
+    if (!CanRead(bytes, cursor, n, limit))
+        return false;
+    cursor += n;
     return true;
 }
 
-bool SkipFlaggedVertexArrays(std::string_view bytes, std::size_t& cursor,
-                             std::size_t limit, std::uint32_t vertexCount,
-                             std::uint32_t flags) {
-    constexpr std::uint32_t threeFloatFlags[] = {
-        kFlagNormal, kFlagTangent, kFlagBitangent,
-    };
-    constexpr std::uint32_t eightByteFlags[] = {
-        kFlagUv0, kFlagUv1, kFlagUv2, kFlagUv3, kFlagEightByteVertexStream,
-    };
+bool ReadVector3Array(std::string_view bytes, std::size_t& cursor, std::size_t limit,
+                      std::uint32_t count, std::vector<NmfVec3Attribute>& output) {
+    std::size_t byteCount = 0;
+    if (!CheckedMultiply(count, 12, byteCount) || !CanRead(bytes, cursor, byteCount, limit))
+        return false;
+    output.reserve(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto at = cursor + static_cast<std::size_t>(i) * 12;
+        NmfVec3Attribute value;
+        if (!ReadFloatLE(bytes, at, limit, value.x) ||
+            !ReadFloatLE(bytes, at + 4, limit, value.y) ||
+            !ReadFloatLE(bytes, at + 8, limit, value.z) || !std::isfinite(value.x) ||
+            !std::isfinite(value.y) || !std::isfinite(value.z))
+            return false;
+        output.push_back(value);
+    }
+    cursor += byteCount;
+    return true;
+}
 
-    std::size_t arrayBytes = 0;
-    for (const std::uint32_t flag : threeFloatFlags) {
-        if ((flags & flag) == 0) continue;
-        if (!CheckedMultiply(vertexCount, 12, arrayBytes) ||
-            !SkipBytes(bytes, cursor, limit, arrayBytes)) return false;
+bool SkipAuxiliaryVertexStreams(std::string_view bytes, std::size_t& cursor, std::size_t limit,
+                                std::uint32_t count, std::uint32_t flags) {
+    for (const auto flag : {kFlagStream0x10Vec3, kFlagStream0x20Vec3}) {
+        if ((flags & flag) == 0)
+            continue;
+        std::size_t n = 0;
+        if (!CheckedMultiply(count, 12, n) || !Skip(bytes, cursor, limit, n))
+            return false;
     }
-    for (const std::uint32_t flag : eightByteFlags) {
-        if ((flags & flag) == 0) continue;
-        if (!CheckedMultiply(vertexCount, 8, arrayBytes) ||
-            !SkipBytes(bytes, cursor, limit, arrayBytes)) return false;
+    for (const auto flag :
+         {kFlagStream0x100EightBytes, kFlagStream0x200EightBytes, kFlagStream0x400EightBytes,
+          kFlagStream0x800EightBytes, kFlagStream0x20000EightBytes}) {
+        if ((flags & flag) == 0)
+            continue;
+        std::size_t n = 0;
+        if (!CheckedMultiply(count, 8, n) || !Skip(bytes, cursor, limit, n))
+            return false;
     }
-    if ((flags & kFlagFourByteVertexStream) != 0) {
-        if (!CheckedMultiply(vertexCount, 4, arrayBytes) ||
-            !SkipBytes(bytes, cursor, limit, arrayBytes)) return false;
+    if ((flags & kFlagStream0x10000FourBytes) != 0) {
+        std::size_t n = 0;
+        if (!CheckedMultiply(count, 4, n) || !Skip(bytes, cursor, limit, n))
+            return false;
     }
+    return true;
+}
+
+bool ReadRawNodeMetadata(std::string_view bytes, std::size_t start, NmfStaticObject& object) {
+    if (!ReadU32LE(bytes, start, bytes.size(), object.objectType) ||
+        !ReadU32LE(bytes, start + 4, bytes.size(), object.objectSizeField))
+        return false;
+    std::memcpy(object.nameBytes.data(), bytes.data() + start + 8, object.nameBytes.size());
+    std::uint16_t parent = 0, children = 0;
+    if (!ReadU16LE(bytes, start + 0x48, bytes.size(), parent) ||
+        !ReadU16LE(bytes, start + 0x4a, bytes.size(), children))
+        return false;
+    const auto asSigned16 = [](std::uint16_t value) {
+        const std::int32_t signedValue = (value & 0x8000u) != 0
+                                             ? static_cast<std::int32_t>(value) - 0x10000
+                                             : static_cast<std::int32_t>(value);
+        return static_cast<std::int16_t>(signedValue);
+    };
+    object.parentIndex = asSigned16(parent);
+    object.childCount = asSigned16(children);
+    for (std::size_t i = 0; i < 16; ++i) {
+        if (!ReadFloatLE(bytes, start + 0x4c + i * 4, bytes.size(), object.nodeMatrixA[i]) ||
+            !std::isfinite(object.nodeMatrixA[i]) ||
+            !ReadFloatLE(bytes, start + 0x8c + i * 4, bytes.size(), object.nodeMatrixB[i]) ||
+            !std::isfinite(object.nodeMatrixB[i]))
+            return false;
+    }
+    float* bounds[] = {&object.bounds.minimum.x, &object.bounds.minimum.y,
+                       &object.bounds.minimum.z, &object.bounds.maximum.x,
+                       &object.bounds.maximum.y, &object.bounds.maximum.z};
+    for (std::size_t i = 0; i < 6; ++i)
+        if (!ReadFloatLE(bytes, start + 0xcc + i * 4, bytes.size(), *bounds[i]) ||
+            !std::isfinite(*bounds[i]))
+            return false;
     return true;
 }
 
 } // namespace
 
-bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output,
-                            std::string* error) {
+bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output, std::string* error) {
     if (bytes.size() < kHeaderSize)
         return Fail(error, "NMF geometry profile requires at least 20 header bytes");
     if (bytes.size() > MaxNmfGeometryBytes)
         return Fail(error, "NMF geometry input exceeds the 256 MiB profile limit");
-
     NmfHeaderProfile header;
-    if (!ParseNmfHeaderProfile(bytes, header, error)) return false;
-
-    std::uint32_t declaredByteLength = 0;
-    if (!ReadU32LE(bytes, 16, bytes.size(), declaredByteLength) ||
-        declaredByteLength != bytes.size())
+    if (!ParseNmfHeaderProfile(bytes, header, error))
+        return false;
+    std::uint32_t declared = 0;
+    if (!ReadU32LE(bytes, 16, bytes.size(), declared) || declared != bytes.size())
         return Fail(error, "NMF geometry byte-length field does not match the provided input");
-    if (header.objectRecordCount == 0)
-        return Fail(error, "NMF geometry profile contains no object records");
+    if (header.objectRecordCount == 0 || header.objectRecordCount > MaxNmfGeometryObjects)
+        return Fail(error, "NMF geometry profile contains no objects or exceeds its object limit");
 
     std::size_t cursor = kHeaderSize + header.submaterialIdentifiers.size() * 64u;
     NmfStaticGeometry candidate;
-    candidate.submeshes.reserve(std::min<std::size_t>(header.objectRecordCount,
-        MaxNmfGeometrySubmeshes));
-    std::size_t totalVertices = 0;
-    std::size_t totalIndices = 0;
-    std::size_t totalPartitions = 0;
-    std::size_t totalPartitionIndices = 0;
+    candidate.objects.reserve(header.objectRecordCount);
+    std::size_t totalVertices = 0, totalIndices = 0, totalPartitions = 0, totalPartitionIndices = 0;
 
-    for (std::uint32_t objectIndex = 0;
-         objectIndex < header.objectRecordCount; ++objectIndex) {
-        if (!CanRead(bytes, cursor, kObjectHeaderSize, bytes.size()))
-            return Fail(error, "NMF object fixed header is truncated");
-
-        std::uint32_t objectType = 0;
-        std::uint32_t objectByteLength = 0;
-        if (!ReadU32LE(bytes, cursor, bytes.size(), objectType) ||
-            !ReadU32LE(bytes, cursor + 4, bytes.size(), objectByteLength))
-            return Fail(error, "NMF object header fields are truncated");
-        if (objectType != 0)
+    for (std::uint32_t objectIndex = 0; objectIndex < header.objectRecordCount; ++objectIndex) {
+        if (!CanRead(bytes, cursor, kObjectRecordSize, bytes.size()))
+            return Fail(error, "NMF object record is truncated");
+        NmfStaticObject object;
+        if (!ReadRawNodeMetadata(bytes, cursor, object))
+            return Fail(error, "NMF node metadata is truncated or non-finite");
+        object.objectIndex = objectIndex;
+        if (object.objectType != 0)
             return Fail(error, "NMF geometry profile supports only static type-0 mesh objects");
-        if (objectByteLength < kObjectMeshPrefixSize ||
-            !CanRead(bytes, cursor, objectByteLength, bytes.size()))
-            return Fail(error, "NMF object byte span is outside the provided input");
-        const std::size_t objectEnd = cursor + objectByteLength;
-        std::size_t objectCursor = cursor + kObjectHeaderSize;
-
-        std::uint32_t submeshCount = 0;
-        if (!ReadU32LE(bytes, objectCursor, objectEnd, submeshCount))
-            return Fail(error, "NMF object submesh count is truncated");
-        objectCursor += sizeof(std::uint32_t);
-        if (submeshCount > MaxNmfHeaderObjectRecords ||
-            submeshCount > MaxNmfGeometrySubmeshes - candidate.submeshes.size())
-            return Fail(error, "NMF submesh count exceeds the bounded profile limit");
-
-        for (std::uint32_t submeshIndex = 0; submeshIndex < submeshCount; ++submeshIndex) {
-            if (!CanRead(bytes, objectCursor, kSubmeshHeaderSize, objectEnd))
-                return Fail(error, "NMF submesh header is truncated");
-
-            std::uint32_t vertexCount = 0;
-            std::uint32_t indexCount = 0;
-            std::uint32_t partitionCount = 0;
-            std::uint32_t extraVertexSetCount = 0;
-            std::uint32_t flags = 0;
-            if (!ReadU32LE(bytes, objectCursor + 4, objectEnd, vertexCount) ||
-                !ReadU32LE(bytes, objectCursor + 8, objectEnd, indexCount) ||
-                !ReadU32LE(bytes, objectCursor + 12, objectEnd, partitionCount) ||
-                !ReadU32LE(bytes, objectCursor + 16, objectEnd, extraVertexSetCount) ||
-                !ReadU32LE(bytes, objectCursor + 20, objectEnd, flags))
-                return Fail(error, "NMF submesh fields are truncated");
-            if ((flags & ~kSupportedFlags) != 0)
-                return Fail(error, "NMF submesh uses unsupported vertex-stream flags");
-            if (extraVertexSetCount != 0)
-                return Fail(error, "NMF profile does not decode additional vertex sets");
-            if (vertexCount < 3 || vertexCount > 65536 || indexCount < 3 || indexCount % 3 != 0)
-                return Fail(error, "NMF submesh is outside the bounded triangle-count profile");
-            if (partitionCount > kMaxPartitionRecords - totalPartitions)
-                return Fail(error, "NMF material-partition count exceeds the bounded profile limit");
-            if (vertexCount > MaxNmfGeometryVertices - totalVertices ||
-                indexCount > MaxNmfGeometryIndices - totalIndices)
-                return Fail(error, "NMF aggregate geometry counts exceed the bounded profile limits");
-
-            objectCursor += kSubmeshHeaderSize;
-            std::size_t indexBytes = 0;
-            if (!CheckedMultiply(indexCount, sizeof(std::uint16_t), indexBytes) ||
-                !CanRead(bytes, objectCursor, indexBytes, objectEnd))
-                return Fail(error, "NMF submesh index stream is truncated");
-
-            NmfStaticSubmesh mesh;
-            mesh.objectIndex = objectIndex;
-            mesh.submeshIndex = submeshIndex;
-            mesh.positions.reserve(vertexCount);
-            mesh.indices.reserve(indexCount);
-            for (std::uint32_t i = 0; i < indexCount; ++i) {
-                std::uint16_t index = 0;
-                if (!ReadU16LE(bytes, objectCursor + static_cast<std::size_t>(i) * 2u,
-                    objectEnd, index) || index >= vertexCount)
-                    return Fail(error, "NMF submesh index is outside its vertex array");
-                mesh.indices.push_back(index);
+        if (object.parentIndex != -1 || object.childCount != 0)
+            return Fail(error, "NMF preview profile supports only root nodes without children");
+        const auto isIdentity = [](const std::array<float, 16>& m) {
+            for (std::size_t i = 0; i < m.size(); ++i) {
+                const float expected = (i % 5 == 0) ? 1.0f : 0.0f;
+                if (m[i] != expected)
+                    return false;
             }
-            objectCursor += indexBytes;
+            return true;
+        };
+        if (!isIdentity(object.nodeMatrixA) || !isIdentity(object.nodeMatrixB))
+            return Fail(error, "NMF preview profile requires identity node matrices");
 
-            std::size_t positionBytes = 0;
-            if (!CheckedMultiply(vertexCount, sizeof(NmfPosition), positionBytes) ||
-                !CanRead(bytes, objectCursor, positionBytes, objectEnd))
-                return Fail(error, "NMF submesh position stream is truncated");
-            for (std::uint32_t i = 0; i < vertexCount; ++i) {
-                const std::size_t offset = objectCursor + static_cast<std::size_t>(i) * 12u;
-                NmfPosition position;
-                if (!ReadFloatLE(bytes, offset, objectEnd, position.x) ||
-                    !ReadFloatLE(bytes, offset + 4, objectEnd, position.y) ||
-                    !ReadFloatLE(bytes, offset + 8, objectEnd, position.z) ||
-                    !std::isfinite(position.x) || !std::isfinite(position.y) ||
-                    !std::isfinite(position.z) ||
-                    std::abs(position.x) > kMaxAbsoluteCoordinate ||
-                    std::abs(position.y) > kMaxAbsoluteCoordinate ||
-                    std::abs(position.z) > kMaxAbsoluteCoordinate)
-                    return Fail(error, "NMF submesh contains a non-finite or out-of-profile position");
-                mesh.positions.push_back(position);
-            }
-            objectCursor += positionBytes;
+        cursor += 0xe4;
+        std::uint32_t lodCount = 0;
+        if (!ReadU32LE(bytes, cursor, bytes.size(), lodCount))
+            return Fail(error, "NMF LOD count is truncated");
+        cursor += 4;
+        if (lodCount != 1)
+            return Fail(error, "NMF preview profile supports exactly one LOD per node");
+        if (!CanRead(bytes, cursor, kLodHeaderSize, bytes.size()))
+            return Fail(error, "NMF LOD header is truncated");
+        auto& lod = object.lod;
+        std::uint32_t vertexCount = 0, indexCount = 0;
+        if (!ReadU32LE(bytes, cursor, bytes.size(), lod.lodSizeField) ||
+            !ReadU32LE(bytes, cursor + 4, bytes.size(), vertexCount) ||
+            !ReadU32LE(bytes, cursor + 8, bytes.size(), indexCount) ||
+            !ReadU32LE(bytes, cursor + 12, bytes.size(), lod.subsetCount) ||
+            !ReadU32LE(bytes, cursor + 16, bytes.size(), lod.headerField0x10) ||
+            !ReadU32LE(bytes, cursor + 20, bytes.size(), lod.vertexFlags) ||
+            !ReadU32LE(bytes, cursor + 24, bytes.size(), lod.headerField0x18))
+            return Fail(error, "NMF LOD fields are truncated");
+        // +0x10 and +0x18 are inferred as morph metadata for this build-scoped profile.
+        if (lod.headerField0x10 != 0 || lod.headerField0x18 != 0)
+            return Fail(error,
+                        "NMF inferred morph metadata is unsupported by this preview profile");
+        if ((lod.vertexFlags & ~kSupportedFlags) != 0)
+            return Fail(error, "NMF LOD uses unsupported vertex-stream flags");
+        if (vertexCount < 3 || vertexCount > 65536 || indexCount < 3 || indexCount % 3 != 0)
+            return Fail(error, "NMF LOD is outside the bounded triangle-count profile");
+        if (lod.subsetCount > kMaxPartitionRecords - totalPartitions)
+            return Fail(error, "NMF subset count exceeds the bounded profile limit");
+        if (vertexCount > MaxNmfGeometryVertices - totalVertices ||
+            indexCount > MaxNmfGeometryIndices - totalIndices)
+            return Fail(error, "NMF aggregate geometry counts exceed the bounded profile limits");
+        cursor += kLodHeaderSize;
 
-            if (!SkipFlaggedVertexArrays(bytes, objectCursor, objectEnd, vertexCount, flags))
-                return Fail(error, "NMF auxiliary vertex stream is truncated");
-
-            if ((flags & kFlagPerTriangleData) != 0) {
-                std::size_t triangleDataBytes = 0;
-                if (!CheckedMultiply(indexCount / 3u, 40u, triangleDataBytes) ||
-                    !SkipBytes(bytes, objectCursor, objectEnd, triangleDataBytes))
-                    return Fail(error, "NMF per-triangle auxiliary stream is truncated");
-            }
-
-            totalPartitions += partitionCount;
-            for (std::uint32_t partitionIndex = 0;
-                 partitionIndex < partitionCount; ++partitionIndex) {
-                if (!CanRead(bytes, objectCursor, kPartitionHeaderSize, objectEnd))
-                    return Fail(error, "NMF submesh partition header is truncated");
-                std::uint16_t partitionIndexCount = 0;
-                if (!ReadU16LE(bytes, objectCursor + 10, objectEnd, partitionIndexCount))
-                    return Fail(error, "NMF submesh partition index count is truncated");
-                std::size_t partitionIndexBytes = 0;
-                if (!CheckedMultiply(partitionIndexCount, sizeof(std::uint16_t), partitionIndexBytes) ||
-                    !SkipBytes(bytes, objectCursor, objectEnd, kPartitionHeaderSize) ||
-                    !CanRead(bytes, objectCursor, partitionIndexBytes, objectEnd))
-                    return Fail(error, "NMF submesh partition indices are truncated");
-                for (std::uint16_t i = 0; i < partitionIndexCount; ++i) {
-                    std::uint16_t index = 0;
-                    if (!ReadU16LE(bytes, objectCursor + static_cast<std::size_t>(i) * 2u,
-                        objectEnd, index) || index >= vertexCount)
-                        return Fail(error, "NMF material-partition index is outside its vertex array");
-                }
-                if (partitionIndexCount > kMaxPartitionIndices - totalPartitionIndices)
-                    return Fail(error, "NMF aggregate partition indices exceed the bounded profile limit");
-                totalPartitionIndices += partitionIndexCount;
-                objectCursor += partitionIndexBytes;
-            }
-
-            totalVertices += vertexCount;
-            totalIndices += indexCount;
-            candidate.submeshes.push_back(std::move(mesh));
+        std::size_t indexBytes = 0;
+        if (!CheckedMultiply(indexCount, 2, indexBytes) ||
+            !CanRead(bytes, cursor, indexBytes, bytes.size()))
+            return Fail(error, "NMF LOD index stream is truncated");
+        lod.indices.reserve(indexCount);
+        for (std::uint32_t i = 0; i < indexCount; ++i) {
+            std::uint16_t index = 0;
+            if (!ReadU16LE(bytes, cursor + static_cast<std::size_t>(i) * 2, bytes.size(), index) ||
+                index >= vertexCount)
+                return Fail(error, "NMF LOD index is outside its vertex array");
+            lod.indices.push_back(index);
         }
-
-        if (objectCursor != objectEnd)
-            return Fail(error, "NMF object span contains unparsed bytes in this profile");
-        cursor = objectEnd;
+        cursor += indexBytes;
+        std::size_t positionBytes = 0;
+        if (!CheckedMultiply(vertexCount, 12, positionBytes) ||
+            !CanRead(bytes, cursor, positionBytes, bytes.size()))
+            return Fail(error, "NMF LOD position stream is truncated");
+        lod.positions.reserve(vertexCount);
+        for (std::uint32_t i = 0; i < vertexCount; ++i) {
+            const auto at = cursor + static_cast<std::size_t>(i) * 12;
+            NmfPosition p;
+            if (!ReadFloatLE(bytes, at, bytes.size(), p.x) ||
+                !ReadFloatLE(bytes, at + 4, bytes.size(), p.y) ||
+                !ReadFloatLE(bytes, at + 8, bytes.size(), p.z) || !std::isfinite(p.x) ||
+                !std::isfinite(p.y) || !std::isfinite(p.z) ||
+                std::abs(p.x) > kMaxAbsoluteCoordinate || std::abs(p.y) > kMaxAbsoluteCoordinate ||
+                std::abs(p.z) > kMaxAbsoluteCoordinate)
+                return Fail(error, "NMF LOD contains a non-finite or out-of-profile position");
+            lod.positions.push_back(p);
+        }
+        cursor += positionBytes;
+        if ((lod.vertexFlags & kFlagAttribute0x8) != 0 &&
+            !ReadVector3Array(bytes, cursor, bytes.size(), vertexCount, lod.attribute0x8))
+            return Fail(error, "NMF flagged vec3 stream is truncated or non-finite");
+        if (!SkipAuxiliaryVertexStreams(bytes, cursor, bytes.size(), vertexCount, lod.vertexFlags))
+            return Fail(error, "NMF auxiliary vertex stream is truncated");
+        if ((lod.vertexFlags & kFlagStream0x40000) != 0) {
+            const std::size_t triangleCount = indexCount / 3;
+            std::size_t firstStreamBytes = 0;
+            std::size_t secondStreamBytes = 0;
+            if (!CheckedMultiply(triangleCount, kStream0x40000FirstBytesPerTriangle,
+                                 firstStreamBytes) ||
+                !Skip(bytes, cursor, bytes.size(), firstStreamBytes))
+                return Fail(error, "NMF first per-triangle auxiliary stream is truncated");
+            if (!CheckedMultiply(triangleCount, kStream0x40000SecondBytesPerTriangle,
+                                 secondStreamBytes) ||
+                !Skip(bytes, cursor, bytes.size(), secondStreamBytes))
+                return Fail(error, "NMF second per-triangle auxiliary stream is truncated");
+        }
+        totalPartitions += lod.subsetCount;
+        for (std::uint32_t i = 0; i < lod.subsetCount; ++i) {
+            if (!CanRead(bytes, cursor, kPartitionHeaderSize, bytes.size()))
+                return Fail(error, "NMF subset header is truncated");
+            std::uint16_t subsetIndices = 0;
+            if (!ReadU16LE(bytes, cursor + 10, bytes.size(), subsetIndices))
+                return Fail(error, "NMF subset index count is truncated");
+            cursor += kPartitionHeaderSize;
+            std::size_t n = 0;
+            if (!CheckedMultiply(subsetIndices, 2, n) || !CanRead(bytes, cursor, n, bytes.size()))
+                return Fail(error, "NMF subset indices are truncated");
+            for (std::uint16_t j = 0; j < subsetIndices; ++j) {
+                std::uint16_t index = 0;
+                if (!ReadU16LE(bytes, cursor + static_cast<std::size_t>(j) * 2, bytes.size(),
+                               index) ||
+                    index >= vertexCount)
+                    return Fail(error, "NMF subset index is outside its vertex array");
+            }
+            if (subsetIndices > kMaxPartitionIndices - totalPartitionIndices)
+                return Fail(error, "NMF aggregate subset indices exceed the bounded profile limit");
+            totalPartitionIndices += subsetIndices;
+            cursor += n;
+        }
+        totalVertices += vertexCount;
+        totalIndices += indexCount;
+        candidate.objects.push_back(std::move(object));
     }
-
-    if (candidate.submeshes.empty())
-        return Fail(error, "NMF geometry profile contains no renderable triangle submeshes");
     if (cursor != bytes.size())
         return Fail(error, "NMF geometry profile has trailing or unclaimed bytes");
-
     output = std::move(candidate);
-    if (error != nullptr) error->clear();
+    if (error != nullptr)
+        error->clear();
     return true;
 }
 
-bool LoadNmfStaticGeometry(const std::filesystem::path& path,
-                           NmfStaticGeometry& output,
+bool LoadNmfStaticGeometry(const std::filesystem::path& path, NmfStaticGeometry& output,
                            std::string* error) {
-    std::error_code fileError;
-    const std::uintmax_t fileBytes = std::filesystem::file_size(path, fileError);
-    if (fileError || fileBytes < kHeaderSize || fileBytes > MaxNmfGeometryBytes)
-        return Fail(error, "NMF input is missing, unreadable, or outside the 256 MiB profile limit");
-
+    std::error_code ec;
+    const auto fileBytes = std::filesystem::file_size(path, ec);
+    if (ec || fileBytes < kHeaderSize || fileBytes > MaxNmfGeometryBytes)
+        return Fail(error,
+                    "NMF input is missing, unreadable, or outside the 256 MiB profile limit");
     std::ifstream stream(path, std::ios::binary);
-    if (!stream) return Fail(error, "NMF input could not be opened");
+    if (!stream)
+        return Fail(error, "NMF input could not be opened");
     std::string bytes(static_cast<std::size_t>(fileBytes), '\0');
     stream.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     if (!stream || stream.peek() != std::char_traits<char>::eof())
         return Fail(error, "NMF input changed during read or could not be read completely");
-
     return ParseNmfStaticGeometry(bytes, output, error);
 }
 

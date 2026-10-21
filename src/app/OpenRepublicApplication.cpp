@@ -552,11 +552,11 @@ namespace openrepublic
 			double maximumX = -std::numeric_limits<double>::infinity();
 			double maximumY = -std::numeric_limits<double>::infinity();
 			double maximumZ = -std::numeric_limits<double>::infinity();
-			for (const auto& submesh : geometry.submeshes)
+			for (const auto& object : geometry.objects)
 			{
-				vertexCount += submesh.positions.size();
-				indexCount += submesh.indices.size();
-				for (const auto& position : submesh.positions)
+				vertexCount += object.lod.positions.size();
+				indexCount += object.lod.indices.size();
+				for (const auto& position : object.lod.positions)
 				{
 					minimumX = std::min(minimumX, static_cast<double>(position.x));
 					minimumY = std::min(minimumY, static_cast<double>(position.y));
@@ -582,24 +582,24 @@ namespace openrepublic
 			std::vector<std::uint32_t> indices;
 			positions.reserve(vertexCount);
 			indices.reserve(indexCount);
-			for (const auto& submesh : geometry.submeshes)
+			for (const auto& object : geometry.objects)
 			{
-				if (positions.size() > std::numeric_limits<std::uint32_t>::max() - submesh.positions.size())
+				if (positions.size() > std::numeric_limits<std::uint32_t>::max() - object.lod.positions.size())
 				{
 					error = "NMF combined vertex index exceeds the renderer's 32-bit range";
 					return false;
 				}
 				const auto baseVertex = static_cast<std::uint32_t>(positions.size());
-				for (const auto& position : submesh.positions)
+				for (const auto& position : object.lod.positions)
 				{
 					positions.emplace_back(
 						static_cast<float>(kNmfPreviewCenterX + (position.x - centerX) * displayScale),
 						static_cast<float>((position.y - minimumY) * displayScale),
 						static_cast<float>((position.z - centerZ) * displayScale));
 				}
-				for (const std::uint32_t index : submesh.indices)
+				for (const std::uint32_t index : object.lod.indices)
 				{
-					if (index >= submesh.positions.size() ||
+					if (index >= object.lod.positions.size() ||
 						index > std::numeric_limits<std::uint32_t>::max() - baseVertex)
 					{
 						error = "NMF normalized mesh contains an invalid index";
@@ -637,12 +637,12 @@ namespace openrepublic
 			}
 
 			std::size_t triangleCount = 0;
-			for (const auto& submesh : geometry.submeshes)
-				triangleCount += submesh.indices.size() / 3;
+			for (const auto& object : geometry.objects)
+				triangleCount += object.lod.indices.size() / 3;
 			description = "Bounded static NMF geometry preview: " +
-				std::to_string(geometry.submeshes.size()) + " submeshes, " +
+				std::to_string(geometry.objects.size()) + " objects (one LOD each), " +
 				std::to_string(vertexCount) + " vertices, " +
-				std::to_string(triangleCount) + " triangles. Geometry is uniformly normalized to a 10-unit display span at x=8 with one debug material; source placement, game units, original materials, texture semantics, and visual fidelity remain unverified.";
+				std::to_string(triangleCount) + " triangles. Geometry is uniformly normalized to a 10-unit display span at x=8 with one debug material. If present, the flagged 0x8 vec3 stream is not applied; Wicked Engine generates smooth normals. Source placement, game units, original materials, texture semantics, and visual fidelity remain unverified.";
 			error.clear();
 			return true;
 		}
