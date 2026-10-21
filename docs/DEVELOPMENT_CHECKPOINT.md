@@ -130,3 +130,8 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - **UNKNOWN — graphical terrain path:** the new explicit-transform command-line path has not been launched or visually exercised. No real map transform, row orientation, map placement, or WRSR terrain compatibility is verified.
 - Current uncommitted source/documentation scope includes the terrain-preview helper and its app integration, focused synthetic tests, and updates to the README, project plan, and reverse-engineering ledger. Build output remains in ignored build directories. No WRSR binary, save, Steam installation file, or proprietary asset was added to Git or modified.
 - Resume work from this state: retain the partial M0 UI result and its open gates; next use a synthetic DDS to exercise the explicit CLI/render path when a safe app session is available, while continuing bounded M1 reader work. Review the complete scoped diff and chronological notes before publishing.
+
+**2026-10-21 14:55:33 EDT (18:55:33 UTC) — publication**
+
+- Final staged diff check passed. The scoped terrain-transform preview implementation, synthetic tests, and supporting status/evidence documentation were committed as `96d0e14` (`Add explicit terrain transform preview path`) and pushed to `origin/main`.
+- This publication does not close the remaining UI spatial-picking or route save/reload gates, and does not establish graphical transform correctness, WRSR terrain placement, or compatibility. No proprietary game files or private research payloads were published.
