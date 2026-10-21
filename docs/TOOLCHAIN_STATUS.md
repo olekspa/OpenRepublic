@@ -18,7 +18,7 @@
 | Lua executable | Not found on PATH | A system Lua executable is not necessarily needed; Wicked Engine provides embedded Lua APIs. |
 | REA CLI | Not found in targeted PATH/locations | Not yet configured for OpenRepublic. Recheck current REA release documentation before installation/setup. |
 | Ghidra launcher | Not found in targeted standard locations | Existing Ghidra analysis project artifacts are present from earlier work, but the Ghidra installation/runtime was not confirmed. Java is not on PATH. |
-| Wicked Engine | Pinned as a shallow Git submodule at `4f93f3fd4f337aeb38dbfe410701b83024ccdd42` | Upstream `Editor_Windows` and `Template_Windows` Release/x64 targets compile with `/p:PlatformToolset=v143`; the sample has not been launched and no OpenRepublic app exists. |
+| Wicked Engine | Pinned as a Git submodule at `4f93f3fd4f337aeb38dbfe410701b83024ccdd42` (the local checkout is shallow) | Upstream `Editor_Windows` and `Template_Windows` Release/x64 targets compile with `/p:PlatformToolset=v143`; the sample has not been launched and no OpenRepublic app exists. |
 | WRSR installation | Steam app manifest and installed game directory were found locally | Read-only asset experiments remain a separate gate; do not put local paths or game files in this repository. |
 
 ## Build receipt
