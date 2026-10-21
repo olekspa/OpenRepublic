@@ -6,6 +6,8 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <new>
+#include <stdexcept>
 #include <utility>
 
 namespace openrepublic::content {
@@ -23,8 +25,11 @@ constexpr std::uint32_t kFlagNoStreamDataBit0x2 = 0x2;
 constexpr std::uint32_t kFlagAttribute0x8 = 0x8;
 constexpr std::uint32_t kFlagStream0x10Vec3 = 0x10;
 constexpr std::uint32_t kFlagStream0x20Vec3 = 0x20;
-constexpr std::uint32_t kFlagStream0x100EightBytes = 0x100;
-constexpr std::uint32_t kFlagStream0x200EightBytes = 0x200;
+// In build 23935965 the format builder emits _TC0/_TC1 for these flags; the
+// eight-byte payloads are adapted as two-float Wicked UV sets by the preview.
+// The component interpretation is an adapter inference, not general NMF support.
+constexpr std::uint32_t kFlagStream0x100TextureCoordinates0 = 0x100;
+constexpr std::uint32_t kFlagStream0x200TextureCoordinates1 = 0x200;
 constexpr std::uint32_t kFlagStream0x400EightBytes = 0x400;
 constexpr std::uint32_t kFlagStream0x800EightBytes = 0x800;
 constexpr std::uint32_t kFlagStream0x10000FourBytes = 0x10000;
@@ -35,7 +40,8 @@ constexpr std::size_t kStream0x40000SecondBytesPerTriangle = 24;
 constexpr std::uint32_t kSupportedFlags =
     kFlagNoStreamBit0x1 | kFlagNoStreamDataBit0x2 | kFlagAttribute0x8 |
     kFlagStream0x10Vec3 | kFlagStream0x20Vec3 |
-    kFlagStream0x100EightBytes | kFlagStream0x200EightBytes | kFlagStream0x400EightBytes |
+    kFlagStream0x100TextureCoordinates0 | kFlagStream0x200TextureCoordinates1 |
+    kFlagStream0x400EightBytes |
     kFlagStream0x800EightBytes | kFlagStream0x10000FourBytes | kFlagStream0x20000EightBytes |
     kFlagStream0x40000;
 constexpr std::size_t kMaxPartitionRecords = 65536;
@@ -118,8 +124,27 @@ bool ReadVector3Array(std::string_view bytes, std::size_t& cursor, std::size_t l
     return true;
 }
 
-bool SkipAuxiliaryVertexStreams(std::string_view bytes, std::size_t& cursor, std::size_t limit,
-                                std::uint32_t count, std::uint32_t flags) {
+bool ReadTextureCoordinateArray(std::string_view bytes, std::size_t& cursor, std::size_t limit,
+                                std::uint32_t count,
+                                std::vector<NmfTextureCoordinate>& output) {
+    std::size_t byteCount = 0;
+    if (!CheckedMultiply(count, 8, byteCount) || !CanRead(bytes, cursor, byteCount, limit))
+        return false;
+    output.reserve(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto at = cursor + static_cast<std::size_t>(i) * 8;
+        NmfTextureCoordinate value;
+        if (!ReadFloatLE(bytes, at, limit, value.u) || !ReadFloatLE(bytes, at + 4, limit, value.v) ||
+            !std::isfinite(value.u) || !std::isfinite(value.v))
+            return false;
+        output.push_back(value);
+    }
+    cursor += byteCount;
+    return true;
+}
+
+bool ReadAndSkipVertexStreams(std::string_view bytes, std::size_t& cursor, std::size_t limit,
+                              std::uint32_t count, std::uint32_t flags, NmfStaticLod& lod) {
     for (const auto flag : {kFlagStream0x10Vec3, kFlagStream0x20Vec3}) {
         if ((flags & flag) == 0)
             continue;
@@ -127,9 +152,14 @@ bool SkipAuxiliaryVertexStreams(std::string_view bytes, std::size_t& cursor, std
         if (!CheckedMultiply(count, 12, n) || !Skip(bytes, cursor, limit, n))
             return false;
     }
-    for (const auto flag :
-         {kFlagStream0x100EightBytes, kFlagStream0x200EightBytes, kFlagStream0x400EightBytes,
-          kFlagStream0x800EightBytes, kFlagStream0x20000EightBytes}) {
+    if ((flags & kFlagStream0x100TextureCoordinates0) != 0 &&
+        !ReadTextureCoordinateArray(bytes, cursor, limit, count, lod.textureCoordinates0))
+        return false;
+    if ((flags & kFlagStream0x200TextureCoordinates1) != 0 &&
+        !ReadTextureCoordinateArray(bytes, cursor, limit, count, lod.textureCoordinates1))
+        return false;
+    for (const auto flag : {kFlagStream0x400EightBytes, kFlagStream0x800EightBytes,
+                            kFlagStream0x20000EightBytes}) {
         if ((flags & flag) == 0)
             continue;
         std::size_t n = 0;
@@ -179,6 +209,70 @@ bool ReadRawNodeMetadata(std::string_view bytes, std::size_t start, NmfStaticObj
 }
 
 } // namespace
+
+bool BuildNmfTextureCoordinateStreams(const NmfStaticGeometry& geometry,
+                                      NmfTextureCoordinateStreams& output,
+                                      std::string* error) {
+    NmfTextureCoordinateStreams candidate;
+    std::size_t vertexCount = 0;
+    for (const auto& object : geometry.objects) {
+        const auto& lod = object.lod;
+        if (lod.positions.size() > MaxNmfGeometryVertices - vertexCount)
+            return Fail(error, "combined NMF vertex count exceeds the geometry profile limit");
+        vertexCount += lod.positions.size();
+
+        const bool hasCoordinates0 = (lod.vertexFlags & kFlagStream0x100TextureCoordinates0) != 0;
+        const bool hasCoordinates1 = (lod.vertexFlags & kFlagStream0x200TextureCoordinates1) != 0;
+        if ((hasCoordinates0 && lod.textureCoordinates0.size() != lod.positions.size()) ||
+            (!hasCoordinates0 && !lod.textureCoordinates0.empty()) ||
+            (hasCoordinates1 && lod.textureCoordinates1.size() != lod.positions.size()) ||
+            (!hasCoordinates1 && !lod.textureCoordinates1.empty()))
+            return Fail(error, "NMF texture-coordinate streams are not aligned with their vertex flags");
+        for (const auto& coordinates : {&lod.textureCoordinates0, &lod.textureCoordinates1}) {
+            for (const auto& value : *coordinates) {
+                if (!std::isfinite(value.u) || !std::isfinite(value.v))
+                    return Fail(error, "NMF texture-coordinate stream contains a non-finite component");
+            }
+        }
+
+        candidate.hasTextureCoordinates0 = candidate.hasTextureCoordinates0 || hasCoordinates0;
+        candidate.hasTextureCoordinates1 = candidate.hasTextureCoordinates1 || hasCoordinates1;
+    }
+
+    try {
+        if (candidate.hasTextureCoordinates0)
+            candidate.textureCoordinates0.reserve(vertexCount);
+        if (candidate.hasTextureCoordinates1)
+            candidate.textureCoordinates1.reserve(vertexCount);
+
+        for (const auto& object : geometry.objects) {
+            const auto& lod = object.lod;
+            const bool hasCoordinates0 = (lod.vertexFlags & kFlagStream0x100TextureCoordinates0) != 0;
+            const bool hasCoordinates1 = (lod.vertexFlags & kFlagStream0x200TextureCoordinates1) != 0;
+            for (std::size_t vertexIndex = 0; vertexIndex < lod.positions.size(); ++vertexIndex) {
+                if (candidate.hasTextureCoordinates0) {
+                    candidate.textureCoordinates0.push_back(hasCoordinates0
+                        ? lod.textureCoordinates0[vertexIndex]
+                        : NmfTextureCoordinate{});
+                }
+                if (candidate.hasTextureCoordinates1) {
+                    candidate.textureCoordinates1.push_back(hasCoordinates1
+                        ? lod.textureCoordinates1[vertexIndex]
+                        : NmfTextureCoordinate{});
+                }
+            }
+        }
+    } catch (const std::bad_alloc&) {
+        return Fail(error, "unable to allocate bounded combined NMF texture-coordinate streams");
+    } catch (const std::length_error&) {
+        return Fail(error, "combined NMF texture-coordinate stream size is not representable");
+    }
+
+    output = std::move(candidate);
+    if (error != nullptr)
+        error->clear();
+    return true;
+}
 
 bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output, std::string* error) {
     if (bytes.size() < kHeaderSize)
@@ -290,7 +384,8 @@ bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output, s
         if ((lod.vertexFlags & kFlagAttribute0x8) != 0 &&
             !ReadVector3Array(bytes, cursor, bytes.size(), vertexCount, lod.vertexNormals))
             return Fail(error, "NMF flagged normal stream is truncated or non-finite");
-        if (!SkipAuxiliaryVertexStreams(bytes, cursor, bytes.size(), vertexCount, lod.vertexFlags))
+        if (!ReadAndSkipVertexStreams(bytes, cursor, bytes.size(), vertexCount, lod.vertexFlags,
+                                      lod))
             return Fail(error, "NMF auxiliary vertex stream is truncated");
         if ((lod.vertexFlags & kFlagStream0x40000) != 0) {
             const std::size_t triangleCount = indexCount / 3;

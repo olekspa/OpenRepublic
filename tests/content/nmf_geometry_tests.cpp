@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,6 +53,8 @@ struct LodSpec {
     std::vector<NmfPosition> positions{{-1, 0, -1}, {1, 0, -1}, {0, 1, 1}};
     std::vector<std::uint16_t> indices{0, 1, 2};
     std::vector<NmfNormal> vec3Stream;
+    std::vector<NmfTextureCoordinate> textureCoordinates0;
+    std::vector<NmfTextureCoordinate> textureCoordinates1;
     std::uint32_t flags{};
     std::uint32_t field0x10{};
     std::uint32_t field0x18{};
@@ -154,7 +157,22 @@ std::string Fixture(const std::vector<ObjectSpec>& objects) {
                     } else
                         Sentinels(b, lod.positions.size() * 12, tag++);
                 }
-            for (auto flag : {0x100u, 0x200u, 0x400u, 0x800u, 0x20000u})
+            for (const auto flag : {0x100u, 0x200u}) {
+                if ((lod.flags & flag) == 0)
+                    continue;
+                const auto& coordinates = flag == 0x100u
+                    ? lod.textureCoordinates0
+                    : lod.textureCoordinates1;
+                if (coordinates.size() == lod.positions.size()) {
+                    for (const auto& uv : coordinates) {
+                        AppendFloat(b, uv.u);
+                        AppendFloat(b, uv.v);
+                    }
+                } else {
+                    Sentinels(b, lod.positions.size() * 8, tag++);
+                }
+            }
+            for (auto flag : {0x400u, 0x800u, 0x20000u})
                 if (lod.flags & flag)
                     Sentinels(b, lod.positions.size() * 8, tag++);
             if (lod.flags & 0x10000u)
@@ -290,6 +308,191 @@ void TestFlaggedNormalStreamAndAlignment() {
           "unflagged source normals are absent");
 }
 
+void TestTextureCoordinateStreamsRetainedAndAligned() {
+    ObjectSpec first;
+    auto& lod = first.lods[0];
+    lod.flags = 0x100u | 0x200u | 0x400u;
+    lod.textureCoordinates0 = {{-1.25f, 0.25f}, {0.5f, 1.5f}, {2.0f, -0.75f}};
+    lod.textureCoordinates1 = {{0.125f, 0.875f}, {1.25f, -0.5f}, {-2.0f, 3.0f}};
+    ObjectSpec following;
+    following.lods[0].positions[0] = {29, -37, 41};
+
+    NmfStaticGeometry out;
+    std::string error;
+    Check(ParseNmfStaticGeometry(Fixture({first, following}), out, &error),
+          "build-scoped _TC0/_TC1 streams and following object parse");
+    Check(out.objects.size() == 2 && out.objects[0].lod.textureCoordinates0.size() == 3 &&
+              out.objects[0].lod.textureCoordinates1.size() == 3,
+          "both texture-coordinate streams remain vertex-aligned");
+    if (out.objects.size() == 2) {
+        const auto& uv0 = out.objects[0].lod.textureCoordinates0;
+        const auto& uv1 = out.objects[0].lod.textureCoordinates1;
+        Check(uv0[0].u == -1.25f && uv0[0].v == 0.25f && uv0[2].u == 2.0f &&
+                  uv0[2].v == -0.75f,
+              "_TC0 values are preserved without clamping to a unit square");
+        Check(uv1[0].u == 0.125f && uv1[1].v == -0.5f && uv1[2].u == -2.0f &&
+                  uv1[2].v == 3.0f,
+              "_TC1 values preserve stream and vertex order");
+        Check(out.objects[1].lod.positions[0].x == 29 &&
+                  out.objects[1].lod.positions[0].y == -37 &&
+                  out.objects[1].lod.positions[0].z == 41,
+              "following object cursor includes both retained coordinate streams and skipped _TC2");
+    }
+
+    auto onlyUv0 = first;
+    onlyUv0.lods[0].flags = 0x100u;
+    onlyUv0.lods[0].textureCoordinates1.clear();
+    auto shortUv0 = Fixture({onlyUv0});
+    shortUv0.resize(FirstVec3Stream(onlyUv0.lods[0]) + 3 * 8 - 1);
+    UpdateLength(shortUv0);
+    ExpectFailure(std::move(shortUv0), "truncated _TC0 stream");
+
+    auto onlyUv1 = first;
+    onlyUv1.lods[0].flags = 0x200u;
+    onlyUv1.lods[0].textureCoordinates0.clear();
+    auto shortUv1 = Fixture({onlyUv1});
+    shortUv1.resize(FirstVec3Stream(onlyUv1.lods[0]) + 3 * 8 - 1);
+    UpdateLength(shortUv1);
+    ExpectFailure(std::move(shortUv1), "truncated _TC1 stream");
+
+    auto nonFiniteUv = Fixture({onlyUv0});
+    WriteU32(nonFiniteUv, FirstVec3Stream(onlyUv0.lods[0]) + 4, 0x7fc00000);
+    ExpectFailure(std::move(nonFiniteUv), "non-finite _TC0 component");
+}
+
+void TestCombinedTextureCoordinateStreamsStayVertexAligned() {
+    ObjectSpec uv0;
+    uv0.lods[0].flags = 0x100u;
+    uv0.lods[0].textureCoordinates0 = {{1, 2}, {3, 4}, {5, 6}};
+    ObjectSpec uv1;
+    uv1.lods[0].flags = 0x200u;
+    uv1.lods[0].textureCoordinates1 = {{7, 8}, {9, 10}, {11, 12}};
+    ObjectSpec both;
+    both.lods[0].flags = 0x100u | 0x200u;
+    both.lods[0].textureCoordinates0 = {{13, 14}, {15, 16}, {17, 18}};
+    both.lods[0].textureCoordinates1 = {{19, 20}, {21, 22}, {23, 24}};
+    ObjectSpec plain;
+    plain.lods[0].positions[0].x = 31;
+
+    const auto parse = [](std::vector<ObjectSpec> objects, NmfStaticGeometry& geometry) {
+        std::string error;
+        const bool parsed = ParseNmfStaticGeometry(Fixture(objects), geometry, &error);
+        Check(parsed, "mixed-stream aggregation fixture parses: " + error);
+        return parsed;
+    };
+
+    NmfStaticGeometry geometry;
+    NmfTextureCoordinateStreams streams;
+    if (parse({uv0, plain}, geometry)) {
+        Check(BuildNmfTextureCoordinateStreams(geometry, streams),
+              "_TC0 aggregation succeeds when a later object omits the set");
+        Check(streams.hasTextureCoordinates0 && !streams.hasTextureCoordinates1 &&
+                  streams.textureCoordinates0.size() == 6 && streams.textureCoordinates1.empty(),
+              "_TC0-only aggregate has the expected presence and aligned length");
+        if (streams.textureCoordinates0.size() == 6) {
+            Check(streams.textureCoordinates0[0].u == 1 && streams.textureCoordinates0[2].v == 6 &&
+                      streams.textureCoordinates0[3].u == 0 && streams.textureCoordinates0[5].v == 0,
+                  "_TC0 values retain object/vertex order and missing vertices are zero-filled");
+        }
+    }
+
+    geometry = {};
+    if (parse({plain, uv0}, geometry)) {
+        Check(BuildNmfTextureCoordinateStreams(geometry, streams),
+              "_TC0 aggregation succeeds when an earlier object omits the set");
+        if (streams.textureCoordinates0.size() == 6) {
+            Check(streams.textureCoordinates0[0].u == 0 && streams.textureCoordinates0[2].v == 0 &&
+                      streams.textureCoordinates0[3].u == 1 && streams.textureCoordinates0[5].v == 6,
+                  "_TC0 aggregation zero-fills and preserves values when object order is reversed");
+        }
+    }
+
+    geometry = {};
+    if (parse({uv1, plain}, geometry)) {
+        Check(BuildNmfTextureCoordinateStreams(geometry, streams),
+              "_TC1 aggregation succeeds when a later object omits the set");
+        Check(!streams.hasTextureCoordinates0 && streams.hasTextureCoordinates1 &&
+                  streams.textureCoordinates0.empty() && streams.textureCoordinates1.size() == 6,
+              "_TC1-only aggregate has the expected presence and aligned length");
+        if (streams.textureCoordinates1.size() == 6) {
+            Check(streams.textureCoordinates1[0].u == 7 && streams.textureCoordinates1[2].v == 12 &&
+                      streams.textureCoordinates1[3].u == 0 && streams.textureCoordinates1[5].v == 0,
+                  "_TC1 values retain order and missing vertices are zero-filled");
+        }
+    }
+
+    geometry = {};
+    if (parse({plain, uv1}, geometry)) {
+        Check(BuildNmfTextureCoordinateStreams(geometry, streams),
+              "_TC1 aggregation succeeds when an earlier object omits the set");
+        if (streams.textureCoordinates1.size() == 6) {
+            Check(streams.textureCoordinates1[0].u == 0 && streams.textureCoordinates1[2].v == 0 &&
+                      streams.textureCoordinates1[3].u == 7 && streams.textureCoordinates1[5].v == 12,
+                  "_TC1 aggregation zero-fills and preserves values when object order is reversed");
+        }
+    }
+
+    geometry = {};
+    if (parse({both, plain}, geometry)) {
+        Check(BuildNmfTextureCoordinateStreams(geometry, streams),
+              "dual-set aggregation succeeds when a later object omits both sets");
+        Check(streams.hasTextureCoordinates0 && streams.hasTextureCoordinates1 &&
+                  streams.textureCoordinates0.size() == 6 && streams.textureCoordinates1.size() == 6,
+              "dual-set aggregates both remain aligned to the same six vertices");
+        if (streams.textureCoordinates0.size() == 6 && streams.textureCoordinates1.size() == 6) {
+            Check(streams.textureCoordinates0[0].u == 13 && streams.textureCoordinates0[2].v == 18 &&
+                      streams.textureCoordinates1[0].u == 19 && streams.textureCoordinates1[2].v == 24 &&
+                      streams.textureCoordinates0[3].u == 0 && streams.textureCoordinates1[5].v == 0,
+                  "dual-set aggregation preserves both streams and zero-fills both missing tails");
+        }
+    }
+
+    geometry = {};
+    if (parse({plain, both}, geometry)) {
+        Check(BuildNmfTextureCoordinateStreams(geometry, streams),
+              "dual-set aggregation succeeds when an earlier object omits both sets");
+        if (streams.textureCoordinates0.size() == 6 && streams.textureCoordinates1.size() == 6) {
+            Check(streams.textureCoordinates0[0].u == 0 && streams.textureCoordinates1[2].v == 0 &&
+                      streams.textureCoordinates0[3].u == 13 && streams.textureCoordinates0[5].v == 18 &&
+                      streams.textureCoordinates1[3].u == 19 && streams.textureCoordinates1[5].v == 24,
+                  "dual-set aggregation zero-fills both prefixes when object order is reversed");
+        }
+    }
+
+    geometry = {};
+    if (!parse({uv0, plain}, geometry))
+        return;
+    streams.hasTextureCoordinates0 = false;
+    streams.hasTextureCoordinates1 = true;
+    streams.textureCoordinates0 = {{99, 98}};
+    streams.textureCoordinates1 = {{97, 96}};
+    geometry.objects[0].lod.textureCoordinates0.pop_back();
+    const auto previous = streams;
+    std::string error;
+    Check(!BuildNmfTextureCoordinateStreams(geometry, streams, &error),
+          "misaligned per-object stream is rejected");
+    Check(!error.empty() && streams.hasTextureCoordinates0 == previous.hasTextureCoordinates0 &&
+              streams.hasTextureCoordinates1 == previous.hasTextureCoordinates1 &&
+              streams.textureCoordinates0.size() == previous.textureCoordinates0.size() &&
+              streams.textureCoordinates0[0].u == previous.textureCoordinates0[0].u &&
+              streams.textureCoordinates1[0].v == previous.textureCoordinates1[0].v,
+          "failed texture-coordinate aggregation leaves caller output unchanged");
+
+    geometry = {};
+    if (!parse({uv0}, geometry))
+        return;
+    geometry.objects[0].lod.textureCoordinates0[1].v = std::numeric_limits<float>::quiet_NaN();
+    const auto previousForNonFinite = streams;
+    error.clear();
+    Check(!BuildNmfTextureCoordinateStreams(geometry, streams, &error),
+          "non-finite constructed texture-coordinate data is rejected");
+    Check(!error.empty() && streams.hasTextureCoordinates0 == previousForNonFinite.hasTextureCoordinates0 &&
+              streams.hasTextureCoordinates1 == previousForNonFinite.hasTextureCoordinates1 &&
+              streams.textureCoordinates0.size() == previousForNonFinite.textureCoordinates0.size() &&
+              streams.textureCoordinates0[0].u == previousForNonFinite.textureCoordinates0[0].u,
+          "non-finite aggregation failure leaves caller output unchanged");
+}
+
 void TestBuildScopedNonStreamBitsDoNotAdvanceTheStream() {
     for (const auto flag : {0x1u, 0x2u}) {
         ObjectSpec first;
@@ -308,7 +511,7 @@ void TestBuildScopedNonStreamBitsDoNotAdvanceTheStream() {
 }
 
 void TestAllAuxiliaryBranchesAndTruncation() {
-    for (const auto flag : {0x10000u, 0x20000u, 0x200u, 0x400u, 0x800u, 0x40000u}) {
+    for (const auto flag : {0x10000u, 0x20000u, 0x400u, 0x800u, 0x40000u}) {
         ObjectSpec a;
         a.lods[0].flags = flag;
         if (flag == 0x40000u)
@@ -463,6 +666,8 @@ void TestMalformedInputs() {
 int main() {
     TestMetadataAndSingleLodProfile();
     TestFlaggedNormalStreamAndAlignment();
+    TestTextureCoordinateStreamsRetainedAndAligned();
+    TestCombinedTextureCoordinateStreamsStayVertexAligned();
     TestBuildScopedNonStreamBitsDoNotAdvanceTheStream();
     TestAllAuxiliaryBranchesAndTruncation();
     TestMalformedInputs();

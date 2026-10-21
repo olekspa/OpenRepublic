@@ -27,6 +27,11 @@ struct NmfNormal {
     float z{};
 };
 
+struct NmfTextureCoordinate {
+    float u{};
+    float v{};
+};
+
 struct NmfAabb {
     NmfPosition minimum{};
     NmfPosition maximum{};
@@ -54,6 +59,11 @@ struct NmfStaticLod {
     // inspected loader and remain semantically unknown; all raw bits are retained.
     // Preserve source normals as-is; other builds and shading parity remain unknown.
     std::vector<NmfNormal> vertexNormals;
+    // Build 23935965 labels flags 0x100/0x200 as _TC0/_TC1 and copies eight bytes
+    // per vertex. Interpreting those streams as two-float UV sets is an adapter
+    // inference; material-slot use and texture binding remain unknown.
+    std::vector<NmfTextureCoordinate> textureCoordinates0;
+    std::vector<NmfTextureCoordinate> textureCoordinates1;
     std::vector<std::uint32_t> indices;
     std::vector<NmfGeometrySubset> subsets;
 };
@@ -81,6 +91,13 @@ struct NmfStaticGeometry {
     std::vector<NmfStaticObject> objects;
 };
 
+struct NmfTextureCoordinateStreams {
+    bool hasTextureCoordinates0{};
+    bool hasTextureCoordinates1{};
+    std::vector<NmfTextureCoordinate> textureCoordinates0;
+    std::vector<NmfTextureCoordinate> textureCoordinates1;
+};
+
 // Reads a narrow static triangle layout observed in one local NMF sample and
 // the matching build-scoped ModelViewer loader. Only type-0 records with one
 // LOD are accepted. Root/no-child and identity-matrix gates are sample-only;
@@ -89,12 +106,25 @@ struct NmfStaticGeometry {
 // auxiliary vertex streams are bounds-checked then discarded. Subset draw
 // ranges and their submaterial-table indices are retained based on the
 // build-scoped loader/render evidence; auxiliary subset indices remain opaque.
-// In build 23935965, flag 0x8 is the loader's _NRM FLOAT3 stream. Raw values are
-// retained without applying the loader's optional coordinate-reflection mode.
-// Other builds and MTL value/texture semantics remain unsupported.
+// In build 23935965, flag 0x8 is the loader's _NRM FLOAT3 stream, and flags
+// 0x100/0x200 are labeled _TC0/_TC1 with eight-byte per-vertex payloads. The
+// preview adapts those payloads as two-float Wicked UV sets 0/1; this component
+// interpretation remains an inference, as do MTL slot use and texture binding.
+// Raw normals are retained without applying the loader's optional coordinate-
+// reflection mode. Other builds remain unsupported.
 // On failure, output is unchanged.
 bool ParseNmfStaticGeometry(std::string_view bytes, NmfStaticGeometry& output,
                             std::string* error = nullptr);
+
+// Combines the per-object _TC0/_TC1 adapter streams in vertex order. It checks
+// flag/vector alignment and finite values. If a set is present on only some
+// objects, absent-object vertices receive (0, 0) so every combined stream
+// stays aligned with the combined position array. This zero-fill behavior is
+// an OpenRepublic preview policy, not a recovered source default. On failure,
+// output is unchanged.
+bool BuildNmfTextureCoordinateStreams(const NmfStaticGeometry& geometry,
+                                     NmfTextureCoordinateStreams& output,
+                                     std::string* error = nullptr);
 
 // Checks the file size before reading. This is for trusted local probes, not
 // an adversarial-file sandbox. On failure, output is unchanged.

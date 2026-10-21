@@ -778,6 +778,10 @@ namespace openrepublic
 			std::vector<XMFLOAT3> positions;
 			std::vector<XMFLOAT3> sourceNormals;
 			std::vector<std::uint8_t> sourceNormalMask;
+			openrepublic::content::NmfTextureCoordinateStreams textureCoordinates;
+			if (!openrepublic::content::BuildNmfTextureCoordinateStreams(
+				geometry, textureCoordinates, &error))
+				return false;
 			std::vector<std::uint32_t> indices;
 			positions.reserve(vertexCount);
 			sourceNormals.reserve(vertexCount);
@@ -850,6 +854,14 @@ namespace openrepublic
 					}
 				}
 			}
+			if ((textureCoordinates.hasTextureCoordinates0 &&
+				textureCoordinates.textureCoordinates0.size() != positions.size()) ||
+				(textureCoordinates.hasTextureCoordinates1 &&
+				textureCoordinates.textureCoordinates1.size() != positions.size()))
+			{
+				error = "NMF combined texture-coordinate streams do not match the combined vertex count";
+				return false;
+			}
 			if (drawRanges.empty())
 			{
 				error = "NMF geometry has no complete subset triangle range to preview";
@@ -879,6 +891,28 @@ namespace openrepublic
 					{
 						mesh->vertex_normals[vertexIndex] = sourceNormals[vertexIndex];
 					}
+				}
+				if (textureCoordinates.hasTextureCoordinates0)
+				{
+					mesh->vertex_uvset_0.clear();
+					mesh->vertex_uvset_0.reserve(textureCoordinates.textureCoordinates0.size());
+					for (const auto& uv : textureCoordinates.textureCoordinates0)
+						mesh->vertex_uvset_0.emplace_back(uv.u, uv.v);
+				}
+				if (textureCoordinates.hasTextureCoordinates1)
+				{
+					mesh->vertex_uvset_1.clear();
+					mesh->vertex_uvset_1.reserve(textureCoordinates.textureCoordinates1.size());
+					for (const auto& uv : textureCoordinates.textureCoordinates1)
+						mesh->vertex_uvset_1.emplace_back(uv.u, uv.v);
+				}
+				if ((textureCoordinates.hasTextureCoordinates0 &&
+					mesh->vertex_uvset_0.size() != positions.size()) ||
+					(textureCoordinates.hasTextureCoordinates1 &&
+					mesh->vertex_uvset_1.size() != positions.size()))
+				{
+					error = "Wicked Engine NMF UV sets do not match the mesh vertex count";
+					return false;
 				}
 				mesh->subsets.clear();
 				for (const PreviewDrawRange& drawRange : drawRanges)
@@ -1032,7 +1066,9 @@ namespace openrepublic
 				std::to_string(mappedSubmaterialCount) + " referenced submaterial-table entries, " +
 				mtlBindingSummary + ". " +
 				mtlStatus + ". Textures are not loaded; their slot and path semantics remain unsupported. " +
-				"Build 23935965 identifies flag 0x8 as the _NRM FLOAT3 stream; " +
+				"Build 23935965 labels flag 0x8 _NRM FLOAT3 and flags 0x100/0x200 _TC0/_TC1 eight-byte streams; interpreting each pair as FLOAT2 and assigning Wicked UV sets 0/1 is an inferred preview adapter, while MTL texture-slot use remains unknown. " +
+				"Aligned preview UV vertex counts: set 0=" + std::to_string(textureCoordinates.textureCoordinates0.size()) +
+				", set 1=" + std::to_string(textureCoordinates.textureCoordinates1.size()) + ". " +
 				std::to_string(sourceNormalCount) + " source normals are preserved as-is and other vertices use Wicked smooth-normal fallback. " +
 				"This does not apply the original loader's optional coordinate-reflection mode or establish shading parity. " +
 				"The Wicked base-color mapping is approximate and does not establish source color-space, alpha, lighting, or shader parity. " +

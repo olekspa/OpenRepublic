@@ -5,6 +5,8 @@
 
 **Project:** independent WRSR-compatible client and simulation engine
 
+**NMF render-path update (21 October 2026):** for build `23935965`, static loader review labels flags `0x100`/`0x200` `_TC0`/`_TC1` and confirms eight-byte payloads per vertex. OpenRepublic retains these streams; interpreting each payload as two floats and adapting them to Wicked UV sets 0/1 remains **INFERRED**. Mixed-object UV aggregation is covered by synthetic tests and zero-fills missing object streams as an OpenRepublic preview policy; it does not establish an original loader default or material texture-slot use. A fresh two-angle application-owned capture shows the same dark, elongated, stepped mesh; no matched ModelViewer view is available, so recognition and visual fidelity remain **UNKNOWN**. Keep the asset-reading runtime local pending D-005.
+
 The 21 October 2026 Release simulation tests now also run a 10,000-tick synthetic economy acceptance: uninterrupted and mid-run save/reloaded continuations match canonical state at every tick, facility/storage inventory bounds hold at every tick, and cumulative flour delivery reconciles to flour still stored while consumption is absent. This verifies only OpenRepublic's current synthetic rules and same-build replay path, not WRSR economic parity.
 
 ## 1. Mission
