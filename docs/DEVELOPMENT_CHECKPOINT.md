@@ -186,3 +186,15 @@ Only these tracked project files were modified for the current M0 increment: `sr
 **2026-10-21 15:37:51 EDT (19:37:51 UTC) — publication receipt**
 
 - The reviewed production-telemetry increment was committed as `3ada697` (`Expose production telemetry in agent world view`) and pushed to `origin/main`. The source, tests, and all 12 scoped files are published; no WRSR asset or behavior claim is included.
+
+## Chronological continuation — bounded NMF header profile
+
+**2026-10-21 15:47 EDT (19:47 UTC)**
+
+- Private read-only REA/Ghidra review of the installed ModelViewer, scoped to WRSR build `23935965`, observed a 32-bit count at byte offset `0x08`, fixed-width `0x40`-byte records beginning at `0x14`, and a separate count at `0x0C` used with a `0xF0`-stride record array. The in-memory loader has no explicit input-length parameter. This is build-specific static evidence, not a safe parser contract.
+- A private one-sample byte check found NUL-terminated printable-ASCII identifiers in the 64-byte records. Their set matched the sibling MTL `$SUBMATERIAL` identifier set, with order differing. Exact paths, sample identities, hashes, and REA/Ghidra outputs remain outside Git.
+- Added an OpenRepublic-owned header-profile reader over caller-supplied bytes. It checks the 20-byte prefix, caps both count fields at 4096, bounds the fixed-width identifier table against the buffer, requires a NUL terminator and printable ASCII, preserves order, and leaves output unchanged on failure. It reports but does not parse object records; geometry, animation, material/texture semantics, and runtime model import remain out of scope.
+- Independent review found that the first version rejected ASCII spaces despite describing its accepted range as printable ASCII. The profile now accepts the full printable ASCII range, and the synthetic valid fixture includes a space.
+- **VERIFIED — source/build/test evidence:** the Release client and headless NMF test targets built successfully. Full client CTest passed 11/11 and full headless CTest passed 10/10. Running both suites simultaneously initially exposed a shared temporary-file collision in the existing terrain-reader client test; rerunning the suites sequentially passed both. `git diff --check` passed.
+- **OBSERVED — local WRSR sample:** one private model's identifier set matched its sibling MTL identifier set. This single sample and the build-specific static loader review do not establish general NMF support, geometry layout, WRSR visual fidelity, or standalone-use rights.
+- No WRSR game was launched; no original asset, save, Steam installation file, or Rival Republics data was modified or added. The REA evidence bundle remains in the private research area. The code and public evidence documentation are ready for final scoped diff review and publication; broader NMF support and M1/playable-alpha acceptance remain open.

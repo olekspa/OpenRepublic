@@ -19,6 +19,13 @@ target_link_libraries(OpenRepublicMtlDependencyTests PRIVATE OpenRepublicContent
 target_compile_features(OpenRepublicMtlDependencyTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicMtlDependencyTests COMMAND OpenRepublicMtlDependencyTests)
 
+add_executable(OpenRepublicNmfHeaderTests
+    nmf_header_tests.cpp
+)
+target_link_libraries(OpenRepublicNmfHeaderTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicNmfHeaderTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicNmfHeaderTests COMMAND OpenRepublicNmfHeaderTests)
+
 add_executable(OpenRepublicGlbContainerTests
     glb_container_tests.cpp
 )
