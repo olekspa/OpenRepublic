@@ -2,6 +2,7 @@
 #include "ModelImporter.h"
 #include "openrepublic/content/glb_container.h"
 #include "openrepublic/content/glb_semantic.h"
+#include "openrepublic/content/nmf_geometry.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/content/terrain_preview.h"
 
@@ -63,6 +64,8 @@ namespace openrepublic
 		constexpr double kTerrainVerticalPreviewScale = 0.005;
 		constexpr double kRawPreviewVerticalScale = 5.0;
 		constexpr double kMaxTerrainPreviewHeight = 1000.0;
+		constexpr std::size_t kMaxNmfPreviewDisplaySpan = 10;
+		constexpr double kNmfPreviewCenterX = 8.0;
 		// Current synthetic storage capacity also shown by the demo stock readout.
 		constexpr std::uint32_t kStorageFlourCapacity = 5;
 		constexpr std::uintmax_t kMaxTerrainMetadataBytes = 64u * 1024u;
@@ -532,6 +535,118 @@ namespace openrepublic
 			return true;
 		}
 
+		bool CreateNmfStaticPreview(wi::scene::Scene& scene, const std::filesystem::path& nmfPath,
+			wi::ecs::Entity& meshEntity, std::string& description, std::string& error)
+		{
+			openrepublic::content::NmfStaticGeometry geometry;
+			if (!openrepublic::content::LoadNmfStaticGeometry(nmfPath, geometry, &error))
+			{
+				return false;
+			}
+
+			size_t vertexCount = 0;
+			size_t indexCount = 0;
+			double minimumX = std::numeric_limits<double>::infinity();
+			double minimumY = std::numeric_limits<double>::infinity();
+			double minimumZ = std::numeric_limits<double>::infinity();
+			double maximumX = -std::numeric_limits<double>::infinity();
+			double maximumY = -std::numeric_limits<double>::infinity();
+			double maximumZ = -std::numeric_limits<double>::infinity();
+			for (const auto& submesh : geometry.submeshes)
+			{
+				vertexCount += submesh.positions.size();
+				indexCount += submesh.indices.size();
+				for (const auto& position : submesh.positions)
+				{
+					minimumX = std::min(minimumX, static_cast<double>(position.x));
+					minimumY = std::min(minimumY, static_cast<double>(position.y));
+					minimumZ = std::min(minimumZ, static_cast<double>(position.z));
+					maximumX = std::max(maximumX, static_cast<double>(position.x));
+					maximumY = std::max(maximumY, static_cast<double>(position.y));
+					maximumZ = std::max(maximumZ, static_cast<double>(position.z));
+				}
+			}
+			const double maximumExtent = std::max({ maximumX - minimumX, maximumY - minimumY, maximumZ - minimumZ });
+			if (vertexCount < 3 || indexCount < 3 || indexCount % 3 != 0 ||
+				!std::isfinite(maximumExtent) || maximumExtent <= 0.0 ||
+				vertexCount > std::numeric_limits<std::uint32_t>::max())
+			{
+				error = "NMF geometry could not be mapped into a bounded static mesh preview";
+				return false;
+			}
+
+			const double displayScale = static_cast<double>(kMaxNmfPreviewDisplaySpan) / maximumExtent;
+			const double centerX = (minimumX + maximumX) * 0.5;
+			const double centerZ = (minimumZ + maximumZ) * 0.5;
+			std::vector<XMFLOAT3> positions;
+			std::vector<std::uint32_t> indices;
+			positions.reserve(vertexCount);
+			indices.reserve(indexCount);
+			for (const auto& submesh : geometry.submeshes)
+			{
+				if (positions.size() > std::numeric_limits<std::uint32_t>::max() - submesh.positions.size())
+				{
+					error = "NMF combined vertex index exceeds the renderer's 32-bit range";
+					return false;
+				}
+				const auto baseVertex = static_cast<std::uint32_t>(positions.size());
+				for (const auto& position : submesh.positions)
+				{
+					positions.emplace_back(
+						static_cast<float>(kNmfPreviewCenterX + (position.x - centerX) * displayScale),
+						static_cast<float>((position.y - minimumY) * displayScale),
+						static_cast<float>((position.z - centerZ) * displayScale));
+				}
+				for (const std::uint32_t index : submesh.indices)
+				{
+					if (index >= submesh.positions.size() ||
+						index > std::numeric_limits<std::uint32_t>::max() - baseVertex)
+					{
+						error = "NMF normalized mesh contains an invalid index";
+						return false;
+					}
+					indices.push_back(baseVertex + index);
+				}
+			}
+
+			meshEntity = scene.Entity_CreateMeshFromData("OpenRepublic bounded NMF geometry preview",
+				indices.size(), indices.data(), positions.size(), positions.data());
+			if (wi::scene::MeshComponent* mesh = scene.meshes.GetComponent(meshEntity))
+			{
+				if (!HasValidIndexedTriangleData(*mesh))
+				{
+					error = "Wicked Engine rejected the normalized NMF triangle data";
+					return false;
+				}
+				mesh->CreateRenderData();
+			}
+			else
+			{
+				error = "Wicked Engine did not create the NMF mesh component";
+				return false;
+			}
+			if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(meshEntity))
+			{
+				material->SetBaseColor(XMFLOAT4(0.66f, 0.55f, 0.42f, 1.0f));
+				material->CreateRenderData(true);
+			}
+			else
+			{
+				error = "Wicked Engine did not create the NMF debug material";
+				return false;
+			}
+
+			std::size_t triangleCount = 0;
+			for (const auto& submesh : geometry.submeshes)
+				triangleCount += submesh.indices.size() / 3;
+			description = "Bounded static NMF geometry preview: " +
+				std::to_string(geometry.submeshes.size()) + " submeshes, " +
+				std::to_string(vertexCount) + " vertices, " +
+				std::to_string(triangleCount) + " triangles. Geometry is uniformly normalized to a 10-unit display span at x=8 with one debug material; source placement, game units, original materials, texture semantics, and visual fidelity remain unverified.";
+			error.clear();
+			return true;
+		}
+
 		bool HasExtensionInsensitive(const std::filesystem::path& path, const wchar_t* extension)
 		{
 			std::wstring actual = path.extension().wstring();
@@ -599,6 +714,11 @@ namespace openrepublic
 		glbProbePath = std::move(path);
 	}
 
+	void OpenRepublicApplication::SetNmfProbePath(std::filesystem::path path)
+	{
+		nmfProbePath = std::move(path);
+	}
+
 	void OpenRepublicApplication::SetTerrainProbePath(std::filesystem::path path)
 	{
 		terrainProbePath = std::move(path);
@@ -615,6 +735,7 @@ namespace openrepublic
 	{
 		wi::Application::Initialize();
 		bool terrainPreviewLoaded = false;
+		bool nmfPreviewLoaded = false;
 
 		#ifdef OPENREPUBLIC_WITH_LUA_RULES
 		{
@@ -809,6 +930,35 @@ namespace openrepublic
 		{
 			uiNotice = "Terrain probe transform rejected: " + terrainProbeTransformError;
 			wilog("[OpenRepublic] %s", uiNotice.c_str());
+		}
+
+		if (!nmfProbePath.empty() && !terrainProbePath.empty())
+		{
+			uiNotice = "NMF and terrain probes cannot be combined; choose one local content preview per launch.";
+			wilog("[OpenRepublic] Content probe rejected: %s", uiNotice.c_str());
+		}
+		else if (!nmfProbePath.empty())
+		{
+			if (!HasExtensionInsensitive(nmfProbePath, L".nmf"))
+			{
+				uiNotice = "NMF probe accepts only .nmf files.";
+			}
+			else
+			{
+				wi::ecs::Entity meshEntity = wi::ecs::INVALID_ENTITY;
+				std::string description;
+				std::string error;
+				if (CreateNmfStaticPreview(previewWorld, nmfProbePath, meshEntity, description, error))
+				{
+					nmfPreviewLoaded = true;
+					uiNotice = description;
+				}
+				else
+				{
+					uiNotice = "NMF probe failed: " + error;
+				}
+			}
+			wilog("[OpenRepublic] NMF probe: %s", uiNotice.c_str());
 		}
 		else if (!terrainProbePath.empty())
 		{
@@ -1015,8 +1165,9 @@ namespace openrepublic
 		gui.AddWidget(&simulationStatus);
 
 		wi::scene::TransformComponent cameraTransform;
-		cameraTransform.Translate(terrainPreviewLoaded ? XMFLOAT3(0, 18.0f, -27.0f) : XMFLOAT3(0, 6.5f, -11.5f));
-		cameraTransform.RotateRollPitchYaw(XMFLOAT3(terrainPreviewLoaded ? 0.52f : 0.43f, 0, 0));
+		cameraTransform.Translate(terrainPreviewLoaded ? XMFLOAT3(0, 18.0f, -27.0f) :
+			(nmfPreviewLoaded ? XMFLOAT3(8.0f, 8.0f, -17.0f) : XMFLOAT3(0, 6.5f, -11.5f)));
+		cameraTransform.RotateRollPitchYaw(XMFLOAT3(terrainPreviewLoaded ? 0.52f : (nmfPreviewLoaded ? 0.38f : 0.43f), 0, 0));
 		cameraTransform.UpdateTransform();
 		renderPath->camera->TransformCamera(cameraTransform);
 		renderPath->camera->UpdateCamera();

@@ -78,6 +78,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
 	std::filesystem::path sceneProbePath;
 	std::filesystem::path glbProbePath;
+	std::filesystem::path nmfProbePath;
 	std::filesystem::path terrainProbePath;
 	std::optional<openrepublic::content::TerrainTransform> terrainProbeTransform;
 	std::string terrainProbeTransformError;
@@ -93,6 +94,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			else if (std::wstring_view(arguments[i]) == L"--glb-probe" && i + 1 < argumentCount)
 			{
 				glbProbePath = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--nmf-probe" && i + 1 < argumentCount)
+			{
+				nmfProbePath = arguments[++i];
 			}
 			else if (std::wstring_view(arguments[i]) == L"--terrain-probe" && i + 1 < argumentCount)
 			{
@@ -158,6 +163,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));
+	application.SetNmfProbePath(std::move(nmfProbePath));
 	application.SetTerrainProbePath(std::move(terrainProbePath));
 	application.SetTerrainProbeTransform(std::move(terrainProbeTransform), std::move(terrainProbeTransformError));
 

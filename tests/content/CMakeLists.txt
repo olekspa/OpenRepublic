@@ -26,6 +26,13 @@ target_link_libraries(OpenRepublicNmfHeaderTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicNmfHeaderTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicNmfHeaderTests COMMAND OpenRepublicNmfHeaderTests)
 
+add_executable(OpenRepublicNmfGeometryTests
+    nmf_geometry_tests.cpp
+)
+target_link_libraries(OpenRepublicNmfGeometryTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicNmfGeometryTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicNmfGeometryTests COMMAND OpenRepublicNmfGeometryTests)
+
 add_executable(OpenRepublicGlbContainerTests
     glb_container_tests.cpp
 )

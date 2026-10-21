@@ -21,6 +21,7 @@ namespace openrepublic
 		OpenRepublicApplication();
 		void SetSceneProbePath(std::filesystem::path path);
 		void SetGlbProbePath(std::filesystem::path path);
+		void SetNmfProbePath(std::filesystem::path path);
 		void SetTerrainProbePath(std::filesystem::path path);
 		void SetTerrainProbeTransform(std::optional<openrepublic::content::TerrainTransform> transform,
 			std::string error = {});
@@ -61,6 +62,7 @@ namespace openrepublic
 		openrepublic::agent_api::AgentApi agentApi;
 		std::filesystem::path sceneProbePath;
 		std::filesystem::path glbProbePath;
+		std::filesystem::path nmfProbePath;
 		std::filesystem::path terrainProbePath;
 		std::optional<openrepublic::content::TerrainTransform> terrainProbeTransform;
 		std::string terrainProbeTransformError;
