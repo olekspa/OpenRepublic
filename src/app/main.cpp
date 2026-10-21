@@ -80,6 +80,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::filesystem::path sceneProbePath;
 	std::filesystem::path glbProbePath;
 	std::filesystem::path nmfProbePath;
+	bool nmfUnlitPreview = false;
 	std::vector<std::filesystem::path> nmfCapturePaths;
 	std::filesystem::path terrainProbePath;
 	std::optional<openrepublic::content::TerrainTransform> terrainProbeTransform;
@@ -101,6 +102,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			else if (std::wstring_view(arguments[i]) == L"--nmf-probe" && i + 1 < argumentCount)
 			{
 				nmfProbePath = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--nmf-unlit-preview")
+			{
+				nmfUnlitPreview = true;
 			}
 			else if (std::wstring_view(arguments[i]) == L"--capture-preview")
 			{
@@ -175,6 +180,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		}
 		LocalFree(arguments);
 	}
+	if (nmfUnlitPreview && (nmfProbePath.empty() || nmfCapturePaths.empty()))
+	{
+		nmfCaptureArgumentError = "--nmf-unlit-preview requires --nmf-probe <local.nmf> and at least one --capture-preview output";
+	}
+	else if (nmfUnlitPreview && !terrainProbePath.empty())
+	{
+		nmfCaptureArgumentError = "--nmf-unlit-preview cannot be combined with --terrain-probe";
+	}
 	if (terrainTransformArgumentSeen && terrainProbePath.empty() && terrainProbeTransformError.empty())
 	{
 		terrainProbeTransformError = "--terrain-transform requires --terrain-probe <heightmap.dds>";
@@ -229,12 +242,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	if (!nmfCaptureArgumentError.empty())
 	{
-		MessageBoxA(nullptr, nmfCaptureArgumentError.c_str(), "OpenRepublic NMF preview capture", MB_OK | MB_ICONERROR);
+		MessageBoxA(nullptr, nmfCaptureArgumentError.c_str(), "OpenRepublic content preview options", MB_OK | MB_ICONERROR);
 		return 2;
 	}
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));
 	application.SetNmfProbePath(std::move(nmfProbePath));
+	application.SetNmfUnlitPreview(nmfUnlitPreview);
 	const bool nmfCaptureMode = !nmfCapturePaths.empty();
 	application.SetNmfCapturePaths(std::move(nmfCapturePaths));
 	application.SetTerrainProbePath(std::move(terrainProbePath));

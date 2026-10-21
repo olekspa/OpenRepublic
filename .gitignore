@@ -36,3 +36,7 @@
 # Crash dumps and local logs
 *.dmp
 *.log
+/log.txt
+
+# Wicked Engine runtime-compiled shader cache
+/shaders/hlsl6/

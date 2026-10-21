@@ -6,6 +6,7 @@ add_library(OpenRepublicContent STATIC
     mtl_syntax.cpp
     nmf_geometry.cpp
     nmf_header.cpp
+    nmf_preview_geometry.cpp
     terrain_dds.cpp
     terrain_preview.cpp
 )

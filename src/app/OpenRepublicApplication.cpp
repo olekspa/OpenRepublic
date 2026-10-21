@@ -6,6 +6,7 @@
 #include "openrepublic/content/mtl_submaterial_binding.h"
 #include "openrepublic/content/mtl_syntax.h"
 #include "openrepublic/content/nmf_geometry.h"
+#include "openrepublic/content/nmf_preview_geometry.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/content/terrain_preview.h"
 
@@ -67,8 +68,6 @@ namespace openrepublic
 		constexpr double kTerrainVerticalPreviewScale = 0.005;
 		constexpr double kRawPreviewVerticalScale = 5.0;
 		constexpr double kMaxTerrainPreviewHeight = 1000.0;
-		constexpr std::size_t kMaxNmfPreviewDisplaySpan = 10;
-		constexpr double kNmfPreviewCenterX = 8.0;
 		constexpr std::uintmax_t kMaxNmfPreviewMtlBytes = 4u * 1024u * 1024u;
 		constexpr XMFLOAT4 kNmfDebugMaterialPalette[] = {
 			XMFLOAT4(0.70f, 0.35f, 0.24f, 1.0f),
@@ -699,7 +698,7 @@ namespace openrepublic
 
 		bool CreateNmfStaticPreview(wi::scene::Scene& scene, const std::filesystem::path& nmfPath,
 			wi::ecs::Entity& meshEntity, XMFLOAT3& previewCameraTarget, float& previewCameraDistance,
-			std::string& description, std::string& error)
+			bool unlitDiagnostic, std::string& description, std::string& error)
 		{
 			openrepublic::content::NmfStaticGeometry geometry;
 			if (!openrepublic::content::LoadNmfStaticGeometry(nmfPath, geometry, &error))
@@ -711,7 +710,11 @@ namespace openrepublic
 			std::vector<openrepublic::content::MtlSubmaterialBinding> mtlBindings;
 			std::string mtlStatus;
 			bool haveMtlBindings = false;
-			if (LoadSiblingNmfMtl(nmfPath, mtlDocument, mtlStatus))
+			if (unlitDiagnostic)
+			{
+				mtlStatus = "neutral unlit geometry diagnostic bypasses sibling MTL parsing";
+			}
+			else if (LoadSiblingNmfMtl(nmfPath, mtlDocument, mtlStatus))
 			{
 				std::string bindingError;
 				haveMtlBindings = openrepublic::content::BindMtlSubmaterialsByName(
@@ -723,141 +726,36 @@ namespace openrepublic
 				}
 			}
 
-			size_t vertexCount = 0;
-			size_t indexCount = 0;
-			double minimumX = std::numeric_limits<double>::infinity();
-			double minimumY = std::numeric_limits<double>::infinity();
-			double minimumZ = std::numeric_limits<double>::infinity();
-			double maximumX = -std::numeric_limits<double>::infinity();
-			double maximumY = -std::numeric_limits<double>::infinity();
-			double maximumZ = -std::numeric_limits<double>::infinity();
-			std::size_t sourceNormalCount = 0;
-			for (const auto& object : geometry.objects)
-			{
-				if (!object.lod.vertexNormals.empty() &&
-					object.lod.vertexNormals.size() != object.lod.positions.size())
-				{
-					error = "NMF source normal count does not match its vertex positions";
-					return false;
-				}
-				vertexCount += object.lod.positions.size();
-				indexCount += object.lod.indices.size();
-				sourceNormalCount += object.lod.vertexNormals.size();
-				for (const auto& position : object.lod.positions)
-				{
-					minimumX = std::min(minimumX, static_cast<double>(position.x));
-					minimumY = std::min(minimumY, static_cast<double>(position.y));
-					minimumZ = std::min(minimumZ, static_cast<double>(position.z));
-					maximumX = std::max(maximumX, static_cast<double>(position.x));
-					maximumY = std::max(maximumY, static_cast<double>(position.y));
-					maximumZ = std::max(maximumZ, static_cast<double>(position.z));
-				}
-			}
-			const double maximumExtent = std::max({ maximumX - minimumX, maximumY - minimumY, maximumZ - minimumZ });
-			if (vertexCount < 3 || indexCount < 3 || indexCount % 3 != 0 ||
-				!std::isfinite(maximumExtent) || maximumExtent <= 0.0 ||
-				vertexCount > std::numeric_limits<std::uint32_t>::max())
-			{
-				error = "NMF geometry could not be mapped into a bounded static mesh preview";
-				return false;
-			}
-
-			const double displayScale = static_cast<double>(kMaxNmfPreviewDisplaySpan) / maximumExtent;
-			const double centerX = (minimumX + maximumX) * 0.5;
-			const double centerZ = (minimumZ + maximumZ) * 0.5;
-			previewCameraTarget = XMFLOAT3(kNmfPreviewCenterX,
-				static_cast<float>((maximumY - minimumY) * displayScale * 0.5), 0.0f);
-			previewCameraDistance = static_cast<float>(kMaxNmfPreviewDisplaySpan * 1.65);
-			struct PreviewDrawRange
-			{
-				std::uint32_t indexOffset{};
-				std::uint32_t indexCount{};
-				std::uint32_t submaterialIndex = std::numeric_limits<std::uint32_t>::max();
-			};
-			std::vector<PreviewDrawRange> drawRanges;
-			std::vector<XMFLOAT3> positions;
-			std::vector<XMFLOAT3> sourceNormals;
-			std::vector<std::uint8_t> sourceNormalMask;
 			openrepublic::content::NmfTextureCoordinateStreams textureCoordinates;
-			if (!openrepublic::content::BuildNmfTextureCoordinateStreams(
+			if (!unlitDiagnostic && !openrepublic::content::BuildNmfTextureCoordinateStreams(
 				geometry, textureCoordinates, &error))
 				return false;
-			std::vector<std::uint32_t> indices;
+
+			openrepublic::content::NmfPreviewGeometry previewGeometry;
+			if (!openrepublic::content::BuildNmfPreviewGeometry(geometry, previewGeometry, &error))
+				return false;
+			previewCameraTarget = XMFLOAT3(previewGeometry.cameraTarget.x,
+				previewGeometry.cameraTarget.y, previewGeometry.cameraTarget.z);
+			previewCameraDistance = previewGeometry.cameraDistance;
+			const std::size_t vertexCount = previewGeometry.positions.size();
+			const std::size_t indexCount = previewGeometry.indices.size();
+			const std::size_t sourceNormalCount = previewGeometry.sourceNormalCount;
+			const std::size_t ignoredSubsetIndexCount = previewGeometry.ignoredSubsetIndexCount;
+			const auto& indices = previewGeometry.indices;
+			const auto& drawRanges = previewGeometry.drawRanges;
+			const auto& sourceNormalMask = previewGeometry.sourceNormalMask;
+			std::vector<XMFLOAT3> positions;
 			positions.reserve(vertexCount);
+			for (const auto& position : previewGeometry.positions)
+				positions.emplace_back(position.x, position.y, position.z);
+			std::vector<XMFLOAT3> sourceNormals;
 			sourceNormals.reserve(vertexCount);
-			sourceNormalMask.reserve(vertexCount);
-			indices.reserve(indexCount);
-			std::size_t ignoredSubsetIndexCount = 0;
-			for (const auto& object : geometry.objects)
-			{
-				if (positions.size() > std::numeric_limits<std::uint32_t>::max() - object.lod.positions.size())
-				{
-					error = "NMF combined vertex index exceeds the renderer's 32-bit range";
-					return false;
-				}
-				const auto baseVertex = static_cast<std::uint32_t>(positions.size());
-				const auto baseIndex = static_cast<std::uint32_t>(indices.size());
-				for (std::size_t vertexIndex = 0; vertexIndex < object.lod.positions.size(); ++vertexIndex)
-				{
-					const auto& position = object.lod.positions[vertexIndex];
-					positions.emplace_back(
-						static_cast<float>(kNmfPreviewCenterX + (position.x - centerX) * displayScale),
-						static_cast<float>((position.y - minimumY) * displayScale),
-						static_cast<float>((position.z - centerZ) * displayScale));
-					if (object.lod.vertexNormals.empty())
-					{
-						sourceNormals.emplace_back(0.0f, 0.0f, 0.0f);
-						sourceNormalMask.push_back(0);
-					}
-					else
-					{
-						const auto& normal = object.lod.vertexNormals[vertexIndex];
-						sourceNormals.emplace_back(normal.x, normal.y, normal.z);
-						sourceNormalMask.push_back(1);
-					}
-				}
-				for (const std::uint32_t index : object.lod.indices)
-				{
-					if (index >= object.lod.positions.size() ||
-						index > std::numeric_limits<std::uint32_t>::max() - baseVertex)
-					{
-						error = "NMF normalized mesh contains an invalid index";
-						return false;
-					}
-					indices.push_back(baseVertex + index);
-				}
-				if (object.lod.subsets.empty())
-				{
-					drawRanges.push_back({ baseIndex,
-						static_cast<std::uint32_t>(object.lod.indices.size()),
-						std::numeric_limits<std::uint32_t>::max() });
-				}
-				else
-				{
-					for (const auto& subset : object.lod.subsets)
-					{
-						// Each subset is a separate indexed draw: preserve its start offset,
-						// and match the observed renderer's indexCount / 3 triangle count.
-						ignoredSubsetIndexCount += subset.indexCount % 3;
-						const std::uint32_t renderIndexCount = (subset.indexCount / 3) * 3;
-						if (renderIndexCount == 0)
-						{
-							continue;
-						}
-						if (subset.indexOffset > std::numeric_limits<std::uint32_t>::max() - baseIndex)
-						{
-							error = "NMF subset render offset exceeds the renderer's 32-bit range";
-							return false;
-						}
-						drawRanges.push_back({ baseIndex + subset.indexOffset,
-							renderIndexCount, subset.submaterialIndex });
-					}
-				}
-			}
+			for (const auto& normal : previewGeometry.sourceNormals)
+				sourceNormals.emplace_back(normal.x, normal.y, normal.z);
 			if ((textureCoordinates.hasTextureCoordinates0 &&
-				textureCoordinates.textureCoordinates0.size() != positions.size()) ||
+				textureCoordinates.textureCoordinates0.size() != vertexCount) ||
 				(textureCoordinates.hasTextureCoordinates1 &&
-				textureCoordinates.textureCoordinates1.size() != positions.size()))
+				textureCoordinates.textureCoordinates1.size() != vertexCount))
 			{
 				error = "NMF combined texture-coordinate streams do not match the combined vertex count";
 				return false;
@@ -885,7 +783,7 @@ namespace openrepublic
 					error = "Wicked Engine generated-normal fallback does not match the NMF vertex count";
 					return false;
 				}
-				for (std::size_t vertexIndex = 0; vertexIndex < sourceNormalMask.size(); ++vertexIndex)
+				for (std::size_t vertexIndex = 0; !unlitDiagnostic && vertexIndex < sourceNormalMask.size(); ++vertexIndex)
 				{
 					if (sourceNormalMask[vertexIndex] != 0)
 					{
@@ -915,10 +813,11 @@ namespace openrepublic
 					return false;
 				}
 				mesh->subsets.clear();
-				for (const PreviewDrawRange& drawRange : drawRanges)
+				for (const openrepublic::content::NmfPreviewDrawRange& drawRange : drawRanges)
 				{
 					wi::ecs::Entity materialEntity = meshEntity;
-					if (drawRange.submaterialIndex != std::numeric_limits<std::uint32_t>::max())
+					if (drawRange.submaterialIndex !=
+						openrepublic::content::NoNmfPreviewSubmaterialIndex)
 					{
 						if (drawRange.submaterialIndex >= submaterialEntities.size())
 						{
@@ -971,8 +870,12 @@ namespace openrepublic
 					error = "Wicked Engine did not create an NMF submaterial debug component";
 					return false;
 				}
+				if (unlitDiagnostic)
+				{
+					material->SetBaseColor(XMFLOAT4(0.72f, 0.72f, 0.72f, 1.0f));
+				}
 				++mappedSubmaterialCount;
-				if (haveMtlBindings && materialIndex < mtlBindings.size() &&
+				if (!unlitDiagnostic && haveMtlBindings && materialIndex < mtlBindings.size() &&
 					mtlBindings[materialIndex].status ==
 						openrepublic::content::MtlSubmaterialBindingStatus::Matched &&
 					mtlBindings[materialIndex].sectionIndex < mtlDocument.submaterials.size())
@@ -1006,7 +909,7 @@ namespace openrepublic
 						++invalidDiffuseColorCount;
 					}
 				}
-				else
+				else if (!unlitDiagnostic)
 				{
 					material->SetBaseColor(NmfDebugMaterialColor(materialIndex));
 					if (haveMtlBindings && materialIndex < mtlBindings.size() &&
@@ -1028,7 +931,14 @@ namespace openrepublic
 			{
 				// Keep unpartitioned ranges on a generic material. A table entry is
 				// assigned only when an observed subset explicitly references it.
-				material->SetBaseColor(XMFLOAT4(0.66f, 0.55f, 0.42f, 1.0f));
+				if (unlitDiagnostic)
+				{
+					material->SetBaseColor(XMFLOAT4(0.72f, 0.72f, 0.72f, 1.0f));
+				}
+				else
+				{
+					material->SetBaseColor(XMFLOAT4(0.66f, 0.55f, 0.42f, 1.0f));
+				}
 				material->CreateRenderData(true);
 			}
 			else
@@ -1037,11 +947,13 @@ namespace openrepublic
 				return false;
 			}
 
-			std::size_t triangleCount = 0;
-			for (const PreviewDrawRange& drawRange : drawRanges)
-				triangleCount += drawRange.indexCount / 3;
+			const std::size_t triangleCount = previewGeometry.renderedTriangleCount;
 			std::string mtlBindingSummary;
-			if (haveMtlBindings)
+			if (unlitDiagnostic)
+			{
+				mtlBindingSummary = "MTL name/color bindings were not evaluated in neutral unlit diagnostic mode";
+			}
+			else if (haveMtlBindings)
 			{
 				mtlBindingSummary = std::to_string(exactMtlMatchCount) +
 					" exact-name MTL matches; " + std::to_string(diffuseColorCount) +
@@ -1058,20 +970,44 @@ namespace openrepublic
 				mtlBindingSummary =
 					"sibling MTL binding was unavailable, so name matches were not checked and referenced entries remain diagnostic";
 			}
+			const std::string normalLengthSummary = previewGeometry.sourceNormalCount == 0
+				? "no source-normal lengths are available"
+				: "source-normal lengths min/mean/max=" +
+					std::to_string(previewGeometry.sourceNormalLengthMinimum) + "/" +
+					std::to_string(previewGeometry.sourceNormalLengthMean) + "/" +
+					std::to_string(previewGeometry.sourceNormalLengthMaximum);
+			const std::string uvSummary = unlitDiagnostic
+				? "UV stream aggregation was bypassed in neutral unlit diagnostic mode. "
+				: "Aligned preview UV vertex counts: set 0=" +
+					std::to_string(textureCoordinates.textureCoordinates0.size()) +
+					", set 1=" + std::to_string(textureCoordinates.textureCoordinates1.size()) + ". ";
+			const std::string materialAdapterSummary = unlitDiagnostic
+				? "MTL material parsing and diffuse-to-PBR adaptation were bypassed; no material compatibility claim is made. "
+				: "The Wicked base-color mapping is approximate and does not establish source color-space, alpha, lighting, or shader parity. ";
 			description = "Bounded static NMF geometry preview: " +
 				std::to_string(geometry.objects.size()) + " objects (one LOD each), " +
 				std::to_string(vertexCount) + " vertices, " +
 				std::to_string(triangleCount) + " rendered triangles in " +
-				std::to_string(drawRanges.size()) + " index-range groups. Geometry is uniformly normalized to a 10-unit display span at x=8; " +
+				std::to_string(drawRanges.size()) + " index-range groups. Geometry is uniformly normalized to a 10-unit display span at x=8. " +
+				"Source position extents X/Y/Z=" +
+				std::to_string(static_cast<double>(previewGeometry.sourceMaximum.x) - previewGeometry.sourceMinimum.x) + "/" +
+				std::to_string(static_cast<double>(previewGeometry.sourceMaximum.y) - previewGeometry.sourceMinimum.y) + "/" +
+				std::to_string(static_cast<double>(previewGeometry.sourceMaximum.z) - previewGeometry.sourceMinimum.z) +
+				"; exact-zero-area rendered triangles=" +
+				std::to_string(previewGeometry.zeroAreaTriangleCount) + "; " + normalLengthSummary +
+				". These are structural diagnostics, not source-convention or fidelity checks. " +
 				std::to_string(mappedSubmaterialCount) + " referenced submaterial-table entries, " +
 				mtlBindingSummary + ". " +
-				mtlStatus + ". Textures are not loaded; their slot and path semantics remain unsupported. " +
-				"Build 23935965 labels flag 0x8 _NRM FLOAT3 and flags 0x100/0x200 _TC0/_TC1 eight-byte streams; interpreting each pair as FLOAT2 and assigning Wicked UV sets 0/1 is an inferred preview adapter, while MTL texture-slot use remains unknown. " +
-				"Aligned preview UV vertex counts: set 0=" + std::to_string(textureCoordinates.textureCoordinates0.size()) +
-				", set 1=" + std::to_string(textureCoordinates.textureCoordinates1.size()) + ". " +
-				std::to_string(sourceNormalCount) + " source normals are preserved as-is and other vertices use Wicked smooth-normal fallback. " +
+				mtlStatus + ". " +
+				(unlitDiagnostic ? std::string() : "Textures are not loaded; their slot and path semantics remain unsupported. ") +
+				(unlitDiagnostic ? std::string() :
+					"Build 23935965 labels flag 0x8 _NRM FLOAT3 and flags 0x100/0x200 _TC0/_TC1 eight-byte streams; interpreting each pair as FLOAT2 and assigning Wicked UV sets 0/1 is an inferred preview adapter, while MTL texture-slot use remains unknown. ") +
+				uvSummary +
+				(unlitDiagnostic
+					? std::to_string(sourceNormalCount) + " source normals are present but bypassed in neutral unlit diagnostic mode; MTL colors and UV streams are also bypassed. Common fog and post-processing may still affect the output. "
+					: std::to_string(sourceNormalCount) + " source normals are preserved as-is and other vertices use Wicked smooth-normal fallback. ") +
 				"This does not apply the original loader's optional coordinate-reflection mode or establish shading parity. " +
-				"The Wicked base-color mapping is approximate and does not establish source color-space, alpha, lighting, or shader parity. " +
+				materialAdapterSummary +
 				"Auxiliary subset indices are retained but not rendered. " +
 				(ignoredSubsetIndexCount == 0 ? std::string() :
 					std::to_string(ignoredSubsetIndexCount) + " trailing subset indices are ignored by the observed indexCount/3 draw rule. ") +
@@ -1152,6 +1088,11 @@ namespace openrepublic
 		nmfProbePath = std::move(path);
 	}
 
+	void OpenRepublicApplication::SetNmfUnlitPreview(bool enabled)
+	{
+		nmfUnlitPreview = enabled;
+	}
+
 	void OpenRepublicApplication::SetNmfCapturePaths(std::vector<std::filesystem::path> paths)
 	{
 		nmfCaptureMode = !paths.empty();
@@ -1176,8 +1117,12 @@ namespace openrepublic
 		const bool capturePreview = !nmfCapturePaths.empty();
 		bool terrainPreviewLoaded = false;
 		bool nmfPreviewLoaded = false;
-		XMFLOAT3 nmfPreviewCameraTarget(kNmfPreviewCenterX, kMaxNmfPreviewDisplaySpan * 0.5f, 0.0f);
-		float nmfPreviewCameraDistance = static_cast<float>(kMaxNmfPreviewDisplaySpan * 1.65);
+		XMFLOAT3 nmfPreviewCameraTarget(
+			static_cast<float>(openrepublic::content::NmfPreviewCenterX),
+			static_cast<float>(openrepublic::content::NmfPreviewDisplaySpan * 0.5), 0.0f);
+		float nmfPreviewCameraDistance = static_cast<float>(
+			openrepublic::content::NmfPreviewDisplaySpan *
+			openrepublic::content::NmfPreviewCameraDistanceFactor);
 
 		#ifdef OPENREPUBLIC_WITH_LUA_RULES
 		{
@@ -1394,7 +1339,7 @@ namespace openrepublic
 				std::string description;
 				std::string error;
 				if (CreateNmfStaticPreview(previewWorld, nmfProbePath, meshEntity,
-					nmfPreviewCameraTarget, nmfPreviewCameraDistance, description, error))
+					nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfUnlitPreview, description, error))
 				{
 					nmfPreviewLoaded = true;
 					uiNotice = description;
@@ -1426,6 +1371,12 @@ namespace openrepublic
 
 		if (capturePreview && nmfPreviewLoaded)
 		{
+			if (nmfUnlitPreview)
+			{
+				// Use Wicked's existing global diagnostic to bypass lighting without
+				// selecting a separate material shader permutation.
+				wi::renderer::SetForceUnlit(true);
+			}
 			renderPath = std::make_unique<NmfPreviewCaptureRenderPath>(std::move(nmfCapturePaths),
 				nmfPreviewCameraTarget, nmfPreviewCameraDistance);
 		}

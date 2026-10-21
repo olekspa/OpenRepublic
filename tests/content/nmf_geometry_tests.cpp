@@ -1,4 +1,5 @@
 #include "openrepublic/content/nmf_geometry.h"
+#include "openrepublic/content/nmf_preview_geometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -604,6 +605,126 @@ void TestAllAuxiliaryBranchesAndTruncation() {
     ExpectFailure(std::move(short24ByteFace), "truncated second per-triangle auxiliary array");
 }
 
+void TestNmfPreviewGeometryNormalizationAndSourceOrder() {
+    NmfStaticGeometry geometry;
+    geometry.submaterialIdentifiers = {"preview-material"};
+    NmfStaticObject object;
+    object.lod.positions = {{-2, 2, 4}, {2, 2, 4}, {-2, 6, 4}};
+    object.lod.vertexNormals = {{0.25f, -0.5f, 0.75f}, {0, 1, 0}, {-1, 0, 0}};
+    object.lod.indices = {0, 2, 1};
+    object.lod.subsets = {{0, 3, 0, 0, {}}};
+    geometry.objects.push_back(object);
+
+    NmfPreviewGeometry preview;
+    std::string error;
+    Check(BuildNmfPreviewGeometry(geometry, preview, &error),
+          "bounded NMF preview geometry is built: " + error);
+    if (preview.positions.size() != 3)
+        return;
+
+    Check(preview.positions[0].x == 3 && preview.positions[0].y == 0 && preview.positions[0].z == 0 &&
+              preview.positions[1].x == 13 && preview.positions[1].y == 0 && preview.positions[1].z == 0 &&
+              preview.positions[2].x == 3 && preview.positions[2].y == 10 && preview.positions[2].z == 0,
+          "positive uniform scale preserves axes while centering X/Z and moving minimum Y to zero");
+    Check(preview.displayScale == 2.5 && preview.cameraTarget.x == 8 &&
+              preview.cameraTarget.y == 5 && preview.cameraTarget.z == 0 &&
+              preview.cameraDistance == 16.5f,
+          "preview scale and framing metadata are derived from vertex extents");
+    Check(preview.indices == std::vector<std::uint32_t>{0, 2, 1},
+          "flattening preserves the original triangle index order");
+    Check(preview.drawRanges.size() == 1 && preview.drawRanges[0].indexOffset == 0 &&
+              preview.drawRanges[0].indexCount == 3 && preview.drawRanges[0].submaterialIndex == 0,
+          "subset draw range and submaterial index are preserved");
+    Check(preview.sourceNormals.size() == 3 && preview.sourceNormalMask ==
+              std::vector<std::uint8_t>{1, 1, 1} && preview.sourceNormals[0].x == 0.25f &&
+              preview.sourceNormals[0].y == -0.5f && preview.sourceNormals[0].z == 0.75f,
+          "source normals are retained without normalization or reflection");
+    Check(preview.sourceMinimum.x == -2 && preview.sourceMinimum.y == 2 &&
+              preview.sourceMinimum.z == 4 && preview.sourceMaximum.x == 2 &&
+              preview.sourceMaximum.y == 6 && preview.sourceMaximum.z == 4,
+          "source-position extents are recorded independently of stored object bounds");
+}
+
+void TestNmfPreviewGeometryRebasesObjectsAndPreservesSubsetOffsets() {
+    NmfStaticGeometry geometry;
+    geometry.submaterialIdentifiers = {"material-a", "material-b"};
+    NmfStaticObject first;
+    first.lod.positions = {{-1, 0, 0}, {1, 0, 0}, {-1, 1, 0}};
+    first.lod.vertexNormals = {{0.1f, 0.2f, 0.3f}, {0.4f, 0.5f, 0.6f}, {0.7f, 0.8f, 0.9f}};
+    first.lod.indices = {2, 1, 0, 0, 1, 2, 1, 0, 2};
+    first.lod.subsets = {{0, 4, 0, 0, {}}, {4, 5, 1, 0, {}}};
+    NmfStaticObject second;
+    second.lod.positions = {{10, 0, 0}, {10, 2, 0}, {11, 0, 0}};
+    second.lod.indices = {2, 0, 1};
+    geometry.objects = {first, second};
+
+    NmfPreviewGeometry preview;
+    std::string error;
+    Check(BuildNmfPreviewGeometry(geometry, preview, &error),
+          "multi-object preview geometry is built: " + error);
+    Check(preview.indices == std::vector<std::uint32_t>{2, 1, 0, 0, 1, 2, 1, 0, 2, 5, 3, 4},
+          "second object's indices are rebased while both objects retain index order");
+    Check(preview.drawRanges.size() == 3 &&
+              preview.drawRanges[0].indexOffset == 0 && preview.drawRanges[0].indexCount == 3 &&
+              preview.drawRanges[0].submaterialIndex == 0 &&
+              preview.drawRanges[1].indexOffset == 4 && preview.drawRanges[1].indexCount == 3 &&
+              preview.drawRanges[1].submaterialIndex == 1 &&
+              preview.drawRanges[2].indexOffset == 9 && preview.drawRanges[2].indexCount == 3 &&
+              preview.drawRanges[2].submaterialIndex == NoNmfPreviewSubmaterialIndex,
+          "subset offsets stay relative to the flattened index stream and tails are omitted per draw");
+    Check(preview.ignoredSubsetIndexCount == 3 && preview.renderedTriangleCount == 3,
+          "trailing per-subset indices and rendered triangles are counted explicitly");
+    Check(preview.sourceNormalMask == std::vector<std::uint8_t>{1, 1, 1, 0, 0, 0} &&
+              preview.sourceNormals[0].x == 0.1f && preview.sourceNormals[2].z == 0.9f &&
+              preview.sourceNormals[3].x == 0 && preview.sourceNormals[5].z == 0,
+          "mixed source-normal presence remains aligned across object rebasing for renderer fallback");
+}
+
+void TestNmfPreviewGeometryStructuralDiagnosticsAndTransactionalFailures() {
+    NmfStaticGeometry degenerate;
+    NmfStaticObject line;
+    line.lod.positions = {{-1, 0, 0}, {0, 0, 0}, {1, 0, 0}};
+    line.lod.vertexNormals = {{1, 0, 0}, {2, 0, 0}, {3, 0, 0}};
+    line.lod.indices = {0, 1, 2};
+    degenerate.objects.push_back(line);
+    NmfPreviewGeometry preview;
+    std::string error;
+    Check(BuildNmfPreviewGeometry(degenerate, preview, &error),
+          "diagnostic preview geometry is built: " + error);
+    Check(preview.zeroAreaTriangleCount == 1 && preview.renderedTriangleCount == 1,
+          "exact zero-area rendered triangles are reported without changing the draw list");
+    Check(preview.sourceNormalCount == 3 && preview.sourceNormalLengthMinimum == 1 &&
+              preview.sourceNormalLengthMean == 2 && preview.sourceNormalLengthMaximum == 3,
+          "source-normal magnitude min/mean/max are reported without imposing a unit-length rule");
+
+    NmfPreviewGeometry unchanged;
+    unchanged.positions = {{42, 43, 44}};
+    unchanged.indices = {7, 8, 9};
+    unchanged.sourceNormalCount = 123;
+    NmfStaticGeometry badIndex = degenerate;
+    badIndex.objects[0].lod.indices[2] = 3;
+    error.clear();
+    Check(!BuildNmfPreviewGeometry(badIndex, unchanged, &error) && !error.empty(),
+          "invalid flattened index is rejected");
+    Check(unchanged.positions.size() == 1 && unchanged.positions[0].x == 42 &&
+              unchanged.indices == std::vector<std::uint32_t>{7, 8, 9} &&
+              unchanged.sourceNormalCount == 123,
+          "failed preview conversion leaves caller output unchanged");
+
+    NmfStaticGeometry badRange = degenerate;
+    badRange.submaterialIdentifiers = {"material"};
+    badRange.objects[0].lod.subsets = {{1, 3, 0, 0, {}}};
+    error.clear();
+    Check(!BuildNmfPreviewGeometry(badRange, unchanged, &error) && !error.empty(),
+          "subset range outside the source index stream is rejected");
+
+    NmfStaticGeometry nonFinite = degenerate;
+    nonFinite.objects[0].lod.positions[1].y = std::numeric_limits<float>::quiet_NaN();
+    error.clear();
+    Check(!BuildNmfPreviewGeometry(nonFinite, unchanged, &error) && !error.empty(),
+          "non-finite constructed geometry is rejected before rendering");
+}
+
 void TestMalformedInputs() {
     ExpectFailure(std::string(19, '\0'), "short header");
     auto excessiveObjects = Fixture({ObjectSpec{}});
@@ -670,6 +791,9 @@ int main() {
     TestCombinedTextureCoordinateStreamsStayVertexAligned();
     TestBuildScopedNonStreamBitsDoNotAdvanceTheStream();
     TestAllAuxiliaryBranchesAndTruncation();
+    TestNmfPreviewGeometryNormalizationAndSourceOrder();
+    TestNmfPreviewGeometryRebasesObjectsAndPreservesSubsetOffsets();
+    TestNmfPreviewGeometryStructuralDiagnosticsAndTransactionalFailures();
     TestMalformedInputs();
     if (failures) {
         std::cerr << failures << " NMF geometry test(s) failed\n";
