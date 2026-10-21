@@ -142,6 +142,7 @@ std::string ApiError(agent_api::ErrorCode error) {
     case ErrorCode::UnknownCommand: return "unknown_command";
     case ErrorCode::CommandNotCompleted: return "command_not_completed";
     case ErrorCode::CommandTrackingFull: return "command_tracking_full";
+    case ErrorCode::CommandIdExhausted: return "command_id_exhausted";
     case ErrorCode::StepLimitExceeded: return "step_limit_exceeded";
     case ErrorCode::InvalidEntityPageLimit: return "invalid_entity_page_limit";
     case ErrorCode::InvalidEventPageLimit: return "invalid_event_page_limit";
@@ -203,6 +204,7 @@ std::string ActionName(agent_api::Action action) {
     case Action::AssignTransportPlan: return "assign_transport_plan";
     case Action::QueryEntityPage: return "query_entity_page";
     case Action::ReadEvents: return "read_events";
+    case Action::ConfigureSimulation: return "configure_simulation";
     }
     return "unknown";
 }
@@ -214,6 +216,8 @@ std::string EventTypeName(agent_api::EventType type) {
     case EventType::CommandApplied: return "command_applied";
     case EventType::CommandRejected: return "command_rejected";
     case EventType::SimulationAdvanced: return "simulation_advanced";
+    case EventType::SimulationConfigured: return "simulation_configured";
+    case EventType::WorldLoaded: return "world_loaded";
     }
     return "unknown";
 }
@@ -300,6 +304,29 @@ Json ApiResult(const Json& id, Json result) {
 }
 
 std::string RoleName(Role role) { return role == Role::Controller ? "controller" : "observer"; }
+
+Json MethodCapabilities() {
+    const Json allRoles = Json::array({"observer", "controller"});
+    const Json controllerRoles = Json::array({"controller"});
+    Json methods = Json::array();
+    const auto add = [&methods, &allRoles, &controllerRoles](const char* name, bool controllerOnly = false) {
+        methods.push_back(Json{{"name", name}, {"roles", controllerOnly ? controllerRoles : allRoles}});
+    };
+
+    add("hello");
+    add("capabilities");
+    add("world");
+    add("entity_page");
+    add("events");
+    add("step", true);
+    add("place_facility", true);
+    add("place_storage", true);
+    add("add_road_segment", true);
+    add("assign_transport_plan", true);
+    add("command_result");
+    add("acknowledge", true);
+    return methods;
+}
 
 bool ValidProtocolEnvelope(const Json& request, Json& id, std::string& method,
     std::string& code, std::string& message) {
@@ -468,7 +495,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         Json actions = Json::array();
         for (const auto action : api_.DiscoverCapabilities().actions) actions.push_back(ActionName(action));
         result = Json{{"protocolVersion", ProtocolVersion}, {"agentApiVersion", agent_api::ApiVersion},
-            {"role", RoleName(role_)}, {"actions", std::move(actions)},
+            {"role", RoleName(role_)}, {"actions", std::move(actions)}, {"methods", MethodCapabilities()},
             {"limits", Json{{"maxRequestLineBytes", MaxRequestLineBytes},
                 {"maxRequestsPerProcess", MaxRequestsPerProcess}, {"maxJsonNesting", MaxJsonNesting},
                 {"maxJsonNodes", MaxJsonNodes},
@@ -480,7 +507,8 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         if (!CheckFields(request, {}, fieldError)) return invalid(std::move(fieldError));
         Json actions = Json::array();
         for (const auto action : api_.DiscoverCapabilities().actions) actions.push_back(ActionName(action));
-        result = Json{{"apiVersion", agent_api::ApiVersion}, {"actions", std::move(actions)}};
+        result = Json{{"apiVersion", agent_api::ApiVersion}, {"actions", std::move(actions)},
+            {"methods", MethodCapabilities()}};
     } else if (method == "world") {
         if (!CheckFields(request, {}, fieldError)) return invalid(std::move(fieldError));
         const auto query = api_.QueryWorld();

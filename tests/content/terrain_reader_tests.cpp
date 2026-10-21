@@ -2,6 +2,7 @@
 #include "openrepublic/content/terrain_preview.h"
 
 #include <cstdint>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -213,7 +214,7 @@ void TestTerrainSampling() {
     transform.sizeX = 20.0;
     transform.sizeZ = 10.0;
     transform.heightScale = 2.0;
-    transform.rowOrder = RasterRowOrder::FirstRowAtMinZ;
+    transform.orientation = RasterOrientation::Identity;
     double output = -777.0;
     std::string error;
     Check(SampleTerrainHeight(ramp, transform, 0.0, 22.5, output, &error),
@@ -221,7 +222,7 @@ void TestTerrainSampling() {
     Check(output == 75.0, "interior bilinear sample applies caller base and height scale");
     Check(error.empty(), "terrain sample success clears diagnostic");
 
-    transform.rowOrder = RasterRowOrder::FirstRowAtMaxZ;
+    transform.orientation = RasterOrientation::FlipZ;
     Check(SampleTerrainHeight(ramp, transform, 0.0, 22.5, output, &error),
           "opposite raster row orientation succeeds");
     Check(output == 175.0, "caller-selected row orientation reverses Z interpolation");
@@ -235,7 +236,7 @@ void TestTerrainSampling() {
     fractional.sizeX = 1.0;
     fractional.sizeZ = 1.0;
     fractional.heightScale = 1.0;
-    fractional.rowOrder = RasterRowOrder::FirstRowAtMinZ;
+    fractional.orientation = RasterOrientation::Identity;
     Check(SampleTerrainHeight(Heightmap{2, 2, {0.0f, 10.0f, 20.0f, 50.0f}}, fractional,
                               0.25, 0.75, output, &error) && output == 21.25,
           "fractional X and Z interpolation both contribute to bilinear result");
@@ -246,7 +247,7 @@ void TestTerrainSampling() {
     nonBinaryEdge.sizeX = 0.2;
     nonBinaryEdge.sizeZ = 0.2;
     nonBinaryEdge.heightScale = 1.0;
-    nonBinaryEdge.rowOrder = RasterRowOrder::FirstRowAtMaxZ;
+    nonBinaryEdge.orientation = RasterOrientation::FlipZ;
     const double maxEdgeX = nonBinaryEdge.originX + nonBinaryEdge.sizeX;
     const double maxEdgeZ = nonBinaryEdge.originZ + nonBinaryEdge.sizeZ;
     Check(SampleTerrainHeight(ramp, nonBinaryEdge, maxEdgeX, maxEdgeZ, output, &error) && output == 20.0,
@@ -288,7 +289,7 @@ void TestTerrainSampling() {
     expectFailure(Heightmap{1, 1, {std::numeric_limits<float>::max()}}, invalid,
                   0.0, 25.0, "height result overflow");
     invalid = transform;
-    invalid.rowOrder = static_cast<RasterRowOrder>(99);
+    invalid.orientation = static_cast<RasterOrientation>(99);
     expectFailure(ramp, invalid, 0.0, 25.0, "unknown row orientation");
     expectFailure(Heightmap{3, 2, {1.0f}}, transform, 0.0, 25.0,
                   "sample count inconsistent with raster dimensions");
@@ -304,6 +305,43 @@ void TestTerrainSampling() {
     flat.baseHeight = -12.5;
     Check(SampleTerrainHeight(Heightmap{1, 1, {99.0f}}, flat, 0.0, 25.0, output, &error) &&
           output == -12.5, "single-cell raster with zero height scale yields flat terrain");
+
+    const std::array<RasterOrientation, 8> orientations = {
+        RasterOrientation::Identity,
+        RasterOrientation::FlipX,
+        RasterOrientation::FlipZ,
+        RasterOrientation::Rotate180,
+        RasterOrientation::Transpose,
+        RasterOrientation::TransposeFlipX,
+        RasterOrientation::TransposeFlipZ,
+        RasterOrientation::TransposeRotate180,
+    };
+    const std::array<std::array<double, 4>, 8> expectedCorners = {{
+        {{0.0, 2.0, 3.0, 5.0}},
+        {{2.0, 0.0, 5.0, 3.0}},
+        {{3.0, 5.0, 0.0, 2.0}},
+        {{5.0, 3.0, 2.0, 0.0}},
+        {{0.0, 3.0, 2.0, 5.0}},
+        {{3.0, 0.0, 5.0, 2.0}},
+        {{2.0, 5.0, 0.0, 3.0}},
+        {{5.0, 2.0, 3.0, 0.0}},
+    }};
+    const Heightmap asymmetric{3, 2, {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f}};
+    TerrainTransform orientationTransform;
+    orientationTransform.sizeX = 1.0;
+    orientationTransform.sizeZ = 1.0;
+    orientationTransform.heightScale = 1.0;
+    for (std::size_t i = 0; i < orientations.size(); ++i) {
+        orientationTransform.orientation = orientations[i];
+        Check(RasterOrientationSwapsAxes(orientations[i]) == (i >= 4),
+              "orientation classification identifies raster-axis swaps");
+        const bool cornersMatch =
+            SampleTerrainHeight(asymmetric, orientationTransform, 0.0, 0.0, output, &error) && output == expectedCorners[i][0] &&
+            SampleTerrainHeight(asymmetric, orientationTransform, 1.0, 0.0, output, &error) && output == expectedCorners[i][1] &&
+            SampleTerrainHeight(asymmetric, orientationTransform, 0.0, 1.0, output, &error) && output == expectedCorners[i][2] &&
+            SampleTerrainHeight(asymmetric, orientationTransform, 1.0, 1.0, output, &error) && output == expectedCorners[i][3];
+        Check(cornersMatch, "caller-selected raster orientation maps asymmetric rectangular corners");
+    }
 }
 
 void TestTerrainPreviewGrid() {
@@ -315,7 +353,7 @@ void TestTerrainPreviewGrid() {
     transform.sizeX = 20.0;
     transform.sizeZ = 10.0;
     transform.heightScale = 2.0;
-    transform.rowOrder = RasterRowOrder::FirstRowAtMinZ;
+    transform.orientation = RasterOrientation::Identity;
 
     TerrainPreviewGrid preview;
     std::string error = "stale error";
@@ -324,6 +362,9 @@ void TestTerrainPreviewGrid() {
     Check(error.empty(), "preview success clears diagnostic");
     Check(preview.width == 5 && preview.height == 3 && preview.heights.size() == 15,
           "preview reports dimensions and row-major sample count");
+    Check(preview.worldXCoordinates == std::vector<double>({-10.0, -5.0, 0.0, 5.0, 10.0}) &&
+          preview.worldZCoordinates == std::vector<double>({20.0, 25.0, 30.0}),
+          "preview retains explicit ascending caller world coordinates including nonzero-origin endpoints");
     Check(preview.heights == std::vector<float>({5.0f, 15.0f, 25.0f, 35.0f, 45.0f,
                                                   105.0f, 115.0f, 125.0f, 135.0f, 145.0f,
                                                   205.0f, 215.0f, 225.0f, 235.0f, 245.0f}),
@@ -331,7 +372,7 @@ void TestTerrainPreviewGrid() {
     Check(preview.minHeight == 5.0f && preview.maxHeight == 245.0f,
           "preview reports sampled height range");
 
-    transform.rowOrder = RasterRowOrder::FirstRowAtMaxZ;
+    transform.orientation = RasterOrientation::FlipZ;
     Check(BuildTerrainPreviewGrid(ramp, transform, 5, 3, preview, &error),
           "preview supports caller-selected reversed source row order");
     Check(preview.heights == std::vector<float>({205.0f, 215.0f, 225.0f, 235.0f, 245.0f,
@@ -349,7 +390,9 @@ void TestTerrainPreviewGrid() {
         Check(!BuildTerrainPreviewGrid(map, xform, width, height, preview, &error) && !error.empty(),
               label + " rejected with diagnostic");
         Check(preview.width == beforeFailure.width && preview.height == beforeFailure.height &&
-              preview.heights == beforeFailure.heights && preview.minHeight == beforeFailure.minHeight &&
+              preview.worldXCoordinates == beforeFailure.worldXCoordinates &&
+              preview.worldZCoordinates == beforeFailure.worldZCoordinates && preview.heights == beforeFailure.heights &&
+              preview.minHeight == beforeFailure.minHeight &&
               preview.maxHeight == beforeFailure.maxHeight,
               label + " leaves existing output unchanged");
     };

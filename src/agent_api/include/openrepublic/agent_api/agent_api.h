@@ -6,6 +6,10 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace openrepublic::agent_api {
@@ -32,7 +36,8 @@ enum class Action : std::uint8_t {
     ConstructStorage = 5,
     AssignTransportPlan = 6,
     QueryEntityPage = 7,
-    ReadEvents = 8
+    ReadEvents = 8,
+    ConfigureSimulation = 9
 };
 
 struct Permissions {
@@ -40,6 +45,7 @@ struct Permissions {
     bool stepSimulation{false};
     bool construct{false};
     bool assignTransport{false};
+    bool configureSimulation{false};
 };
 
 struct Capabilities {
@@ -77,6 +83,7 @@ enum class ErrorCode : std::uint8_t {
     UnknownCommand,
     CommandNotCompleted,
     CommandTrackingFull,
+    CommandIdExhausted,
     StepLimitExceeded,
     InvalidEntityPageLimit,
     InvalidEventPageLimit,
@@ -100,6 +107,18 @@ struct WorldQuery {
     WorldView world;
 };
 
+// Full read-only simulation snapshot for in-process clients such as the UI.
+// External adapters should prefer the bounded, stable WorldView and page APIs.
+struct SnapshotQuery {
+    ErrorCode error{ErrorCode::None};
+    sim::Snapshot snapshot;
+};
+
+struct SaveQuery {
+    ErrorCode error{ErrorCode::None};
+    std::string data;
+};
+
 struct EntityPage {
     std::uint32_t apiVersion{ApiVersion};
     std::uint64_t revision{};
@@ -118,7 +137,9 @@ enum class EventType : std::uint8_t {
     CommandSubmitted = 1,
     CommandApplied,
     CommandRejected,
-    SimulationAdvanced
+    SimulationAdvanced,
+    SimulationConfigured,
+    WorldLoaded
 };
 
 struct AgentEvent {
@@ -167,10 +188,19 @@ struct CommandResult {
 class AgentApi final {
 public:
     explicit AgentApi(Permissions permissions = {});
-    AgentApi(sim::Simulation simulation, Permissions permissions = {});
+    explicit AgentApi(sim::Simulation& simulation, Permissions permissions = {});
+    AgentApi(sim::Simulation&& simulation, Permissions permissions = {});
+    AgentApi(const AgentApi&) = delete;
+    AgentApi& operator=(const AgentApi&) = delete;
+    AgentApi(AgentApi&&) = delete;
+    AgentApi& operator=(AgentApi&&) = delete;
 
     Capabilities DiscoverCapabilities() const;
     WorldQuery QueryWorld() const;
+    SnapshotQuery QuerySnapshot() const;
+    SaveQuery SaveWorld() const;
+    ErrorCode LoadWorld(std::uint64_t expectedRevision, std::string_view data,
+        std::string* error = nullptr);
     EntityPageQuery QueryEntityPage(std::uint64_t expectedRevision, std::size_t offset,
         std::size_t limit) const;
     EventPageQuery ReadEvents(std::uint64_t afterSequence, std::size_t limit) const;
@@ -185,8 +215,16 @@ public:
     Submission PlaceStorage(std::uint64_t expectedRevision, std::int32_t gridX,
         std::int32_t gridZ);
     Submission AssignTransportPlan(std::uint64_t expectedRevision, const sim::TruckPlan& plan);
+    ErrorCode SetRoadEnabled(std::uint64_t expectedRevision, sim::EntityId edgeId, bool enabled);
+    ErrorCode SetSimulationRules(std::uint64_t expectedRevision, const sim::SimulationRules& rules,
+        std::string* error = nullptr);
 
     CommandResult GetCommandResult(std::uint64_t commandId) const;
+    // Maps a simulation-internal command ID to its opaque API handle for
+    // trusted in-process presentation code. Loaded queue entries can have no
+    // API handle because loading clears tracking from the replaced timeline.
+    std::optional<std::uint64_t> LookupApiCommandHandleForSimulationCommand(
+        std::uint64_t simulationCommandId) const;
     // Releases a completed result and its tracked memory. Queued commands
     // cannot be acknowledged until execution finishes.
     ErrorCode AcknowledgeCommandResult(std::uint64_t commandId);
@@ -194,6 +232,7 @@ public:
 private:
     struct TrackedCommand {
         CommandResult result;
+        std::uint64_t simulationCommandId{};
         bool completed{};
     };
 
@@ -206,10 +245,13 @@ private:
         sim::ConstructionFailureReason failureReason = sim::ConstructionFailureReason::None,
         std::uint64_t stepTicks = 0);
 
-    sim::Simulation simulation_;
+    std::unique_ptr<sim::Simulation> ownedSimulation_;
+    sim::Simulation* simulation_{};
     Permissions permissions_;
     std::map<std::uint64_t, TrackedCommand> commands_;
+    std::map<std::uint64_t, std::uint64_t> simulationCommandToApiCommand_;
     std::deque<AgentEvent> eventJournal_;
+    std::uint64_t nextCommandHandle_{1};
     std::uint64_t lastEventSequence_{};
 };
 

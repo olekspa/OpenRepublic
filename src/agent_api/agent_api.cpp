@@ -14,12 +14,19 @@ bool InBounds(std::int32_t x, std::int32_t z) {
 }
 
 AgentApi::AgentApi(Permissions permissions)
-    : simulation_(sim::Simulation::CreateSyntheticDemo()), permissions_(permissions) {
+    : ownedSimulation_(std::make_unique<sim::Simulation>(sim::Simulation::CreateSyntheticDemo())),
+      simulation_(ownedSimulation_.get()), permissions_(permissions) {
     CollectCompletedCommands();
 }
 
-AgentApi::AgentApi(sim::Simulation simulation, Permissions permissions)
-    : simulation_(std::move(simulation)), permissions_(permissions) {
+AgentApi::AgentApi(sim::Simulation& simulation, Permissions permissions)
+    : simulation_(&simulation), permissions_(permissions) {
+    CollectCompletedCommands();
+}
+
+AgentApi::AgentApi(sim::Simulation&& simulation, Permissions permissions)
+    : ownedSimulation_(std::make_unique<sim::Simulation>(std::move(simulation))),
+      simulation_(ownedSimulation_.get()), permissions_(permissions) {
     CollectCompletedCommands();
 }
 
@@ -31,6 +38,7 @@ Capabilities AgentApi::DiscoverCapabilities() const {
         out.actions.push_back(Action::ReadEvents);
     }
     if (permissions_.stepSimulation) out.actions.push_back(Action::StepSimulation);
+    if (permissions_.configureSimulation) out.actions.push_back(Action::ConfigureSimulation);
     if (permissions_.construct) {
         out.actions.push_back(Action::ConstructFacility);
         out.actions.push_back(Action::ConstructRoad);
@@ -47,7 +55,7 @@ WorldQuery AgentApi::QueryWorld() const {
         return query;
     }
 
-    const auto snapshot = simulation_.GetSnapshot();
+    const auto snapshot = simulation_->GetSnapshot();
     auto& out = query.world;
     out.revision = snapshot.stateRevision;
     out.tick = snapshot.tick;
@@ -73,6 +81,46 @@ WorldQuery AgentApi::QueryWorld() const {
     return query;
 }
 
+SnapshotQuery AgentApi::QuerySnapshot() const {
+    SnapshotQuery query;
+    if (!permissions_.queryWorld) {
+        query.error = ErrorCode::PermissionDenied;
+        query.snapshot.rules = {0, 0, 0};
+        query.snapshot.truckPlan = {0, 0, 0};
+        return query;
+    }
+    query.snapshot = simulation_->GetSnapshot();
+    return query;
+}
+
+SaveQuery AgentApi::SaveWorld() const {
+    SaveQuery query;
+    if (!permissions_.queryWorld) {
+        query.error = ErrorCode::PermissionDenied;
+        return query;
+    }
+    query.data = simulation_->Save();
+    return query;
+}
+
+ErrorCode AgentApi::LoadWorld(std::uint64_t expectedRevision, std::string_view data,
+    std::string* error) {
+    if (!permissions_.configureSimulation) return ErrorCode::PermissionDenied;
+    if (expectedRevision != simulation_->GetStateRevision()) return ErrorCode::StaleRevision;
+    if (!simulation_->Load(data, error)) return ErrorCode::InvalidArgument;
+
+    // A load can restore command IDs from an earlier timeline. Drop API-side
+    // tracking from the replaced timeline, but preserve the API handle counter
+    // so an old controller handle can never name a command in the loaded world.
+    // Announce the new world before adopting any persisted completed results.
+    commands_.clear();
+    simulationCommandToApiCommand_.clear();
+    eventJournal_.clear();
+    RecordEvent(EventType::WorldLoaded);
+    CollectCompletedCommands();
+    return ErrorCode::None;
+}
+
 EntityPageQuery AgentApi::QueryEntityPage(std::uint64_t expectedRevision,
     std::size_t offset, std::size_t limit) const {
     EntityPageQuery query;
@@ -80,7 +128,7 @@ EntityPageQuery AgentApi::QueryEntityPage(std::uint64_t expectedRevision,
         query.error = ErrorCode::PermissionDenied;
         return query;
     }
-    const auto snapshot = simulation_.GetSnapshot();
+    const auto snapshot = simulation_->GetSnapshot();
     if (expectedRevision != snapshot.stateRevision) {
         query.error = ErrorCode::StaleRevision;
         return query;
@@ -159,6 +207,7 @@ bool AgentApi::HasPermission(Action action) const noexcept {
     case Action::QueryEntityPage:
     case Action::ReadEvents: return permissions_.queryWorld;
     case Action::StepSimulation: return permissions_.stepSimulation;
+    case Action::ConfigureSimulation: return permissions_.configureSimulation;
     case Action::ConstructFacility:
     case Action::ConstructRoad:
     case Action::ConstructStorage: return permissions_.construct;
@@ -169,21 +218,25 @@ bool AgentApi::HasPermission(Action action) const noexcept {
 
 Submission AgentApi::CheckSubmission(Action action, std::uint64_t expectedRevision) const {
     if (!HasPermission(action)) return {ErrorCode::PermissionDenied, 0, CommandState::Unknown};
-    if (expectedRevision != simulation_.GetStateRevision()) return {ErrorCode::StaleRevision, 0, CommandState::Unknown};
+    if (expectedRevision != simulation_->GetStateRevision()) return {ErrorCode::StaleRevision, 0, CommandState::Unknown};
     if (commands_.size() >= MaxTrackedCommands)
         return {ErrorCode::CommandTrackingFull, 0, CommandState::Unknown};
+    if (nextCommandHandle_ == std::numeric_limits<std::uint64_t>::max())
+        return {ErrorCode::CommandIdExhausted, 0, CommandState::Unknown};
     return {ErrorCode::None, 0, CommandState::Unknown};
 }
 
 Submission AgentApi::Track(std::uint64_t commandId, sim::ConstructionCommandType type) {
     if (commandId == 0) return {ErrorCode::QueueFull, 0, CommandState::Unknown};
+    const auto apiCommandId = nextCommandHandle_++;
     CommandResult result;
-    result.commandId = commandId;
+    result.commandId = apiCommandId;
     result.state = CommandState::Queued;
     result.type = type;
-    commands_.emplace(commandId, TrackedCommand{result, false});
-    RecordEvent(EventType::CommandSubmitted, commandId, type);
-    return {ErrorCode::None, commandId, CommandState::Queued};
+    commands_.emplace(apiCommandId, TrackedCommand{result, commandId, false});
+    simulationCommandToApiCommand_.emplace(commandId, apiCommandId);
+    RecordEvent(EventType::CommandSubmitted, apiCommandId, type);
+    return {ErrorCode::None, apiCommandId, CommandState::Queued};
 }
 
 Submission AgentApi::PlaceFacility(std::uint64_t expectedRevision, sim::FacilityType type,
@@ -192,7 +245,7 @@ Submission AgentApi::PlaceFacility(std::uint64_t expectedRevision, sim::Facility
     if (check.error != ErrorCode::None) return check;
     if (!InBounds(gridX, gridZ) || (type != sim::FacilityType::Farm && type != sim::FacilityType::Mill))
         return {ErrorCode::InvalidArgument, 0, CommandState::Unknown};
-    return Track(simulation_.QueueFacilityPlacement(type, gridX, gridZ),
+    return Track(simulation_->QueueFacilityPlacement(type, gridX, gridZ),
         sim::ConstructionCommandType::FacilityPlacement);
 }
 
@@ -208,7 +261,7 @@ Submission AgentApi::AddRoadSegment(std::uint64_t expectedRevision, std::int32_t
     const auto absDz = dz < 0 ? -dz : dz;
     if (absDx + absDz != 1)
         return {ErrorCode::InvalidArgument, 0, CommandState::Unknown};
-    return Track(simulation_.QueueRoadSegment(ax, az, bx, bz),
+    return Track(simulation_->QueueRoadSegment(ax, az, bx, bz),
         sim::ConstructionCommandType::RoadSegment);
 }
 
@@ -217,7 +270,7 @@ Submission AgentApi::PlaceStorage(std::uint64_t expectedRevision, std::int32_t g
     auto check = CheckSubmission(Action::ConstructStorage, expectedRevision);
     if (check.error != ErrorCode::None) return check;
     if (!InBounds(gridX, gridZ)) return {ErrorCode::InvalidArgument, 0, CommandState::Unknown};
-    return Track(simulation_.QueueStoragePlacement(gridX, gridZ),
+    return Track(simulation_->QueueStoragePlacement(gridX, gridZ),
         sim::ConstructionCommandType::StoragePlacement);
 }
 
@@ -226,7 +279,24 @@ Submission AgentApi::AssignTransportPlan(std::uint64_t expectedRevision, const s
     if (check.error != ErrorCode::None) return check;
     if (plan.farmId == 0 || plan.millId == 0 || plan.storageId == 0)
         return {ErrorCode::InvalidArgument, 0, CommandState::Unknown};
-    return Track(simulation_.QueueTruckPlan(plan), sim::ConstructionCommandType::TruckPlan);
+    return Track(simulation_->QueueTruckPlan(plan), sim::ConstructionCommandType::TruckPlan);
+}
+
+ErrorCode AgentApi::SetRoadEnabled(std::uint64_t expectedRevision, sim::EntityId edgeId, bool enabled) {
+    if (!permissions_.configureSimulation) return ErrorCode::PermissionDenied;
+    if (expectedRevision != simulation_->GetStateRevision()) return ErrorCode::StaleRevision;
+    if (!simulation_->SetRoadEnabled(edgeId, enabled)) return ErrorCode::SimulationRejected;
+    RecordEvent(EventType::SimulationConfigured);
+    return ErrorCode::None;
+}
+
+ErrorCode AgentApi::SetSimulationRules(std::uint64_t expectedRevision,
+    const sim::SimulationRules& rules, std::string* error) {
+    if (!permissions_.configureSimulation) return ErrorCode::PermissionDenied;
+    if (expectedRevision != simulation_->GetStateRevision()) return ErrorCode::StaleRevision;
+    if (!simulation_->SetRules(rules, error)) return ErrorCode::InvalidArgument;
+    RecordEvent(EventType::SimulationConfigured);
+    return ErrorCode::None;
 }
 
 ErrorCode AgentApi::Step(std::uint64_t ticks) {
@@ -234,9 +304,9 @@ ErrorCode AgentApi::Step(std::uint64_t ticks) {
     if (ticks > MaxStepTicks) return ErrorCode::StepLimitExceeded;
     if (ticks == 0) return ErrorCode::None;
 
-    auto beforeTick = simulation_.GetSnapshot().tick;
-    simulation_.Step(1);
-    auto afterTick = simulation_.GetSnapshot().tick;
+    auto beforeTick = simulation_->GetSnapshot().tick;
+    simulation_->Step(1);
+    auto afterTick = simulation_->GetSnapshot().tick;
     if (afterTick > beforeTick) {
         RecordEvent(EventType::SimulationAdvanced, 0,
             sim::ConstructionCommandType::FacilityPlacement, sim::ConstructionFailureReason::None,
@@ -245,9 +315,9 @@ ErrorCode AgentApi::Step(std::uint64_t ticks) {
     CollectCompletedCommands();
 
     if (ticks > 1) {
-        beforeTick = simulation_.GetSnapshot().tick;
-        simulation_.Step(ticks - 1);
-        afterTick = simulation_.GetSnapshot().tick;
+        beforeTick = simulation_->GetSnapshot().tick;
+        simulation_->Step(ticks - 1);
+        afterTick = simulation_->GetSnapshot().tick;
         if (afterTick > beforeTick) {
             RecordEvent(EventType::SimulationAdvanced, 0,
                 sim::ConstructionCommandType::FacilityPlacement, sim::ConstructionFailureReason::None,
@@ -259,32 +329,45 @@ ErrorCode AgentApi::Step(std::uint64_t ticks) {
 }
 
 void AgentApi::CollectCompletedCommands() {
-    const auto snapshot = simulation_.GetSnapshot();
+    const auto snapshot = simulation_->GetSnapshot();
     for (const auto& result : snapshot.constructionResults) {
-        auto it = commands_.find(result.commandId);
-        if (it == commands_.end() && permissions_.queryWorld && commands_.size() < MaxTrackedCommands) {
+        auto apiIdIt = simulationCommandToApiCommand_.find(result.commandId);
+        if (apiIdIt == simulationCommandToApiCommand_.end()) {
+            if (!permissions_.queryWorld || commands_.size() >= MaxTrackedCommands ||
+                nextCommandHandle_ == std::numeric_limits<std::uint64_t>::max()) {
+                // Leave the result untouched. A later privileged API instance
+                // can adopt it if the simulation owner retains this world.
+                continue;
+            }
+            const auto apiCommandId = nextCommandHandle_++;
             CommandResult adopted;
-            adopted.commandId = result.commandId;
+            adopted.commandId = apiCommandId;
             adopted.type = result.type;
             adopted.state = result.accepted ? CommandState::Applied : CommandState::Rejected;
             adopted.error = result.accepted ? ErrorCode::None : ErrorCode::SimulationRejected;
             adopted.entityId = result.entityId;
             adopted.failureReason = result.failureReason;
-            it = commands_.emplace(result.commandId, TrackedCommand{adopted, true}).first;
+            commands_.emplace(apiCommandId, TrackedCommand{adopted, result.commandId, true});
+            simulationCommandToApiCommand_.emplace(result.commandId, apiCommandId);
             RecordEvent(result.accepted ? EventType::CommandApplied : EventType::CommandRejected,
-                result.commandId, result.type, result.failureReason);
-        } else if (it != commands_.end() && !it->second.completed) {
-            auto& tracked = it->second;
-            tracked.completed = true;
-            tracked.result.state = result.accepted ? CommandState::Applied : CommandState::Rejected;
-            tracked.result.error = result.accepted ? ErrorCode::None : ErrorCode::SimulationRejected;
-            tracked.result.entityId = result.entityId;
-            tracked.result.failureReason = result.failureReason;
-            RecordEvent(result.accepted ? EventType::CommandApplied : EventType::CommandRejected,
-                result.commandId, result.type, result.failureReason);
+                apiCommandId, result.type, result.failureReason);
+        } else {
+            auto it = commands_.find(apiIdIt->second);
+            // Do not consume a simulation result if API tracking is inconsistent.
+            if (it == commands_.end()) continue;
+            if (!it->second.completed) {
+                auto& tracked = it->second;
+                tracked.completed = true;
+                tracked.result.state = result.accepted ? CommandState::Applied : CommandState::Rejected;
+                tracked.result.error = result.accepted ? ErrorCode::None : ErrorCode::SimulationRejected;
+                tracked.result.entityId = result.entityId;
+                tracked.result.failureReason = result.failureReason;
+                RecordEvent(result.accepted ? EventType::CommandApplied : EventType::CommandRejected,
+                    tracked.result.commandId, result.type, result.failureReason);
+            }
         }
         // Never consume a result until it is queryable through the API.
-        if (it != commands_.end()) simulation_.AcknowledgeConstructionResult(result.commandId);
+        simulation_->AcknowledgeConstructionResult(result.commandId);
     }
 }
 
@@ -292,7 +375,7 @@ void AgentApi::RecordEvent(EventType type, std::uint64_t commandId,
     sim::ConstructionCommandType commandType, sim::ConstructionFailureReason failureReason,
     std::uint64_t stepTicks) {
     if (lastEventSequence_ == std::numeric_limits<std::uint64_t>::max()) return;
-    const auto snapshot = simulation_.GetSnapshot();
+    const auto snapshot = simulation_->GetSnapshot();
     AgentEvent event;
     event.sequence = ++lastEventSequence_;
     event.type = type;
@@ -317,10 +400,19 @@ CommandResult AgentApi::GetCommandResult(std::uint64_t commandId) const {
     return it->second.result;
 }
 
+std::optional<std::uint64_t> AgentApi::LookupApiCommandHandleForSimulationCommand(
+    std::uint64_t simulationCommandId) const {
+    if (!permissions_.queryWorld) return std::nullopt;
+    const auto it = simulationCommandToApiCommand_.find(simulationCommandId);
+    if (it == simulationCommandToApiCommand_.end()) return std::nullopt;
+    return it->second;
+}
+
 ErrorCode AgentApi::AcknowledgeCommandResult(std::uint64_t commandId) {
     const auto it = commands_.find(commandId);
     if (it == commands_.end()) return ErrorCode::UnknownCommand;
     if (!it->second.completed) return ErrorCode::CommandNotCompleted;
+    simulationCommandToApiCommand_.erase(it->second.simulationCommandId);
     commands_.erase(it);
     return ErrorCode::None;
 }

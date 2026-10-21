@@ -46,6 +46,8 @@ bool BuildTerrainPreviewGrid(const Heightmap& heightmap, const TerrainTransform&
     candidate.width = previewWidth;
     candidate.height = previewHeight;
     try {
+        candidate.worldXCoordinates.resize(previewWidth);
+        candidate.worldZCoordinates.resize(previewHeight);
         candidate.heights.resize(static_cast<std::size_t>(pointCount));
     } catch (const std::bad_alloc&) {
         return Fail(error, "unable to allocate bounded terrain preview grid");
@@ -53,8 +55,19 @@ bool BuildTerrainPreviewGrid(const Heightmap& heightmap, const TerrainTransform&
         return Fail(error, "terrain preview grid size is not representable");
     }
 
-    bool first = true;
-    std::string samplingError;
+    double previousX = transform.originX;
+    for (std::uint32_t x = 0; x < previewWidth; ++x) {
+        const double fractionX = static_cast<double>(x) / static_cast<double>(previewWidth - 1);
+        const double worldX = x == 0 ? transform.originX :
+                              (x + 1 == previewWidth ? maxX : transform.originX + transform.sizeX * fractionX);
+        if (!std::isfinite(worldX))
+            return Fail(error, "terrain preview X coordinate is not finite");
+        if (x != 0 && worldX <= previousX)
+            return Fail(error, "terrain preview X coordinates collapse at the requested resolution");
+        previousX = worldX;
+        candidate.worldXCoordinates[x] = worldX;
+    }
+
     double previousZ = transform.originZ;
     for (std::uint32_t y = 0; y < previewHeight; ++y) {
         const double fractionZ = static_cast<double>(y) / static_cast<double>(previewHeight - 1);
@@ -65,18 +78,15 @@ bool BuildTerrainPreviewGrid(const Heightmap& heightmap, const TerrainTransform&
         if (y != 0 && worldZ <= previousZ)
             return Fail(error, "terrain preview Z coordinates collapse at the requested resolution");
         previousZ = worldZ;
+        candidate.worldZCoordinates[y] = worldZ;
+    }
 
-        double previousX = transform.originX;
+    bool first = true;
+    std::string samplingError;
+    for (std::uint32_t y = 0; y < previewHeight; ++y) {
+        const double worldZ = candidate.worldZCoordinates[y];
         for (std::uint32_t x = 0; x < previewWidth; ++x) {
-            const double fractionX = static_cast<double>(x) / static_cast<double>(previewWidth - 1);
-            const double worldX = x == 0 ? transform.originX :
-                                  (x + 1 == previewWidth ? maxX : transform.originX + transform.sizeX * fractionX);
-            if (!std::isfinite(worldX))
-                return Fail(error, "terrain preview X coordinate is not finite");
-            if (x != 0 && worldX <= previousX)
-                return Fail(error, "terrain preview X coordinates collapse at the requested resolution");
-            previousX = worldX;
-
+            const double worldX = candidate.worldXCoordinates[x];
             double sampledHeight = 0.0;
             samplingError.clear();
             if (!SampleTerrainHeight(heightmap, transform, worldX, worldZ, sampledHeight, &samplingError)) {

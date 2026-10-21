@@ -1,8 +1,11 @@
 #include "agent_protocol.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "json.hpp"
 
@@ -26,11 +29,42 @@ int main() {
             return Json::object();
         }
     };
+    auto methodAllows = [](const Json& methods, std::string_view method, std::string_view role) {
+        if (!methods.is_array()) return false;
+        for (const auto& entry : methods) {
+            if (entry.value("name", std::string{}) != std::string(method)) continue;
+            const auto roles = entry.find("roles");
+            return roles != entry.end() && roles->is_array() &&
+                std::find(roles->begin(), roles->end(), std::string(role)) != roles->end();
+        }
+        return false;
+    };
+    const std::vector<std::string> expectedMethods{
+        "hello", "capabilities", "world", "entity_page", "events", "step",
+        "place_facility", "place_storage", "add_road_segment", "assign_transport_plan",
+        "command_result", "acknowledge"
+    };
+    const std::vector<std::string> controllerOnlyMethods{
+        "step", "place_facility", "place_storage", "add_road_segment", "assign_transport_plan", "acknowledge"
+    };
 
     Dispatcher observer;
     const auto hello = parseResponse(observer.HandleLine(request("1", "hello")), "hello returns JSON");
     check(hello.value("ok", false) && hello["result"].value("role", "") == "observer",
         "default role is observer");
+    bool helloMethodsComplete = hello["result"]["methods"].size() == expectedMethods.size();
+    for (const auto& method : expectedMethods) {
+        helloMethodsComplete = helloMethodsComplete &&
+            (methodAllows(hello["result"]["methods"], method, "observer") ||
+                methodAllows(hello["result"]["methods"], method, "controller"));
+    }
+    for (const auto& method : controllerOnlyMethods) {
+        helloMethodsComplete = helloMethodsComplete &&
+            methodAllows(hello["result"]["methods"], method, "controller") &&
+            !methodAllows(hello["result"]["methods"], method, "observer");
+    }
+    check(helloMethodsComplete && methodAllows(hello["result"]["methods"], "command_result", "observer"),
+        "hello advertises all methods and accurate observer/controller access");
     const auto before = parseResponse(observer.HandleLine(request("2", "world")), "world query returns JSON");
     const auto beforeTick = before["result"]["world"]["tick"].get<std::string>();
     const auto& production = before["result"]["world"]["production"];
@@ -89,6 +123,13 @@ int main() {
     const auto capabilities = parseResponse(controller.HandleLine(request("5", "capabilities")), "capabilities returns JSON");
     check(capabilities["ok"] && capabilities["result"]["actions"].size() == 8,
         "controller discovers the complete current API action set");
+    bool controllerMethodsComplete = capabilities["result"]["methods"].size() == expectedMethods.size();
+    for (const auto& method : expectedMethods) {
+        controllerMethodsComplete = controllerMethodsComplete &&
+            methodAllows(capabilities["result"]["methods"], method, "controller");
+    }
+    check(controllerMethodsComplete,
+        "capabilities advertises the complete method set for the controller role");
     const auto initial = parseResponse(controller.HandleLine(request("6", "world")), "controller world returns JSON");
     check(initial["result"]["world"]["production"]["deliveredFlourTotal"].is_string(),
         "controller world exposes the cumulative production counter");

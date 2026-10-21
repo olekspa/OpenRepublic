@@ -27,6 +27,20 @@ namespace
 		return true;
 	}
 
+	std::optional<openrepublic::content::RasterOrientation> ParseRasterOrientation(std::wstring_view name)
+	{
+		using openrepublic::content::RasterOrientation;
+		if (name == L"identity" || name == L"first-row-at-min-z") return RasterOrientation::Identity;
+		if (name == L"flip-x") return RasterOrientation::FlipX;
+		if (name == L"flip-z" || name == L"first-row-at-max-z") return RasterOrientation::FlipZ;
+		if (name == L"rotate-180") return RasterOrientation::Rotate180;
+		if (name == L"transpose") return RasterOrientation::Transpose;
+		if (name == L"transpose-flip-x") return RasterOrientation::TransposeFlipX;
+		if (name == L"transpose-flip-z") return RasterOrientation::TransposeFlipZ;
+		if (name == L"transpose-rotate-180") return RasterOrientation::TransposeRotate180;
+		return std::nullopt;
+	}
+
 	LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 	{
 		switch (message)
@@ -94,7 +108,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				if (i + 7 >= argumentCount)
 				{
 					terrainProbeTransformError =
-						"--terrain-transform requires originX originZ baseHeight sizeX sizeZ heightScale rowOrder";
+						"--terrain-transform requires originX originZ baseHeight sizeX sizeZ heightScale orientation";
 					continue;
 				}
 
@@ -104,7 +118,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				{
 					valuesValid = ParseFiniteDouble(arguments[i + 1 + static_cast<int>(valueIndex)], values[valueIndex]) && valuesValid;
 				}
-				const std::wstring_view rowOrder(arguments[i + 7]);
+				const std::wstring_view orientationName(arguments[i + 7]);
 				i += 7;
 				if (!terrainProbeTransformError.empty())
 				{
@@ -123,18 +137,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				transform.sizeX = values[3];
 				transform.sizeZ = values[4];
 				transform.heightScale = values[5];
-				if (rowOrder == L"first-row-at-min-z")
+				if (const auto orientation = ParseRasterOrientation(orientationName))
 				{
-					transform.rowOrder = openrepublic::content::RasterRowOrder::FirstRowAtMinZ;
-				}
-				else if (rowOrder == L"first-row-at-max-z")
-				{
-					transform.rowOrder = openrepublic::content::RasterRowOrder::FirstRowAtMaxZ;
+					transform.orientation = *orientation;
 				}
 				else
 				{
 					terrainProbeTransformError =
-						"rowOrder must be first-row-at-min-z or first-row-at-max-z";
+						"orientation must be identity, flip-x, flip-z, rotate-180, transpose, transpose-flip-x, transpose-flip-z, or transpose-rotate-180";
 					continue;
 				}
 				terrainProbeTransform = transform;

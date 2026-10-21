@@ -264,9 +264,6 @@ bool SampleTerrainHeight(const Heightmap& heightmap, const TerrainTransform& tra
         !std::isfinite(transform.sizeZ) || !std::isfinite(transform.heightScale) ||
         transform.sizeX <= 0.0 || transform.sizeZ <= 0.0)
         return Fail(error, "terrain transform must have finite origins/scales and positive horizontal extents");
-    if (transform.rowOrder != RasterRowOrder::FirstRowAtMinZ &&
-        transform.rowOrder != RasterRowOrder::FirstRowAtMaxZ)
-        return Fail(error, "terrain transform has an unknown raster row order");
     if (!std::isfinite(worldX) || !std::isfinite(worldZ))
         return Fail(error, "world-space sample coordinates must be finite");
 
@@ -282,13 +279,48 @@ bool SampleTerrainHeight(const Heightmap& heightmap, const TerrainTransform& tra
 
     const double xFraction = std::clamp((worldX - transform.originX) / transform.sizeX, 0.0, 1.0);
     const double zFraction = std::clamp((worldZ - transform.originZ) / transform.sizeZ, 0.0, 1.0);
+    double sourceXFraction = 0.0;
+    double sourceZFraction = 0.0;
+    switch (transform.orientation) {
+    case RasterOrientation::Identity:
+        sourceXFraction = xFraction;
+        sourceZFraction = zFraction;
+        break;
+    case RasterOrientation::FlipX:
+        sourceXFraction = 1.0 - xFraction;
+        sourceZFraction = zFraction;
+        break;
+    case RasterOrientation::FlipZ:
+        sourceXFraction = xFraction;
+        sourceZFraction = 1.0 - zFraction;
+        break;
+    case RasterOrientation::Rotate180:
+        sourceXFraction = 1.0 - xFraction;
+        sourceZFraction = 1.0 - zFraction;
+        break;
+    case RasterOrientation::Transpose:
+        sourceXFraction = zFraction;
+        sourceZFraction = xFraction;
+        break;
+    case RasterOrientation::TransposeFlipX:
+        sourceXFraction = zFraction;
+        sourceZFraction = 1.0 - xFraction;
+        break;
+    case RasterOrientation::TransposeFlipZ:
+        sourceXFraction = 1.0 - zFraction;
+        sourceZFraction = xFraction;
+        break;
+    case RasterOrientation::TransposeRotate180:
+        sourceXFraction = 1.0 - zFraction;
+        sourceZFraction = 1.0 - xFraction;
+        break;
+    default:
+        return Fail(error, "terrain transform has an unknown raster orientation");
+    }
     const double lastColumn = static_cast<double>(heightmap.width - 1u);
     const double lastRow = static_cast<double>(heightmap.height - 1u);
-    const double sampleX = std::clamp(xFraction * lastColumn, 0.0, lastColumn);
-    const double sampleZ = std::clamp(zFraction * lastRow, 0.0, lastRow);
-    const double rowCoordinate = std::clamp(transform.rowOrder == RasterRowOrder::FirstRowAtMinZ
-        ? sampleZ
-        : lastRow - sampleZ, 0.0, lastRow);
+    const double sampleX = std::clamp(sourceXFraction * lastColumn, 0.0, lastColumn);
+    const double rowCoordinate = std::clamp(sourceZFraction * lastRow, 0.0, lastRow);
     const auto x0 = static_cast<std::uint32_t>(std::floor(sampleX));
     const auto z0 = static_cast<std::uint32_t>(std::floor(rowCoordinate));
     const auto x1 = x0 < heightmap.width - 1u ? x0 + 1u : x0;

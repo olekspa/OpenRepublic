@@ -8,13 +8,15 @@
 
 namespace openrepublic::content {
 
-// Height-only preview grid sampled across the caller-supplied terrain extent.
-// Heights are row-major with row zero at the transform's minimum world Z and
-// the final row at its maximum world Z. Horizontal coordinates are deliberately
-// not stored so callers can choose their own centered or world-space mesh grid.
+// Preview grid sampled across the caller-supplied terrain extent. Heights are
+// row-major; worldXCoordinates are ascending and shared by every row, while
+// worldZCoordinates are ascending and shared by every column. These coordinates
+// describe the caller's transform, not an inferred game coordinate contract.
 struct TerrainPreviewGrid {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+    std::vector<double> worldXCoordinates;
+    std::vector<double> worldZCoordinates;
     std::vector<float> heights;
     float minHeight = 0.0f;
     float maxHeight = 0.0f;

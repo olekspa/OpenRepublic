@@ -48,12 +48,32 @@ bool ParseTerrainMetadata(const std::string& text, const Heightmap& heightmap,
 // Caller-supplied interpretation of a decoded raster. The world extent is
 // axis-aligned: originX/originZ are its minimum coordinates and sizeX/sizeZ
 // are positive. Raster samples are treated as nodes spanning both extent
-// endpoints (a dimension of one is constant along that axis). rowOrder makes
-// the otherwise-unknown Z-axis raster orientation explicit.
-enum class RasterRowOrder {
-    FirstRowAtMinZ,
-    FirstRowAtMaxZ,
+// endpoints (a dimension of one is constant along that axis). Orientation
+// maps normalized world X/Z into normalized source raster X/Z. The eight
+// choices cover axis flips and swaps without asserting which one any game
+// build or file format uses.
+enum class RasterOrientation : std::uint8_t {
+    Identity,
+    FlipX,
+    FlipZ,
+    Rotate180,
+    Transpose,
+    TransposeFlipX,
+    TransposeFlipZ,
+    TransposeRotate180,
 };
+
+constexpr bool RasterOrientationSwapsAxes(RasterOrientation orientation) noexcept {
+    switch (orientation) {
+    case RasterOrientation::Transpose:
+    case RasterOrientation::TransposeFlipX:
+    case RasterOrientation::TransposeFlipZ:
+    case RasterOrientation::TransposeRotate180:
+        return true;
+    default:
+        return false;
+    }
+}
 
 struct TerrainTransform {
     double originX = 0.0;
@@ -62,7 +82,7 @@ struct TerrainTransform {
     double sizeX = 0.0;
     double sizeZ = 0.0;
     double heightScale = 0.0;
-    RasterRowOrder rowOrder = RasterRowOrder::FirstRowAtMinZ;
+    RasterOrientation orientation = RasterOrientation::Identity;
 };
 
 // Bilinearly samples raw row-major Heightmap values at a world-space XZ

@@ -202,3 +202,51 @@ Only these tracked project files were modified for the current M0 increment: `sr
 **2026-10-21 15:48 EDT (19:48 UTC) — publication receipt**
 
 - The reviewed header-profile reader, synthetic tests, and evidence-bounded documentation were committed as `2ec56a9` (`Add bounded NMF header profile reader`) and pushed to `origin/main`. Client Release CTest passed 11/11 and headless Release CTest passed 10/10. No proprietary file or private reverse-engineering output was added to the repository; broader NMF support and the playable-slice gates remain open.
+
+## Chronological continuation — shared desktop simulation and typed Agent API
+
+**2026-10-21 15:57 EDT (19:57 UTC)**
+
+- The Wicked Engine app now constructs an `AgentApi` with a non-owning reference to its app-owned `sim::Simulation`. The API can also continue to own a synthetic instance for standalone hosts/tests; its move operations are disabled to protect the internal simulation reference.
+- UI snapshot reads, fixed-tick steps, facility/storage/road construction, truck-plan assignment, road-state changes, Lua-rule application, and simulation save/load now go through the typed Agent API. The app consumes typed command events/results for UI feedback. The JSONL host continues to own its own separate synthetic world and does not expose in-process configuration/save/load operations.
+- Added a permission-gated full-snapshot query for trusted in-process UI use, plus revision-checked road/rule configuration and save/load operations. Loading clears API-side command tracking from the replaced timeline and emits a world-loaded event. Denied full-snapshot reads return zeroed rule and endpoint fields.
+- Added synthetic tests for app-owned simulation injection, shared state after API commands, stale-revision rejection, permission-gated configuration, save/load replacing command state, and denied snapshot zeroing. A follow-up review found that loading an older save can reuse a simulation-internal command ID; API command handles now remain monotonic across world loads, and tests verify the stale handle stays unknown while the new result is independently queryable.
+- **VERIFIED — source/build/test evidence:** Release client build succeeded; full client CTest passed 11/11. Release headless build succeeded; full headless CTest passed 10/10. `git diff --check` passed. Independent read-only review is pending.
+- **UNKNOWN — graphical acceptance:** the new app path has not been exercised in a window. These tests do not prove UI clicks, picking, rendering, or user-visible save/reload. No WRSR process was launched, and no WRSR asset, save, Steam installation file, or Rival Republics data was modified or added.
+- The scoped source, tests, and docs are pending final review and publication. The JSONL host remains a separate simulation owner; persistent world identities across multiple clients, native-window acceptance, and broader WRSR content support remain open.
+
+### Follow-up review — command handles across save/load
+
+- An independent read-only review identified that the desktop event-drain loop could stop after a full event page and that loading an older save could reuse a simulation-internal command ID still held by a controller. The event loop now compares the returned cursor with its value before reading that page. API results/events now use monotonic opaque handles mapped to simulation IDs; `LoadWorld()` clears the replaced mapping but does not reset the API handle counter.
+- Added regression coverage for post-load handle uniqueness and adopted results whose simulation IDs differ from their API handles. Query-denied APIs still leave untracked transferred results in simulation storage.
+- **VERIFIED — client Release build and CTest:** build succeeded; full client CTest passed **11/11**.
+- **VERIFIED — headless Release build and CTest:** build succeeded; full headless CTest passed **10/10**.
+- **VERIFIED — diff hygiene:** `git diff --check` passed after the follow-up edits. **UNKNOWN — graphical acceptance:** this did not exercise the desktop UI in a window or validate rendered behavior. No WRSR game, save, Steam installation file, original asset, or Rival Republics data was used or modified. The independent reviewer has not re-reviewed the corrected diff.
+
+## Follow-up — pending truck-plan command identity
+
+**2026-10-21 16:07 EDT (20:07 UTC)**
+
+- Independent review found that pending-plan UI text used simulation-internal command IDs, while submission notices used opaque Agent API handles. These IDs can differ after save/load, and a plan restored from a save has no handle from the replaced API timeline.
+- Added `LookupApiCommandHandleForSimulationCommand()` for trusted in-process presentation. The desktop UI now labels tracked plans with their API command handle and untracked restored queue entries with their simulation command ID and the explicit `no API handle` qualifier. Updated the Agent API guide accordingly.
+- **VERIFIED — Release source/build/test:** the client build succeeded with CTest 11/11; the headless build succeeded with CTest 10/10. `git diff --check` passed. **UNKNOWN — graphical acceptance:** the updated text has not been exercised in the desktop app. No WRSR game, save, Steam installation file, original asset, or Rival Republics data was used or modified.
+
+## Follow-up — terrain orientations and bounded preview mapping
+
+**2026-10-21 16:17 EDT (20:17 UTC)**
+
+- The app now selects preview width and height from the source raster axes after applying the caller-selected orientation. This preserves detail when a rectangular raster is transposed.
+- Added an explicit axis-swap classifier and synthetic checks across all eight orientations. Explicit-transform preview heights now use the selected horizontal display scale multiplied by 5, so downscaling very large extents preserves the advertised 5x exaggeration. Metadata previews describe their fixed vertical scale without claiming a constant exaggeration ratio.
+- Strengthened the pending-plan API regression: it loads an initial world after a first submission, then proves the next simulation command ID differs from its opaque API handle. Saving and reloading that pending plan confirms the replaced timeline has no stale API handle.
+- **VERIFIED — Release source/build/test:** client build succeeded and CTest passed **11/11**; headless build succeeded and CTest passed **10/10**. `git diff --check` passed.
+- **UNKNOWN — graphical acceptance and WRSR compatibility:** the explicit-transform app path has not been visually exercised, and no map-matched WRSR transform/orientation is established. Synthetic fixtures verify OpenRepublic code behavior only. No WRSR process, save, Steam file, original asset, or Rival Republics data was used or modified.
+
+## Chronological continuation — role-aware JSONL method discovery
+
+**2026-10-21 16:23 EDT (20:23 UTC)**
+
+- Added a `methods` table to JSONL `hello` and `capabilities`, listing each implemented method and the roles allowed to call it. The existing `actions` list remains a separate inventory of typed gameplay actions.
+- Observer/controller role assertions cover command-result polling, controller-only acknowledgement, and controller-only gameplay mutations.
+- **VERIFIED — Release source/build/test:** `OpenRepublicAgentHost` and `OpenRepublicAgentProtocolTests` built successfully; targeted protocol and external-controller CTest passed 2/2. `git diff --check` passed.
+- **KNOWN API gap:** request `id` remains correlation only. Replaying the same mutation after a lost response can submit duplicate work; bounded idempotency is not implemented and must be addressed before using the protocol for remote or multi-client commands.
+- No WRSR process, save, Steam installation file, original asset, or private Rival Republics data was accessed or modified for this protocol change. No compatibility behavior is claimed.

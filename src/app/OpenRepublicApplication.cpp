@@ -22,6 +22,7 @@
 #include <iterator>
 #include <limits>
 #include <sstream>
+#include <string>
 #include <utility>
 
 namespace openrepublic
@@ -57,8 +58,9 @@ namespace openrepublic
 		constexpr char kSimulationSaveFile[] = "OpenRepublic-demo.save";
 		constexpr char kDemoRulesFile[] = "data/rules/demo_rules.lua";
 		constexpr std::uint32_t kTerrainPreviewMaxSide = 257;
-		constexpr double kTerrainDisplayUnitsPerMeter = 0.001;
-		constexpr double kTerrainVerticalPreviewScale = 0.005; // 5x vertical exaggeration at the display scale.
+		constexpr double kTerrainDisplayUnitsPerSourceUnit = 0.001;
+		constexpr double kTerrainVerticalPreviewExaggeration = 5.0;
+		constexpr double kTerrainVerticalPreviewScale = 0.005;
 		constexpr double kRawPreviewVerticalScale = 5.0;
 		constexpr double kMaxTerrainPreviewHeight = 1000.0;
 		// Current synthetic storage capacity also shown by the demo stock readout.
@@ -67,6 +69,33 @@ namespace openrepublic
 		constexpr char kGlbProbeLimitations[] =
 			"Trusted local inputs only: a bounded embedded-resource profile is checked before importing an exact temporary snapshot; "
 			"the pinned importer and image decoders are not sandboxed, and this is not a licensing assessment.";
+
+		std::string PendingTruckPlanCommandLabel(const openrepublic::agent_api::AgentApi& api,
+			std::uint64_t simulationCommandId)
+		{
+			if (const auto apiHandle = api.LookupApiCommandHandleForSimulationCommand(simulationCommandId))
+			{
+				return "API command " + std::to_string(*apiHandle);
+			}
+			return "simulation command ID " + std::to_string(simulationCommandId) + " (no API handle)";
+		}
+
+		const char* TerrainOrientationLabel(openrepublic::content::RasterOrientation orientation)
+		{
+			using openrepublic::content::RasterOrientation;
+			switch (orientation)
+			{
+			case RasterOrientation::Identity: return "identity";
+			case RasterOrientation::FlipX: return "flip-X";
+			case RasterOrientation::FlipZ: return "flip-Z";
+			case RasterOrientation::Rotate180: return "rotate-180";
+			case RasterOrientation::Transpose: return "transpose";
+			case RasterOrientation::TransposeFlipX: return "transpose + flip-X";
+			case RasterOrientation::TransposeFlipZ: return "transpose + flip-Z";
+			case RasterOrientation::TransposeRotate180: return "transpose + rotate-180";
+			default: return "invalid";
+			}
+		}
 
 		bool HasValidIndexedTriangleData(const wi::scene::MeshComponent& mesh)
 		{
@@ -299,8 +328,12 @@ namespace openrepublic
 				}
 			}
 
-			const std::uint32_t previewWidth = std::min(heightmap.width, kTerrainPreviewMaxSide);
-			const std::uint32_t previewHeight = std::min(heightmap.height, kTerrainPreviewMaxSide);
+			const bool transposedRaster = explicitTransform &&
+				openrepublic::content::RasterOrientationSwapsAxes(explicitTransform->orientation);
+			const std::uint32_t previewWidth = std::min(
+				transposedRaster ? heightmap.height : heightmap.width, kTerrainPreviewMaxSide);
+			const std::uint32_t previewHeight = std::min(
+				transposedRaster ? heightmap.width : heightmap.height, kTerrainPreviewMaxSide);
 			openrepublic::content::TerrainPreviewGrid transformedGrid;
 			if (explicitTransform && !openrepublic::content::BuildTerrainPreviewGrid(
 				heightmap, *explicitTransform, previewWidth, previewHeight, transformedGrid, &error))
@@ -326,26 +359,81 @@ namespace openrepublic
 				}
 			}
 
-			const double verticalScale = explicitTransform || hasMetadata
-				? kTerrainVerticalPreviewScale
-				: kRawPreviewVerticalScale;
+			const double defaultWidth = std::max(1.0, static_cast<double>(heightmap.width) * 0.01);
+			const double defaultDepth = std::max(1.0, static_cast<double>(heightmap.height) * 0.01);
+			double displayWidth = 0.0;
+			double displayDepth = 0.0;
+			double previewHorizontalScale = 0.0;
+			double previewCenterX = 0.0;
+			double previewCenterZ = 0.0;
+			if (explicitTransform)
+			{
+				const double maxWorldExtent = std::max(explicitTransform->sizeX, explicitTransform->sizeZ);
+				previewHorizontalScale = std::min(kTerrainDisplayUnitsPerSourceUnit, 100.0 / maxWorldExtent);
+				displayWidth = explicitTransform->sizeX * previewHorizontalScale;
+				displayDepth = explicitTransform->sizeZ * previewHorizontalScale;
+				previewCenterX = explicitTransform->originX + explicitTransform->sizeX * 0.5;
+				previewCenterZ = explicitTransform->originZ + explicitTransform->sizeZ * 0.5;
+				if (!std::isfinite(previewHorizontalScale) || previewHorizontalScale <= 0.0 ||
+					!std::isfinite(displayWidth) || !std::isfinite(displayDepth) ||
+					displayWidth <= 0.0 || displayDepth <= 0.0 || displayWidth > 100.0 || displayDepth > 100.0 ||
+					!std::isfinite(previewCenterX) || !std::isfinite(previewCenterZ))
+				{
+					error = "explicit terrain extent cannot be represented in the bounded preview frame";
+					return false;
+				}
+			}
+			else
+			{
+				const double candidateWidth = hasMetadata
+					? metadata.worldSizeX * kTerrainDisplayUnitsPerSourceUnit : defaultWidth;
+				const double candidateDepth = hasMetadata
+					? metadata.worldSizeY * kTerrainDisplayUnitsPerSourceUnit : defaultDepth;
+				displayWidth = std::clamp(candidateWidth, 1.0, 100.0);
+				displayDepth = std::clamp(candidateDepth, 1.0, 100.0);
+			}
+			const double verticalScale = explicitTransform
+				? previewHorizontalScale * kTerrainVerticalPreviewExaggeration
+				: (hasMetadata ? kTerrainVerticalPreviewScale : kRawPreviewVerticalScale);
 			const double verticalSpan = (maximumHeight - minimumHeight) * verticalScale;
-			if (!std::isfinite(verticalSpan) || verticalSpan > kMaxTerrainPreviewHeight)
+			if (!std::isfinite(verticalScale) || verticalScale <= 0.0 ||
+				!std::isfinite(verticalSpan) || verticalSpan > kMaxTerrainPreviewHeight)
 			{
 				error = "height range is outside the safe preview bounds";
 				return false;
 			}
 
-			const double defaultWidth = std::max(1.0, static_cast<double>(heightmap.width) * 0.01);
-			const double defaultDepth = std::max(1.0, static_cast<double>(heightmap.height) * 0.01);
-			const double candidateWidth = explicitTransform
-				? explicitTransform->sizeX * kTerrainDisplayUnitsPerMeter
-				: hasMetadata ? metadata.worldSizeX * kTerrainDisplayUnitsPerMeter : defaultWidth;
-			const double candidateDepth = explicitTransform
-				? explicitTransform->sizeZ * kTerrainDisplayUnitsPerMeter
-				: hasMetadata ? metadata.worldSizeY * kTerrainDisplayUnitsPerMeter : defaultDepth;
-			const double displayWidth = std::clamp(candidateWidth, 1.0, 100.0);
-			const double displayDepth = std::clamp(candidateDepth, 1.0, 100.0);
+			std::vector<float> displayXCoordinates;
+			std::vector<float> displayZCoordinates;
+			if (explicitTransform)
+			{
+				displayXCoordinates.resize(previewWidth);
+				displayZCoordinates.resize(previewHeight);
+				for (std::uint32_t x = 0; x < previewWidth; ++x)
+				{
+					const double localX = (transformedGrid.worldXCoordinates[x] - previewCenterX) * previewHorizontalScale;
+					const float displayX = static_cast<float>(localX);
+					if (!std::isfinite(localX) || !std::isfinite(displayX) ||
+						(x != 0 && displayX <= displayXCoordinates[x - 1]))
+					{
+						error = "explicit terrain X coordinates collapse in the bounded preview frame";
+						return false;
+					}
+					displayXCoordinates[x] = displayX;
+				}
+				for (std::uint32_t z = 0; z < previewHeight; ++z)
+				{
+					const double localZ = (transformedGrid.worldZCoordinates[z] - previewCenterZ) * previewHorizontalScale;
+					const float displayZ = static_cast<float>(localZ);
+					if (!std::isfinite(localZ) || !std::isfinite(displayZ) ||
+						(z != 0 && displayZ <= displayZCoordinates[z - 1]))
+					{
+						error = "explicit terrain Z coordinates collapse in the bounded preview frame";
+						return false;
+					}
+					displayZCoordinates[z] = displayZ;
+				}
+			}
 
 			std::vector<XMFLOAT3> positions;
 			positions.reserve(static_cast<std::size_t>(previewWidth) * previewHeight);
@@ -378,9 +466,9 @@ namespace openrepublic
 					const float u = static_cast<float>(x) / static_cast<float>(previewWidth - 1u);
 					const float v = static_cast<float>(z) / static_cast<float>(previewHeight - 1u);
 					positions.emplace_back(
-						static_cast<float>((static_cast<double>(u) - 0.5) * displayWidth),
+						explicitTransform ? displayXCoordinates[x] : static_cast<float>((static_cast<double>(u) - 0.5) * displayWidth),
 						static_cast<float>(displayY),
-						static_cast<float>((static_cast<double>(v) - 0.5) * displayDepth));
+						explicitTransform ? displayZCoordinates[z] : static_cast<float>((static_cast<double>(v) - 0.5) * displayDepth));
 				}
 			}
 
@@ -423,18 +511,18 @@ namespace openrepublic
 
 			std::ostringstream summary;
 			summary << "Terrain preview " << heightmap.width << 'x' << heightmap.height << " R32F -> "
-				<< previewWidth << 'x' << previewHeight << " mesh; centered, row order preserved";
-			if (hasMetadata)
+				<< previewWidth << 'x' << previewHeight << " mesh";
+			if (explicitTransform)
+			{
+				summary << "; explicit caller world coordinates mapped into a recentered local preview frame using "
+					<< previewHorizontalScale << " display units/source unit; orientation "
+					<< TerrainOrientationLabel(explicitTransform->orientation)
+					<< " (5x vertical exaggeration; no WRSR transform is verified)";
+			}
+			else if (hasMetadata)
 			{
 				summary << "; candidate height raw*" << metadata.heightScale << " + offset " << metadata.worldPositionY
-					<< " (5x vertical preview exaggeration; coordinates/orientation unverified)";
-			}
-			else if (explicitTransform)
-			{
-				summary << "; explicit caller transform sampled with row order "
-					<< (explicitTransform->rowOrder == openrepublic::content::RasterRowOrder::FirstRowAtMinZ
-						? "first row at min-Z" : "first row at max-Z")
-					<< " (5x vertical preview exaggeration; horizontal placement remains centered)";
+					<< " (vertical preview scale 0.005; coordinates/orientation unverified; preview remains centered)";
 			}
 			else
 			{
@@ -496,6 +584,11 @@ namespace openrepublic
 		}
 	}
 
+	OpenRepublicApplication::OpenRepublicApplication()
+		: agentApi(simulation, openrepublic::agent_api::Permissions{true, true, true, true, true})
+	{
+	}
+
 	void OpenRepublicApplication::SetSceneProbePath(std::filesystem::path path)
 	{
 		sceneProbePath = std::move(path);
@@ -529,7 +622,8 @@ namespace openrepublic
 			std::string error;
 			const auto rulesPath = LocateDemoRulesFile();
 			if (openrepublic::scripting::LuaRulesLoader::LoadFile(rulesPath, initialRules, &error) &&
-				simulation.SetRules(initialRules, &error))
+				agentApi.SetSimulationRules(QuerySimulationSnapshot().stateRevision, initialRules, &error) ==
+					openrepublic::agent_api::ErrorCode::None)
 			{
 				uiNotice = "Loaded project rules from " + rulesPath.string() + ".";
 			}
@@ -762,7 +856,12 @@ namespace openrepublic
 		stepButton.OnClick([this](const wi::gui::EventArgs&) {
 			ApplyPendingRules();
 			ApplyPendingRoadToggle();
-			simulation.Step();
+			if (agentApi.Step() != openrepublic::agent_api::ErrorCode::None)
+			{
+				uiNotice = "The Agent API rejected the fixed-tick step.";
+				UpdateStatusLabel();
+				return;
+			}
 			simulationAccumulator = 0.0f;
 			uiNotice = "Advanced one fixed simulation tick.";
 			UpdateSimulationPresentation();
@@ -941,7 +1040,13 @@ namespace openrepublic
 			{
 				ApplyPendingRules();
 				ApplyPendingRoadToggle();
-				simulation.Step();
+				if (agentApi.Step() != openrepublic::agent_api::ErrorCode::None)
+				{
+					uiNotice = "The Agent API rejected the fixed-tick step.";
+					simulationAccumulator = 0.0f;
+					UpdateStatusLabel();
+					break;
+				}
 				simulationAccumulator -= kSimulationTickSeconds;
 				UpdateSimulationPresentation();
 			}
@@ -1052,7 +1157,7 @@ namespace openrepublic
 	void OpenRepublicApplication::AssignTruckFarmEndpoint()
 	{
 		const auto id = GetSelectedSimulationId();
-		const auto snapshot = simulation.GetSnapshot();
+		const auto snapshot = QuerySimulationSnapshot();
 		const auto facility = id ? std::find_if(snapshot.facilities.begin(), snapshot.facilities.end(), [&](const auto& item) {
 			return item.id == *id && item.type == openrepublic::sim::FacilityType::Farm;
 		}) : snapshot.facilities.end();
@@ -1080,7 +1185,7 @@ namespace openrepublic
 	void OpenRepublicApplication::AssignTruckMillEndpoint()
 	{
 		const auto id = GetSelectedSimulationId();
-		const auto snapshot = simulation.GetSnapshot();
+		const auto snapshot = QuerySimulationSnapshot();
 		const auto facility = id ? std::find_if(snapshot.facilities.begin(), snapshot.facilities.end(), [&](const auto& item) {
 			return item.id == *id && item.type == openrepublic::sim::FacilityType::Mill;
 		}) : snapshot.facilities.end();
@@ -1108,7 +1213,7 @@ namespace openrepublic
 	void OpenRepublicApplication::AssignTruckStorageEndpoint()
 	{
 		const auto id = GetSelectedSimulationId();
-		const auto snapshot = simulation.GetSnapshot();
+		const auto snapshot = QuerySimulationSnapshot();
 		const auto storage = id ? std::find_if(snapshot.storages.begin(), snapshot.storages.end(), [&](const auto& item) {
 			return item.id == *id;
 		}) : snapshot.storages.end();
@@ -1171,10 +1276,11 @@ namespace openrepublic
 
 	void OpenRepublicApplication::QueueSelectedTruckPlan()
 	{
-		const auto snapshot = simulation.GetSnapshot();
+		const auto snapshot = QuerySimulationSnapshot();
 		if (!snapshot.pendingTruckPlans.empty())
 		{
-			uiNotice = "Truck plan command " + std::to_string(snapshot.pendingTruckPlans.front().commandId) +
+			uiNotice = "Truck plan " + PendingTruckPlanCommandLabel(agentApi,
+				snapshot.pendingTruckPlans.front().commandId) +
 				" is still pending; wait for its fixed-tick result before queueing another plan.";
 			UpdateStatusLabel();
 			return;
@@ -1208,14 +1314,14 @@ namespace openrepublic
 				return;
 			}
 		}
-		const std::uint64_t commandId = simulation.QueueTruckPlan(truckPlan);
-		if (commandId == 0)
+		const auto submission = agentApi.AssignTransportPlan(QuerySimulationSnapshot().stateRevision, truckPlan);
+		if (submission.error != openrepublic::agent_api::ErrorCode::None)
 		{
 			uiNotice = "Truck plan could not be queued; the bounded command queue may be full or the simulation may be at its terminal tick.";
 		}
 		else
 		{
-			uiNotice = "Queued truck plan command " + std::to_string(commandId) + " (Farm OR-" +
+			uiNotice = "Queued truck plan API command " + std::to_string(submission.commandId) + " (Farm OR-" +
 				std::to_string(truckPlan.farmId) + " -> Mill OR-" + std::to_string(truckPlan.millId) +
 				" -> Storage OR-" + std::to_string(truckPlan.storageId) + "); graph connectivity and truck state will be validated at the next fixed tick.";
 		}
@@ -1227,7 +1333,8 @@ namespace openrepublic
 		if (!pendingMillApproachRoadState.has_value()) return;
 		const bool requestedState = *pendingMillApproachRoadState;
 		pendingMillApproachRoadState.reset();
-		if (simulation.SetRoadEnabled(202, requestedState))
+		if (agentApi.SetRoadEnabled(QuerySimulationSnapshot().stateRevision, 202, requestedState) ==
+			openrepublic::agent_api::ErrorCode::None)
 		{
 			millApproachRoadEnabled = requestedState;
 			uiNotice = std::string("Mill approach road ") + (millApproachRoadEnabled ? "opened" : "closed") +
@@ -1380,14 +1487,15 @@ namespace openrepublic
 				UpdateStatusLabel();
 				return;
 			}
-			const std::uint64_t commandId = simulation.QueueRoadSegment(startX, startZ, gridX, gridZ);
-			if (commandId == 0)
+			const auto submission = agentApi.AddRoadSegment(QuerySimulationSnapshot().stateRevision,
+				startX, startZ, gridX, gridZ);
+			if (submission.error != openrepublic::agent_api::ErrorCode::None)
 			{
 				uiNotice = "Road segment could not be queued; the bounded construction queue may be full.";
 			}
 			else
 			{
-				uiNotice = "Queued synthetic road segment command " + std::to_string(commandId) + " from (" +
+				uiNotice = "Queued synthetic road segment command " + std::to_string(submission.commandId) + " from (" +
 					std::to_string(startX) + ", " + std::to_string(startZ) + ") to (" + std::to_string(gridX) + ", " +
 					std::to_string(gridZ) + "); validation occurs at the next simulation tick.";
 			}
@@ -1424,14 +1532,15 @@ namespace openrepublic
 			}
 			const auto gridX = static_cast<std::int32_t>(gridXFloat);
 			const auto gridZ = static_cast<std::int32_t>(gridZFloat);
-			const std::uint64_t commandId = simulation.QueueFacilityPlacement(*activeFacilityPlacement, gridX, gridZ);
-			if (commandId == 0)
+			const auto submission = agentApi.PlaceFacility(QuerySimulationSnapshot().stateRevision,
+				*activeFacilityPlacement, gridX, gridZ);
+			if (submission.error != openrepublic::agent_api::ErrorCode::None)
 			{
 				uiNotice = "Could not queue construction; the simulation queue may be full or at its terminal tick.";
 			}
 			else
 			{
-				uiNotice = "Queued synthetic facility placement command " + std::to_string(commandId) +
+				uiNotice = "Queued synthetic facility placement command " + std::to_string(submission.commandId) +
 					" at grid (" + std::to_string(gridX) + ", " + std::to_string(gridZ) + "); the simulation will validate it at the next tick.";
 			}
 			UpdateStatusLabel();
@@ -1466,14 +1575,14 @@ namespace openrepublic
 			}
 			const auto gridX = static_cast<std::int32_t>(gridXFloat);
 			const auto gridZ = static_cast<std::int32_t>(gridZFloat);
-			const std::uint64_t commandId = simulation.QueueStoragePlacement(gridX, gridZ);
-			if (commandId == 0)
+			const auto submission = agentApi.PlaceStorage(QuerySimulationSnapshot().stateRevision, gridX, gridZ);
+			if (submission.error != openrepublic::agent_api::ErrorCode::None)
 			{
 				uiNotice = "Could not queue storage placement; the bounded construction queue may be full or at its terminal tick.";
 			}
 			else
 			{
-				uiNotice = "Queued storage placement command " + std::to_string(commandId) + " at grid (" +
+				uiNotice = "Queued storage placement command " + std::to_string(submission.commandId) + " at grid (" +
 					std::to_string(gridX) + ", " + std::to_string(gridZ) + "); occupancy and capacity are validated at the next fixed tick.";
 				// Storage placement is a single-cell action. Return to selection mode
 				// after one queued placement so the next world click cannot accidentally
@@ -1490,43 +1599,58 @@ namespace openrepublic
 
 	void OpenRepublicApplication::UpdateSimulationPresentation()
 	{
-		const openrepublic::sim::Snapshot snapshot = simulation.GetSnapshot();
+		const openrepublic::sim::Snapshot snapshot = QuerySimulationSnapshot();
 		SyncPrototypeStorages(snapshot);
 		SyncFacilities(snapshot);
 		SyncRoads(snapshot);
-		for (const auto& result : snapshot.constructionResults)
+		std::uint64_t eventCursor = lastAgentEventSequence;
+		while (true)
 		{
-			if (result.commandId <= lastConstructionResultCommandId) continue;
-			lastConstructionResultCommandId = result.commandId;
-			if (result.type == openrepublic::sim::ConstructionCommandType::RoadSegment)
+			const std::uint64_t previousCursor = eventCursor;
+			const auto eventPage = agentApi.ReadEvents(eventCursor, openrepublic::agent_api::MaxEventPageSize);
+			if (eventPage.error != openrepublic::agent_api::ErrorCode::None) break;
+			for (const auto& event : eventPage.page.events)
 			{
-				uiNotice = result.accepted
-					? "Road construction command " + std::to_string(result.commandId) + " accepted as edge " + std::to_string(result.entityId) + "."
-					: "Road construction command " + std::to_string(result.commandId) + " rejected by road graph validation.";
+				eventCursor = event.sequence;
+				if (event.type != openrepublic::agent_api::EventType::CommandApplied &&
+					event.type != openrepublic::agent_api::EventType::CommandRejected)
+				{
+					continue;
+				}
+
+				const auto result = agentApi.GetCommandResult(event.commandId);
+				if (result.error == openrepublic::agent_api::ErrorCode::UnknownCommand) continue;
+				const bool accepted = result.state == openrepublic::agent_api::CommandState::Applied;
+				if (result.type == openrepublic::sim::ConstructionCommandType::RoadSegment)
+				{
+					uiNotice = accepted
+						? "Road construction command " + std::to_string(result.commandId) + " accepted as edge " + std::to_string(result.entityId) + "."
+						: "Road construction command " + std::to_string(result.commandId) + " rejected by road graph validation.";
+				}
+				else if (result.type == openrepublic::sim::ConstructionCommandType::StoragePlacement)
+				{
+					uiNotice = accepted
+						? "Storage placement command " + std::to_string(result.commandId) + " accepted as OR-" + std::to_string(result.entityId) + "."
+						: "Storage placement command " + std::to_string(result.commandId) + " rejected: occupied cell or storage limit.";
+				}
+				else if (result.type == openrepublic::sim::ConstructionCommandType::TruckPlan)
+				{
+					uiNotice = accepted
+						? "Truck plan command " + std::to_string(result.commandId) + " accepted; the selected route is now active."
+						: "Truck plan command " + std::to_string(result.commandId) + " rejected: invalid endpoint, disconnected graph, or truck still active on its previous plan.";
+				}
+				else
+				{
+					uiNotice = accepted
+						? "Construction command " + std::to_string(result.commandId) + " accepted as OR-" + std::to_string(result.entityId) + "."
+						: "Construction command " + std::to_string(result.commandId) + " rejected: occupied cell or facility limit.";
+				}
+				agentApi.AcknowledgeCommandResult(result.commandId);
 			}
-			else if (result.type == openrepublic::sim::ConstructionCommandType::StoragePlacement)
-			{
-				uiNotice = result.accepted
-					? "Storage placement command " + std::to_string(result.commandId) + " accepted as OR-" + std::to_string(result.entityId) + "."
-					: "Storage placement command " + std::to_string(result.commandId) + " rejected: occupied cell or storage limit.";
-			}
-			else if (result.type == openrepublic::sim::ConstructionCommandType::TruckPlan)
-			{
-				uiNotice = result.accepted
-					? "Truck plan command " + std::to_string(result.commandId) + " accepted; the selected route is now active."
-					: "Truck plan command " + std::to_string(result.commandId) + " rejected: invalid endpoint, disconnected graph, or truck still active on its previous plan.";
-			}
-			else
-			{
-				uiNotice = result.accepted
-					? "Construction command " + std::to_string(result.commandId) + " accepted as OR-" + std::to_string(result.entityId) + "."
-					: "Construction command " + std::to_string(result.commandId) + " rejected: occupied cell or facility limit.";
-			}
-			if (!simulation.AcknowledgeConstructionResult(result.commandId))
-			{
-				uiNotice += " (result acknowledgment was already absent.)";
-			}
+			if (!eventPage.page.hasMore || eventPage.page.nextCursor == previousCursor) break;
+			eventCursor = eventPage.page.nextCursor;
 		}
+		lastAgentEventSequence = eventCursor;
 		for (const auto& road : snapshot.roads)
 		{
 			if (road.id == 202)
@@ -1762,7 +1886,17 @@ namespace openrepublic
 			return;
 		}
 
-		const std::string saveData = simulation.Save();
+		const auto saveQuery = agentApi.SaveWorld();
+		if (saveQuery.error != openrepublic::agent_api::ErrorCode::None)
+		{
+			output.close();
+			std::error_code removeError;
+			std::filesystem::remove(temporaryPath, removeError);
+			uiNotice = "The Agent API denied the simulation save request.";
+			UpdateStatusLabel();
+			return;
+		}
+		const std::string& saveData = saveQuery.data;
 		output.write(saveData.data(), static_cast<std::streamsize>(saveData.size()));
 		output.flush();
 		bool writeSucceeded = static_cast<bool>(output);
@@ -1808,17 +1942,20 @@ namespace openrepublic
 		}
 
 		std::string error;
-		if (!simulation.Load(data.str(), &error))
+		const auto loadError = agentApi.LoadWorld(QuerySimulationSnapshot().stateRevision, data.str(), &error);
+		if (loadError != openrepublic::agent_api::ErrorCode::None)
 		{
-			uiNotice = "Save rejected: " + error;
+			uiNotice = loadError == openrepublic::agent_api::ErrorCode::StaleRevision
+				? "Save rejected because the simulation changed while loading."
+				: "Save rejected: " + error;
 			UpdateStatusLabel();
 			return;
 		}
 
 		pendingRules.reset();
-		lastConstructionResultCommandId = 0;
+		lastAgentEventSequence = 0;
 		pendingMillApproachRoadState.reset();
-		truckPlan = simulation.GetSnapshot().truckPlan;
+		truckPlan = QuerySimulationSnapshot().truckPlan;
 		setTruckFarmButton.SetText("Farm: OR-" + std::to_string(truckPlan.farmId));
 		setTruckMillButton.SetText("Mill: OR-" + std::to_string(truckPlan.millId));
 		setTruckStorageButton.SetText("Storage: OR-" + std::to_string(truckPlan.storageId));
@@ -1836,6 +1973,11 @@ namespace openrepublic
 		SelectBuilding(wi::ecs::INVALID_ENTITY);
 	}
 
+	openrepublic::sim::Snapshot OpenRepublicApplication::QuerySimulationSnapshot() const
+	{
+		return agentApi.QuerySnapshot().snapshot;
+	}
+
 	void OpenRepublicApplication::ReloadLuaRules()
 	{
 		#ifdef OPENREPUBLIC_WITH_LUA_RULES
@@ -1843,7 +1985,7 @@ namespace openrepublic
 		// Clear it before parsing so an invalid replacement cannot later apply a
 		// stale candidate after the user has been told the active rules were kept.
 		pendingRules.reset();
-		openrepublic::sim::SimulationRules candidate = simulation.GetRules();
+		openrepublic::sim::SimulationRules candidate = QuerySimulationSnapshot().rules;
 		std::string error;
 		const auto rulesPath = LocateDemoRulesFile();
 		if (!openrepublic::scripting::LuaRulesLoader::LoadFile(rulesPath, candidate, &error))
@@ -1855,7 +1997,8 @@ namespace openrepublic
 
 		if (simulationPaused)
 		{
-			if (simulation.SetRules(candidate, &error))
+			if (agentApi.SetSimulationRules(QuerySimulationSnapshot().stateRevision, candidate, &error) ==
+				openrepublic::agent_api::ErrorCode::None)
 			{
 				uiNotice = "Applied Lua rules at the paused tick boundary.";
 			}
@@ -1880,7 +2023,8 @@ namespace openrepublic
 	{
 		if (!pendingRules.has_value()) return;
 		std::string error;
-		if (simulation.SetRules(*pendingRules, &error))
+		if (agentApi.SetSimulationRules(QuerySimulationSnapshot().stateRevision, *pendingRules, &error) ==
+			openrepublic::agent_api::ErrorCode::None)
 		{
 			uiNotice = "Applied Lua rules at a fixed tick boundary.";
 		}
@@ -1894,7 +2038,7 @@ namespace openrepublic
 
 	void OpenRepublicApplication::UpdateStatusLabel()
 	{
-		const openrepublic::sim::Snapshot snapshot = simulation.GetSnapshot();
+		const openrepublic::sim::Snapshot snapshot = QuerySimulationSnapshot();
 		std::ostringstream text;
 		text << "Tick " << snapshot.tick
 			<< " | Farm grain " << snapshot.farm.grain << "/12"
@@ -1929,7 +2073,8 @@ namespace openrepublic
 		}
 		for (const auto& pending : snapshot.pendingTruckPlans)
 		{
-			text << "\nPending truck plan command " << pending.commandId << ": Farm OR-" << pending.plan.farmId
+			text << "\nPending truck plan " << PendingTruckPlanCommandLabel(agentApi, pending.commandId)
+				<< ": Farm OR-" << pending.plan.farmId
 				<< " -> Mill OR-" << pending.plan.millId << " -> Storage OR-" << pending.plan.storageId
 				<< " (queued; not active yet).";
 		}

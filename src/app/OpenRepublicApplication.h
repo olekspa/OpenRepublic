@@ -1,6 +1,7 @@
 #pragma once
 
 #include "WickedEngine.h"
+#include "openrepublic/agent_api/agent_api.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/sim/simulation.h"
 
@@ -17,6 +18,7 @@ namespace openrepublic
 	class OpenRepublicApplication final : public wi::Application
 	{
 	public:
+		OpenRepublicApplication();
 		void SetSceneProbePath(std::filesystem::path path);
 		void SetGlbProbePath(std::filesystem::path path);
 		void SetTerrainProbePath(std::filesystem::path path);
@@ -50,11 +52,13 @@ namespace openrepublic
 		void SaveSimulation();
 		void LoadSimulation();
 		void ReloadLuaRules();
+		openrepublic::sim::Snapshot QuerySimulationSnapshot() const;
 		void SetEntityColor(wi::ecs::Entity entity, const XMFLOAT4& color);
 
 		wi::scene::Scene previewWorld;
 		std::unique_ptr<wi::RenderPath3D> renderPath;
 		openrepublic::sim::Simulation simulation;
+		openrepublic::agent_api::AgentApi agentApi;
 		std::filesystem::path sceneProbePath;
 		std::filesystem::path glbProbePath;
 		std::filesystem::path terrainProbePath;
@@ -100,7 +104,7 @@ namespace openrepublic
 		openrepublic::sim::TruckPlan truckPlan;
 		std::optional<std::pair<std::int32_t, std::int32_t>> pendingRoadStart;
 		std::optional<bool> pendingMillApproachRoadState;
-		std::uint64_t lastConstructionResultCommandId = 0;
+		std::uint64_t lastAgentEventSequence = 0;
 		float simulationAccumulator = 0.0f;
 		bool simulationPaused = false;
 		bool millApproachRoadEnabled = true;

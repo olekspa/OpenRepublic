@@ -53,8 +53,106 @@ int main() {
         configuredWorld.rules.millGrainPerTick == configuredRules.millGrainPerTick,
         "world query returns production counters and rules from the authoritative snapshot");
 
+    agent_api::Permissions pendingPlanPermissions;
+    pendingPlanPermissions.queryWorld = true;
+    pendingPlanPermissions.assignTransport = true;
+    pendingPlanPermissions.configureSimulation = true;
+    agent_api::AgentApi pendingPlanApi(pendingPlanPermissions);
+    const auto pendingPlanStart = pendingPlanApi.QuerySnapshot().snapshot;
+    const auto emptyTimelineSave = pendingPlanApi.SaveWorld();
+    const auto discardedTimelineSubmission = pendingPlanApi.AssignTransportPlan(pendingPlanStart.stateRevision,
+        sim::TruckPlan{sim::Simulation::FarmId, sim::Simulation::MillId, sim::Simulation::WarehouseId});
+    const auto beforeTimelineRestore = pendingPlanApi.QuerySnapshot().snapshot;
+    std::string timelineRestoreError;
+    const auto timelineRestoreErrorCode = pendingPlanApi.LoadWorld(beforeTimelineRestore.stateRevision,
+        emptyTimelineSave.data, &timelineRestoreError);
+    const auto restoredEmptyTimeline = pendingPlanApi.QuerySnapshot().snapshot;
+    const auto pendingPlanSubmission = pendingPlanApi.AssignTransportPlan(restoredEmptyTimeline.stateRevision,
+        sim::TruckPlan{sim::Simulation::FarmId, sim::Simulation::MillId, sim::Simulation::WarehouseId});
+    const auto queuedPlanSnapshot = pendingPlanApi.QuerySnapshot().snapshot;
+    const auto queuedSimulationCommandId = queuedPlanSnapshot.pendingTruckPlans.empty()
+        ? 0 : queuedPlanSnapshot.pendingTruckPlans.front().commandId;
+    check(emptyTimelineSave.error == agent_api::ErrorCode::None &&
+        discardedTimelineSubmission.error == agent_api::ErrorCode::None &&
+        timelineRestoreErrorCode == agent_api::ErrorCode::None &&
+        restoredEmptyTimeline.stateRevision != 0 && restoredEmptyTimeline.pendingTruckPlans.empty() &&
+        pendingPlanSubmission.error == agent_api::ErrorCode::None && queuedSimulationCommandId != 0 &&
+        queuedSimulationCommandId != pendingPlanSubmission.commandId &&
+        pendingPlanApi.LookupApiCommandHandleForSimulationCommand(queuedSimulationCommandId) ==
+            pendingPlanSubmission.commandId,
+        "pending plan lookup resolves differing simulation IDs and opaque API handles after loading an older timeline");
+    const auto pendingPlanSave = pendingPlanApi.SaveWorld();
+    const auto pendingPlanLoadRevision = pendingPlanApi.QuerySnapshot().snapshot.stateRevision;
+    std::string pendingPlanLoadError;
+    const auto pendingPlanLoadErrorCode = pendingPlanApi.LoadWorld(pendingPlanLoadRevision,
+        pendingPlanSave.data, &pendingPlanLoadError);
+    const auto restoredPlanSnapshot = pendingPlanApi.QuerySnapshot().snapshot;
+    const auto restoredSimulationCommandId = restoredPlanSnapshot.pendingTruckPlans.empty()
+        ? 0 : restoredPlanSnapshot.pendingTruckPlans.front().commandId;
+    check(pendingPlanSave.error == agent_api::ErrorCode::None && pendingPlanLoadErrorCode == agent_api::ErrorCode::None &&
+        restoredSimulationCommandId != 0 &&
+        !pendingPlanApi.LookupApiCommandHandleForSimulationCommand(restoredSimulationCommandId).has_value(),
+        "restored pending plan is not mislabeled with a handle from the replaced API timeline");
+
+    sim::Simulation sharedSimulation;
+    agent_api::Permissions sharedPermissions;
+    sharedPermissions.queryWorld = true;
+    sharedPermissions.stepSimulation = true;
+    sharedPermissions.construct = true;
+    sharedPermissions.assignTransport = true;
+    sharedPermissions.configureSimulation = true;
+    agent_api::AgentApi sharedApi(sharedSimulation, sharedPermissions);
+    const auto sharedInitial = sharedApi.QuerySnapshot();
+    const auto sharedCapabilities = sharedApi.DiscoverCapabilities();
+    check(sharedInitial.error == agent_api::ErrorCode::None &&
+        sharedInitial.snapshot.stateRevision == sharedSimulation.GetStateRevision() &&
+        sharedInitial.snapshot.tick == sharedSimulation.GetSnapshot().tick &&
+        std::find(sharedCapabilities.actions.begin(), sharedCapabilities.actions.end(),
+            agent_api::Action::ConfigureSimulation) != sharedCapabilities.actions.end(),
+        "injected API snapshot is the same authoritative simulation supplied by the app");
+    const auto sharedStorage = sharedApi.PlaceStorage(sharedInitial.snapshot.stateRevision, 7, 7);
+    check(sharedStorage.error == agent_api::ErrorCode::None &&
+        sharedApi.SetRoadEnabled(sharedInitial.snapshot.stateRevision, 202, false) ==
+            agent_api::ErrorCode::StaleRevision &&
+        sharedApi.Step() == agent_api::ErrorCode::None,
+        "injected API accepts and advances a player-storage command");
+    const auto sharedAfterPlacement = sharedSimulation.GetSnapshot();
+    const auto sharedCommandResult = sharedApi.GetCommandResult(sharedStorage.commandId);
+    check(sharedAfterPlacement.tick == 1 &&
+        std::any_of(sharedAfterPlacement.storages.begin(), sharedAfterPlacement.storages.end(),
+            [](const sim::PlacedStorageView& storage) { return storage.gridX == 7 && storage.gridZ == 7; }) &&
+        sharedCommandResult.state == agent_api::CommandState::Applied,
+        "API command outcome and external app-owned simulation state agree");
+    const auto sharedSave = sharedApi.SaveWorld();
+    const auto secondStorage = sharedApi.PlaceStorage(sharedApi.QuerySnapshot().snapshot.stateRevision, 8, 8);
+    check(sharedSave.error == agent_api::ErrorCode::None && secondStorage.error == agent_api::ErrorCode::None &&
+        sharedApi.Step() == agent_api::ErrorCode::None,
+        "shared-world save and later mutation both use the typed API");
+    const auto beforeLoadRevision = sharedApi.QuerySnapshot().snapshot.stateRevision;
+    std::string sharedLoadError;
+    check(sharedApi.LoadWorld(beforeLoadRevision, sharedSave.data, &sharedLoadError) ==
+        agent_api::ErrorCode::None && sharedApi.QuerySnapshot().snapshot.storages.size() == 2 &&
+        sharedApi.GetCommandResult(secondStorage.commandId).error == agent_api::ErrorCode::UnknownCommand,
+        "typed API load restores the earlier shared simulation state and clears replaced command tracking");
+    const auto reusedTimelineStorage = sharedApi.PlaceStorage(
+        sharedApi.QuerySnapshot().snapshot.stateRevision, 8, 8);
+    check(reusedTimelineStorage.error == agent_api::ErrorCode::None &&
+        reusedTimelineStorage.commandId != secondStorage.commandId &&
+        sharedApi.Step() == agent_api::ErrorCode::None &&
+        sharedApi.GetCommandResult(secondStorage.commandId).error == agent_api::ErrorCode::UnknownCommand &&
+        sharedApi.GetCommandResult(reusedTimelineStorage.commandId).state == agent_api::CommandState::Applied,
+        "a loaded timeline may reuse simulation IDs without reusing API handles or reviving old results");
+    const auto configuredThroughApi = sharedApi.QuerySnapshot().snapshot;
+    auto apiRules = configuredThroughApi.rules;
+    ++apiRules.farmGrainPerHarvest;
+    check(sharedApi.SetSimulationRules(configuredThroughApi.stateRevision, apiRules) == agent_api::ErrorCode::None &&
+        sharedSimulation.GetRules().farmGrainPerHarvest == apiRules.farmGrainPerHarvest,
+        "typed API configuration updates the same simulation instance");
+
     const auto denied = api.PlaceStorage(world.revision, 0, 0);
     check(denied.error == agent_api::ErrorCode::PermissionDenied, "construction permission is enforced");
+    check(api.SetSimulationRules(world.revision, world.rules) == agent_api::ErrorCode::PermissionDenied,
+        "simulation configuration permission is enforced independently of read permission");
     check(api.Step() == agent_api::ErrorCode::None, "permitted controller can advance fixed simulation ticks");
     const auto stale = api.AssignTransportPlan(world.revision, sim::TruckPlan{});
     check(stale.error == agent_api::ErrorCode::StaleRevision, "stale world revision is rejected");
@@ -105,14 +203,14 @@ int main() {
         "world query exposes cumulative flour deliveries consistent with warehouse stock");
 
     sim::Simulation rejectionSimulation;
-    const auto rejectedId = rejectionSimulation.QueueStoragePlacement(0, 0);
+    rejectionSimulation.QueueStoragePlacement(0, 0);
     agent_api::Permissions all;
     all.stepSimulation = true; all.construct = true; all.assignTransport = true;
     agent_api::AgentApi rejectionApi(std::move(rejectionSimulation), all);
     const auto rejectedSubmission = rejectionApi.PlaceStorage(rejectionApi.QueryWorld().world.revision, 0, 0);
     check(rejectedSubmission.error == agent_api::ErrorCode::None, "simulation validation remains asynchronous after admission");
     rejectionApi.Step();
-    const auto rejected = rejectionApi.GetCommandResult(rejectedId + 1);
+    const auto rejected = rejectionApi.GetCommandResult(rejectedSubmission.commandId);
     check(rejected.state == agent_api::CommandState::Rejected && rejected.error == agent_api::ErrorCode::SimulationRejected,
         "simulation rejection is distinct from queue acceptance");
     check(rejected.failureReason == sim::ConstructionFailureReason::OccupiedCell,
@@ -156,6 +254,13 @@ int main() {
         deniedQuery.world.route.assignedPlan.farmId == 0 && deniedQuery.world.route.assignedPlan.millId == 0 &&
         deniedQuery.world.route.assignedPlan.storageId == 0 && deniedQuery.world.route.truckNode == 0,
         "denied world query returns explicit permission status without exposing state or revision");
+    const auto deniedSnapshot = queryDeniedApi.QuerySnapshot();
+    check(deniedSnapshot.error == agent_api::ErrorCode::PermissionDenied &&
+        deniedSnapshot.snapshot.tick == 0 && deniedSnapshot.snapshot.facilities.empty() &&
+        deniedSnapshot.snapshot.storages.empty() && deniedSnapshot.snapshot.rules.farmGrainPerHarvest == 0 &&
+        deniedSnapshot.snapshot.truckPlan.farmId == 0 && deniedSnapshot.snapshot.truckPlan.millId == 0 &&
+        deniedSnapshot.snapshot.truckPlan.storageId == 0,
+        "full in-process snapshot query also returns no state when query permission is denied");
     const auto deniedCapabilities = queryDeniedApi.DiscoverCapabilities();
     check(std::find(deniedCapabilities.actions.begin(), deniedCapabilities.actions.end(), agent_api::Action::QueryWorld) == deniedCapabilities.actions.end() &&
         std::find(deniedCapabilities.actions.begin(), deniedCapabilities.actions.end(), agent_api::Action::QueryEntityPage) == deniedCapabilities.actions.end() &&
@@ -323,18 +428,25 @@ int main() {
         "bounded event journal reports an expired cursor and retained sequence window");
 
     sim::Simulation surfacedResultSimulation;
+    for (std::size_t i = 0; i < 3; ++i) {
+        const auto retiredCommand = surfacedResultSimulation.QueueStoragePlacement(0, 0);
+        surfacedResultSimulation.Step();
+        surfacedResultSimulation.AcknowledgeConstructionResult(retiredCommand);
+    }
     const auto surfacedCommand = surfacedResultSimulation.QueueStoragePlacement(0, 0);
     surfacedResultSimulation.Step();
     agent_api::AgentApi adoptedApi(std::move(surfacedResultSimulation), all);
-    const auto adoptedResult = adoptedApi.GetCommandResult(surfacedCommand);
     const auto adoptedEvents = adoptedApi.ReadEvents(0, 2);
+    const auto adoptedApiCommand = adoptedEvents.page.events.empty() ? 0 : adoptedEvents.page.events[0].commandId;
+    const auto adoptedResult = adoptedApi.GetCommandResult(adoptedApiCommand);
     check(adoptedResult.state == agent_api::CommandState::Rejected &&
-        adoptedResult.failureReason == sim::ConstructionFailureReason::OccupiedCell,
-        "API adoption keeps pre-existing simulation results queryable before acknowledging them");
+        adoptedResult.failureReason == sim::ConstructionFailureReason::OccupiedCell &&
+        adoptedApiCommand != surfacedCommand,
+        "API adoption assigns an opaque handle to a pre-existing simulation result before acknowledging it");
     check(adoptedEvents.page.events.size() == 1 &&
         adoptedEvents.page.events[0].type == agent_api::EventType::CommandRejected &&
-        adoptedEvents.page.events[0].commandId == surfacedCommand,
-        "adopted result emits its command outcome into the process-local event journal");
+        adoptedEvents.page.events[0].commandId == adoptedApiCommand,
+        "adopted result event carries the same API handle as its queryable result");
 
     agent_api::Permissions batchedPermissions;
     batchedPermissions.queryWorld = true;
@@ -393,8 +505,7 @@ int main() {
     }
     const auto hiddenCapacity = hiddenResultApi.AssignTransportPlan(hiddenRevision,
         sim::TruckPlan{sim::Simulation::FarmId, sim::Simulation::MillId, sim::Simulation::WarehouseId});
-    check(hiddenCapacity.error == agent_api::ErrorCode::QueueFull &&
-        hiddenResultApi.GetCommandResult(hiddenResultCommand).error == agent_api::ErrorCode::UnknownCommand,
+    check(hiddenCapacity.error == agent_api::ErrorCode::QueueFull,
         "CollectCompletedCommands preserves untracked transferred results without query permission");
 
     agent_api::Permissions privateCommandPermissions;
