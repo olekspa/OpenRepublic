@@ -251,6 +251,65 @@ int main() {
     Check(progressed.farm.grain <= 12, "farm storage never exceeds capacity");
     Check(progressed.mill.grain <= 4 && progressed.mill.flour <= 4, "mill inventories never exceed capacity");
 
+    // Long-horizon synthetic acceptance: a mid-run save/reload must preserve
+    // the same 10,000-tick trajectory, and cumulative delivery must reconcile
+    // to all flour still held by storage (there is no consumption system yet).
+    const auto inventoriesWithinCapacity = [](const openrepublic::sim::Snapshot& snapshot) {
+        if (snapshot.facilities.size() < 2 || snapshot.storages.empty()) return false;
+        bool hasFarm = false;
+        bool hasMill = false;
+        for (const auto& storage : snapshot.storages) {
+            if (storage.inventory.grain != 0 || storage.inventory.flour > 5) return false;
+        }
+        for (const auto& facility : snapshot.facilities) {
+            if (facility.type == openrepublic::sim::FacilityType::Farm) {
+                hasFarm = true;
+                if (facility.inventory.grain > 12 || facility.inventory.flour != 0) return false;
+            } else if (facility.type == openrepublic::sim::FacilityType::Mill) {
+                hasMill = true;
+                if (facility.inventory.grain > 4 || facility.inventory.flour > 4) return false;
+            } else {
+                return false;
+            }
+        }
+        return hasFarm && hasMill;
+    };
+    Simulation longRun = Simulation::CreateSyntheticDemo();
+    Simulation checkpointedRun = Simulation::CreateSyntheticDemo();
+    bool boundedLongRunInventories = true;
+    bool sameLongRunTrajectory = true;
+    for (std::uint64_t i = 0; i < 4999; ++i) {
+        longRun.Step();
+        checkpointedRun.Step();
+        boundedLongRunInventories = inventoriesWithinCapacity(longRun.GetSnapshot()) && boundedLongRunInventories;
+        sameLongRunTrajectory = sameLongRunTrajectory && longRun.Save() == checkpointedRun.Save();
+    }
+    const auto longRunCheckpoint = checkpointedRun.Save();
+    Simulation resumedRun;
+    Check(resumedRun.Load(longRunCheckpoint, &error),
+        "long-horizon checkpoint loads at a non-boundary tick");
+    Check(resumedRun.Save() == longRunCheckpoint,
+        "long-horizon checkpoint reload preserves the exact canonical state");
+    for (std::uint64_t i = 4999; i < 10000; ++i) {
+        longRun.Step();
+        checkpointedRun.Step();
+        resumedRun.Step();
+        boundedLongRunInventories = inventoriesWithinCapacity(longRun.GetSnapshot()) && boundedLongRunInventories;
+        sameLongRunTrajectory = sameLongRunTrajectory && longRun.Save() == checkpointedRun.Save() &&
+            longRun.Save() == resumedRun.Save();
+    }
+    const auto longRunSnapshot = longRun.GetSnapshot();
+    std::uint64_t flourRemainingInStorage = 0;
+    for (const auto& storage : longRunSnapshot.storages) {
+        flourRemainingInStorage += storage.inventory.flour;
+    }
+    Check(longRunSnapshot.tick == 10000, "long-horizon simulation advances exactly 10,000 ticks");
+    Check(sameLongRunTrajectory && longRun.Save() == checkpointedRun.Save() && longRun.Save() == resumedRun.Save(),
+        "uninterrupted and save/reloaded runs match at every tick through tick 10,000");
+    Check(boundedLongRunInventories, "all long-horizon facility and storage inventories remain within capacity");
+    Check(longRunSnapshot.deliveredFlourTotal == flourRemainingInStorage,
+        "cumulative flour delivery reconciles to stored flour while consumption is absent");
+
     // Construction is an OpenRepublic-only grid prototype with stable IDs and bounded cells.
     Simulation placement = Simulation::CreateSyntheticDemo();
     Check(placement.PlacePrototypeStorage(-16, -16) == Simulation::FirstPrototypeStorageId,
