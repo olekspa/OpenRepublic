@@ -24,7 +24,8 @@ namespace openrepublic
 	namespace
 	{
 		constexpr float kSimulationTickSeconds = 0.25f;
-		constexpr float kFlySpeed = 5.0f;
+		constexpr float kCameraMoveSpeed = 5.0f;
+		constexpr float kMaxCameraMoveDeltaSeconds = 0.1f;
 		constexpr float kWheelZoomSpeed = 0.9f;
 		constexpr XMFLOAT4 kFarmColor(0.24f, 0.52f, 0.28f, 1.0f);
 		constexpr XMFLOAT4 kMillColor(0.72f, 0.43f, 0.20f, 1.0f);
@@ -574,13 +575,19 @@ namespace openrepublic
 		const XMVECTOR up = XMLoadFloat3(&camera.Up);
 		const XMVECTOR right = XMVector3Normalize(XMVector3Cross(up, forward));
 		XMVECTOR movement = XMVectorZero();
+		const auto isDownOrPressed = [](wi::input::BUTTON button)
+		{
+			const bool down = wi::input::Down(button);
+			const bool pressed = wi::input::Press(button);
+			return down || pressed;
+		};
 
-		if (wi::input::Down(static_cast<wi::input::BUTTON>('W')) || wi::input::Down(wi::input::KEYBOARD_BUTTON_UP)) movement = XMVectorAdd(movement, forward);
-		if (wi::input::Down(static_cast<wi::input::BUTTON>('S')) || wi::input::Down(wi::input::KEYBOARD_BUTTON_DOWN)) movement = XMVectorSubtract(movement, forward);
-		if (wi::input::Down(static_cast<wi::input::BUTTON>('D')) || wi::input::Down(wi::input::KEYBOARD_BUTTON_RIGHT)) movement = XMVectorAdd(movement, right);
-		if (wi::input::Down(static_cast<wi::input::BUTTON>('A')) || wi::input::Down(wi::input::KEYBOARD_BUTTON_LEFT)) movement = XMVectorSubtract(movement, right);
-		if (wi::input::Down(wi::input::KEYBOARD_BUTTON_SPACE)) movement = XMVectorAdd(movement, XMVectorSet(0, 1, 0, 0));
-		if (wi::input::Down(wi::input::KEYBOARD_BUTTON_LCONTROL)) movement = XMVectorSubtract(movement, XMVectorSet(0, 1, 0, 0));
+		if (isDownOrPressed(static_cast<wi::input::BUTTON>('W')) || isDownOrPressed(wi::input::KEYBOARD_BUTTON_UP)) movement = XMVectorAdd(movement, forward);
+		if (isDownOrPressed(static_cast<wi::input::BUTTON>('S')) || isDownOrPressed(wi::input::KEYBOARD_BUTTON_DOWN)) movement = XMVectorSubtract(movement, forward);
+		if (isDownOrPressed(static_cast<wi::input::BUTTON>('D')) || isDownOrPressed(wi::input::KEYBOARD_BUTTON_RIGHT)) movement = XMVectorAdd(movement, right);
+		if (isDownOrPressed(static_cast<wi::input::BUTTON>('A')) || isDownOrPressed(wi::input::KEYBOARD_BUTTON_LEFT)) movement = XMVectorSubtract(movement, right);
+		if (isDownOrPressed(wi::input::KEYBOARD_BUTTON_SPACE)) movement = XMVectorAdd(movement, XMVectorSet(0, 1, 0, 0));
+		if (isDownOrPressed(wi::input::KEYBOARD_BUTTON_LCONTROL)) movement = XMVectorSubtract(movement, XMVectorSet(0, 1, 0, 0));
 
 		const XMFLOAT4 pointer = wi::input::GetPointer();
 		bool cameraMoved = false;
@@ -588,7 +595,9 @@ namespace openrepublic
 		{
 			movement = XMVector3Normalize(movement);
 			const XMVECTOR eye = XMLoadFloat3(&camera.Eye);
-			XMStoreFloat3(&camera.Eye, XMVectorAdd(eye, XMVectorScale(movement, kFlySpeed * dt)));
+			// Keep movement in world-units per second and bound catch-up after a stalled frame.
+			const float movementDelta = std::clamp(dt, 0.0f, kMaxCameraMoveDeltaSeconds);
+			XMStoreFloat3(&camera.Eye, XMVectorAdd(eye, XMVectorScale(movement, kCameraMoveSpeed * movementDelta)));
 			cameraMoved = true;
 		}
 		if (pointer.z != 0)
@@ -630,8 +639,8 @@ namespace openrepublic
 		{
 			const std::string id = GetOpenRepublicId(selectedBuilding);
 			SetWindowTextA(window, !id.empty()
-				? (std::string("OpenRepublic | Selected ") + id + " | WASD move, wheel zoom, click inspect, Esc clear").c_str()
-				: "OpenRepublic | Synthetic economy | WASD move, wheel zoom, click select, Esc clear");
+				? (std::string("OpenRepublic | Selected ") + id + " | WASD/Arrows move, Space/Ctrl rise/lower, wheel zoom, click inspect, Esc clear").c_str()
+				: "OpenRepublic | Synthetic economy | WASD/Arrows move, Space/Ctrl rise/lower, wheel zoom, click select, Esc clear");
 		}
 	}
 
