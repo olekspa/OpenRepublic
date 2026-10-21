@@ -721,6 +721,14 @@ namespace openrepublic
 		queueTruckPlanButton.SetPos(XMFLOAT2(498, 90));
 		queueTruckPlanButton.OnClick([this](const wi::gui::EventArgs&) { QueueSelectedTruckPlan(); });
 		gui.AddWidget(&queueTruckPlanButton);
+
+		selectNextStorageButton.Create("SelectNextStorageButton");
+		selectNextStorageButton.SetText("Next storage");
+		StyleButton(selectNextStorageButton);
+		selectNextStorageButton.SetSize(XMFLOAT2(130, 28));
+		selectNextStorageButton.SetPos(XMFLOAT2(650, 90));
+		selectNextStorageButton.OnClick([this](const wi::gui::EventArgs&) { SelectNextStorage(); });
+		gui.AddWidget(&selectNextStorageButton);
 		setTruckFarmButton.SetText("Farm: OR-" + std::to_string(truckPlan.farmId));
 		setTruckMillButton.SetText("Mill: OR-" + std::to_string(truckPlan.millId));
 		setTruckStorageButton.SetText("Storage: OR-" + std::to_string(truckPlan.storageId));
@@ -798,7 +806,14 @@ namespace openrepublic
 			return;
 		}
 
-		const bool guiHasFocus = renderPath->GetGUI().HasFocus();
+		const XMFLOAT4 pointer = wi::input::GetPointer();
+		const wi::primitive::Hitbox2D pointerHitbox(XMFLOAT2(pointer.x, pointer.y), XMFLOAT2(1, 1));
+		// GUI::HasFocus() includes passive labels. The status panel spans a large part
+		// of the viewport, so let world input pass through it while preserving the
+		// normal input guard for the actual buttons above it.
+		const bool pointerOnStatusLabel = simulationStatus.IsVisible() &&
+			pointerHitbox.intersects(simulationStatus.hitBox);
+		const bool guiHasFocus = renderPath->GetGUI().HasFocus() && !pointerOnStatusLabel;
 		if (!guiHasFocus && wi::input::Press(wi::input::KEYBOARD_BUTTON_ESCAPE))
 		{
 			if (activeRoadPlacement) CancelRoadPlacement();
@@ -833,7 +848,6 @@ namespace openrepublic
 		if (isDownOrPressed(wi::input::KEYBOARD_BUTTON_SPACE)) movement = XMVectorAdd(movement, XMVectorSet(0, 1, 0, 0));
 		if (isDownOrPressed(wi::input::KEYBOARD_BUTTON_LCONTROL)) movement = XMVectorSubtract(movement, XMVectorSet(0, 1, 0, 0));
 
-		const XMFLOAT4 pointer = wi::input::GetPointer();
 		bool cameraMoved = false;
 		if (XMVectorGetX(XMVector3LengthSq(movement)) > 0)
 		{
@@ -973,6 +987,42 @@ namespace openrepublic
 		UpdateStatusLabel();
 	}
 
+	void OpenRepublicApplication::SelectNextStorage()
+	{
+		std::vector<wi::ecs::Entity> storageEntities;
+		storageEntities.reserve(prototypeStorageEntities.size() + 1);
+		if (warehouseBuilding != wi::ecs::INVALID_ENTITY && !GetOpenRepublicId(warehouseBuilding).empty())
+		{
+			storageEntities.push_back(warehouseBuilding);
+		}
+		for (const wi::ecs::Entity entity : prototypeStorageEntities)
+		{
+			if (entity != wi::ecs::INVALID_ENTITY && !GetOpenRepublicId(entity).empty())
+			{
+				storageEntities.push_back(entity);
+			}
+		}
+		if (storageEntities.empty())
+		{
+			uiNotice = "No storage entities are available to select.";
+			UpdateStatusLabel();
+			return;
+		}
+
+		const auto current = std::find(storageEntities.begin(), storageEntities.end(), selectedBuilding);
+		const auto next = current == storageEntities.end() || std::next(current) == storageEntities.end()
+			? storageEntities.begin() : std::next(current);
+		if (*next == wi::ecs::INVALID_ENTITY)
+		{
+			uiNotice = "The next storage entity is not available in the scene.";
+			UpdateStatusLabel();
+			return;
+		}
+
+		uiNotice = "Selected storage " + GetOpenRepublicId(*next) + " from the storage list.";
+		SelectBuilding(*next);
+	}
+
 	void OpenRepublicApplication::QueueSelectedTruckPlan()
 	{
 		const auto snapshot = simulation.GetSnapshot();
@@ -1072,7 +1122,7 @@ namespace openrepublic
 		activeStoragePlacement = true;
 		SelectBuilding(wi::ecs::INVALID_ENTITY);
 		placeStorageButton.SetText("Cancel storage");
-		uiNotice = "Place synthetic storage: click a valid construction grid cell. The storage is queued for validation at the next fixed simulation tick; Esc or Cancel build exits placement.";
+		uiNotice = "Place synthetic storage: click a valid construction grid cell. One placement will queue for validation at the next fixed simulation tick, then return to selection mode; Esc or Cancel build exits placement.";
 		UpdateStatusLabel();
 	}
 
@@ -1279,6 +1329,11 @@ namespace openrepublic
 			{
 				uiNotice = "Queued storage placement command " + std::to_string(commandId) + " at grid (" +
 					std::to_string(gridX) + ", " + std::to_string(gridZ) + "); occupancy and capacity are validated at the next fixed tick.";
+				// Storage placement is a single-cell action. Return to selection mode
+				// after one queued placement so the next world click cannot accidentally
+				// place another storage where the player intended to select this one.
+				activeStoragePlacement = false;
+				placeStorageButton.SetText("Place storage");
 			}
 			UpdateStatusLabel();
 			return;
@@ -1355,27 +1410,56 @@ namespace openrepublic
 
 	void OpenRepublicApplication::SyncPrototypeStorages(const openrepublic::sim::Snapshot& snapshot)
 	{
-		while (prototypeStorageEntities.size() > snapshot.prototypeStorages.size())
+		std::vector<std::string> snapshotIds;
+		snapshotIds.reserve(snapshot.prototypeStorages.size());
+		for (const auto& storage : snapshot.prototypeStorages)
 		{
-			previewWorld.Entity_Remove(prototypeStorageEntities.back());
-			prototypeStorageEntities.pop_back();
-			prototypeStorageIds.pop_back();
+			snapshotIds.push_back("OR-" + std::to_string(storage.id));
 		}
 
-		while (prototypeStorageEntities.size() < snapshot.prototypeStorages.size())
+		if (prototypeStorageIds != snapshotIds)
 		{
-			const auto& storage = snapshot.prototypeStorages[prototypeStorageEntities.size()];
-			const std::string openRepublicId = "OR-" + std::to_string(storage.id);
-			const std::string name = "OpenRepublic synthetic storage " + openRepublicId;
-			const wi::ecs::Entity entity = previewWorld.Entity_CreateCube(name);
-			if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(entity))
+			const std::string previouslySelectedId = GetOpenRepublicId(selectedBuilding);
+			const bool selectedStorage = std::find(prototypeStorageIds.begin(), prototypeStorageIds.end(), previouslySelectedId) !=
+				prototypeStorageIds.end();
+			const bool preserveSelection = selectedStorage &&
+				std::find(snapshotIds.begin(), snapshotIds.end(), previouslySelectedId) != snapshotIds.end();
+			if (selectedStorage)
 			{
-				transform->Scale(XMFLOAT3(0.58f, 0.58f, 0.58f));
-				transform->UpdateTransform();
+				SelectBuilding(wi::ecs::INVALID_ENTITY);
 			}
-			SetEntityColor(entity, kPrototypeStorageColor);
-			prototypeStorageEntities.push_back(entity);
-			prototypeStorageIds.push_back(openRepublicId);
+
+			for (const wi::ecs::Entity entity : prototypeStorageEntities)
+			{
+				previewWorld.Entity_Remove(entity);
+			}
+			prototypeStorageEntities.clear();
+			prototypeStorageIds.clear();
+
+			for (const auto& storage : snapshot.prototypeStorages)
+			{
+				const std::string openRepublicId = "OR-" + std::to_string(storage.id);
+				const std::string name = "OpenRepublic synthetic storage " + openRepublicId;
+				const wi::ecs::Entity entity = previewWorld.Entity_CreateCube(name);
+				if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(entity))
+				{
+					transform->Scale(XMFLOAT3(0.58f, 0.58f, 0.58f));
+					transform->UpdateTransform();
+				}
+				SetEntityColor(entity, kPrototypeStorageColor);
+				prototypeStorageEntities.push_back(entity);
+				prototypeStorageIds.push_back(openRepublicId);
+			}
+
+			if (preserveSelection)
+			{
+				const auto restored = std::find(prototypeStorageIds.begin(), prototypeStorageIds.end(), previouslySelectedId);
+				if (restored != prototypeStorageIds.end())
+				{
+					const std::size_t index = static_cast<std::size_t>(std::distance(prototypeStorageIds.begin(), restored));
+					SelectBuilding(prototypeStorageEntities[index]);
+				}
+			}
 		}
 
 		for (std::size_t i = 0; i < snapshot.prototypeStorages.size(); ++i)
@@ -1397,6 +1481,8 @@ namespace openrepublic
 		const std::size_t firstDynamicFacility = std::min<std::size_t>(2, snapshot.facilities.size());
 		const std::size_t dynamicFacilityCount = snapshot.facilities.size() - firstDynamicFacility;
 		bool identityChanged = facilityEntities.size() != dynamicFacilityCount;
+		std::string previouslySelectedId;
+		bool preserveSelection = false;
 		for (std::size_t i = 0; !identityChanged && i < snapshot.facilities.size(); ++i)
 		{
 			if (i < firstDynamicFacility) continue;
@@ -1404,6 +1490,16 @@ namespace openrepublic
 		}
 		if (identityChanged)
 		{
+			previouslySelectedId = GetOpenRepublicId(selectedBuilding);
+			const bool selectedDynamicFacility = std::find(facilityIds.begin(), facilityIds.end(), previouslySelectedId) !=
+				facilityIds.end();
+			preserveSelection = selectedDynamicFacility &&
+				std::find_if(snapshot.facilities.begin() + firstDynamicFacility, snapshot.facilities.end(),
+					[&](const auto& facility) { return "OR-" + std::to_string(facility.id) == previouslySelectedId; }) != snapshot.facilities.end();
+			if (selectedDynamicFacility)
+			{
+				SelectBuilding(wi::ecs::INVALID_ENTITY);
+			}
 			for (const wi::ecs::Entity entity : facilityEntities) previewWorld.Entity_Remove(entity);
 			facilityEntities.clear();
 			facilityIds.clear();
@@ -1437,6 +1533,15 @@ namespace openrepublic
 			}
 			const XMFLOAT4 baseColor = facility.type == openrepublic::sim::FacilityType::Farm ? kPlacedFarmColor : kPlacedMillColor;
 			SetEntityColor(facilityEntities[dynamicIndex], selectedBuilding == facilityEntities[dynamicIndex] ? kSelectedBuildingColor : baseColor);
+		}
+		if (identityChanged && preserveSelection)
+		{
+			const auto match = std::find(facilityIds.begin(), facilityIds.end(), previouslySelectedId);
+			if (match != facilityIds.end())
+			{
+				const std::size_t index = static_cast<std::size_t>(std::distance(facilityIds.begin(), match));
+				SelectBuilding(facilityEntities[index]);
+			}
 		}
 		if (selectedBuilding != wi::ecs::INVALID_ENTITY && GetOpenRepublicId(selectedBuilding).empty())
 		{

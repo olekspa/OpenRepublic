@@ -37,6 +37,7 @@ namespace openrepublic
 		void AssignTruckFarmEndpoint();
 		void AssignTruckMillEndpoint();
 		void AssignTruckStorageEndpoint();
+		void SelectNextStorage();
 		void QueueSelectedTruckPlan();
 		void ApplyPendingRoadToggle();
 		void ApplyPendingRules();
@@ -82,6 +83,7 @@ namespace openrepublic
 		wi::gui::Button setTruckMillButton;
 		wi::gui::Button setTruckStorageButton;
 		wi::gui::Button queueTruckPlanButton;
+		wi::gui::Button selectNextStorageButton;
 		wi::gui::Button saveButton;
 		wi::gui::Button loadButton;
 		wi::gui::Button reloadRulesButton;

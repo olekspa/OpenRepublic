@@ -479,6 +479,21 @@ int main() {
     Check(storageResult != playerBuilt.constructionResults.end() && storageResult->accepted && storageResult->entityId == playerStorageId &&
         storageResult->type == openrepublic::sim::ConstructionCommandType::StoragePlacement,
         "queued storage placement returns a typed stable entity result");
+    const auto playerFarmEntity = std::find_if(playerBuilt.facilities.begin(), playerBuilt.facilities.end(), [](const auto& f) {
+        return f.id == Simulation::FirstFacilityId;
+    });
+    const auto playerMillEntity = std::find_if(playerBuilt.facilities.begin(), playerBuilt.facilities.end(), [](const auto& f) {
+        return f.id == Simulation::FirstFacilityId + 1;
+    });
+    const auto playerStorageEntity = std::find_if(playerBuilt.storages.begin(), playerBuilt.storages.end(),
+        [playerStorageId](const auto& s) { return s.id == playerStorageId; });
+    Check(playerFarmEntity != playerBuilt.facilities.end() && playerFarmEntity->type == FacilityType::Farm &&
+        playerFarmEntity->gridX == -1 && playerFarmEntity->gridZ == 1 &&
+        playerMillEntity != playerBuilt.facilities.end() && playerMillEntity->type == FacilityType::Mill &&
+        playerMillEntity->gridX == 0 && playerMillEntity->gridZ == 1 &&
+        playerStorageEntity != playerBuilt.storages.end() && playerStorageEntity->gridX == 1 &&
+        playerStorageEntity->gridZ == 1,
+        "accepted placement IDs resolve to the matching player Farm, Mill, and Storage entities");
     const TruckPlan playerPlan{Simulation::FirstFacilityId, Simulation::FirstFacilityId + 1, playerStorageId};
     const auto playerPlanCommand = playerChain.QueueTruckPlan(playerPlan);
     Check(playerPlanCommand != 0 && playerChain.GetSnapshot().truckPlan.farmId == Simulation::FarmId,
@@ -503,9 +518,15 @@ int main() {
         [playerPlanCommand](const auto& r) { return r.commandId == playerPlanCommand; });
     Check(planResult != appliedPlanSnapshot.constructionResults.end() && planResult->accepted &&
         planResult->type == openrepublic::sim::ConstructionCommandType::TruckPlan &&
-        appliedPlanSnapshot.truckPlan.farmId == playerPlan.farmId,
-        "connected player entities accept a typed queued plan at the tick boundary");
-    Check(queuedPlanRestored.Save() == playerChain.Save(), "queued plan applies deterministically after save/load");
+        appliedPlanSnapshot.truckPlan.farmId == playerPlan.farmId &&
+        appliedPlanSnapshot.truckPlan.millId == playerPlan.millId &&
+        appliedPlanSnapshot.truckPlan.storageId == playerPlan.storageId,
+        "connected player entities accept the exact player Farm, Mill, and Storage IDs at the tick boundary");
+    const auto restoredAppliedPlan = queuedPlanRestored.GetSnapshot().truckPlan;
+    Check(queuedPlanRestored.Save() == playerChain.Save() &&
+        restoredAppliedPlan.farmId == playerPlan.farmId && restoredAppliedPlan.millId == playerPlan.millId &&
+        restoredAppliedPlan.storageId == playerPlan.storageId,
+        "save/load preserves the applied plan's exact player entity IDs");
     Simulation pendingWorldPlan;
     const auto pendingFarm = pendingWorldPlan.QueueFacilityPlacement(FacilityType::Farm, -2, 1);
     const auto pendingMill = pendingWorldPlan.QueueFacilityPlacement(FacilityType::Mill, 2, 1);
