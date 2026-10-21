@@ -55,3 +55,12 @@ A legitimate installation and read-only loading are project assumptions and engi
 The first OpenRepublic-owned application scene uses only OpenRepublic-created geometry and materials. Current community and official modding documents describe game-side mod and ModelViewer workflows, but do not establish a standalone vanilla-asset export/import contract. A synthetic scene lets us validate the app and renderer integration before a content-format experiment.
 
 **Consequence:** this is a sequencing choice, not a replacement for the requested local WRSR-asset investigation. Keep the first local asset/material and terrain/placement gates explicit; do not call the synthetic viewer WRSR-compatible.
+
+## D-007: Use one typed Agent API over the authoritative simulation
+
+**Date:** 21 October 2026
+**Status:** Accepted
+
+Human UI, tests, Lua-facing tools, and future LLM or external controllers must reach gameplay through the same validated command and query paths over the authoritative C++ simulation. The first implementation is an in-process typed C++ interface with capability discovery, revision-checked entity queries and commands, bounded paging and event reads, permission checks, and distinct queued/applied/rejected results. It does not own a second simulation and does not expose renderer entities as world identity.
+
+**Consequence:** keep command/query types and state revisions explicit, and apply mutations at simulation tick boundaries. Add provider-neutral MCP or local IPC adapters only after the internal contract is stable; any wire schema, transport, and authentication remain separate versioned work. The current API is not a WRSR protocol or compatibility claim.

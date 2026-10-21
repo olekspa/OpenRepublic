@@ -135,3 +135,13 @@ Only these tracked project files were modified for the current M0 increment: `sr
 
 - Final staged diff check passed. The scoped terrain-transform preview implementation, synthetic tests, and supporting status/evidence documentation were committed as `96d0e14` (`Add explicit terrain transform preview path`) and pushed to `origin/main`.
 - This publication does not close the remaining UI spatial-picking or route save/reload gates, and does not establish graphical transform correctness, WRSR terrain placement, or compatibility. No proprietary game files or private research payloads were published.
+
+## Chronological continuation — typed Agent API v0
+
+**2026-10-21 15:14 EDT (19:14 UTC)**
+
+- Added an in-process typed C++ `AgentApi` facade over the existing authoritative `Simulation`. Capability discovery reports permission-gated actions. Queries expose stable simulation IDs, entity inventories, route state, revision-checked entity pages, and a bounded process-local event journal. Commands use revision checks and the existing simulation validation path, with distinct queued, applied, and rejected outcomes and concrete execution diagnostics.
+- Added hard bounds of 10,000 ticks per step call, 64 retained command results, 32 entities per page, 128 retained events, and 32 events per read. Event cursors report when their history fell behind; batched stepping records first-tick command outcomes before aggregating the remaining ticks. Save v7 does not serialize the API revision, diagnostics, or event journal.
+- Independent review led to fixes for unbounded stepping, signed-overflow road validation, result-retention growth, denied-query leakage, historical-result acknowledgment, and event order/timestamps. The final review found no actionable issue; synthetic tests cover these cases and the API paging/journal contract.
+- **VERIFIED — Release source/build/test evidence:** the client `OpenRepublic` and `OpenRepublicAgentApiTests` targets built. Full client CTest passed 7/7; full headless CTest passed 6/6. The synthetic API controller test completes a Farm→Mill→Storage delivery. This does not establish runtime UI acceptance, WRSR behavior, a serialized agent protocol, or IPC/MCP/C# support.
+- No WRSR game was launched, and no Steam installation, save, original asset, or Rival Republics file was modified or added. The source and documentation changes remain under final diff review before publication.

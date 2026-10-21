@@ -62,12 +62,22 @@ struct FacilityPlacementResult {
 
 enum class ConstructionCommandType : std::uint8_t { FacilityPlacement = 1, RoadSegment = 2, TruckPlan = 3, StoragePlacement = 4 };
 
+// Runtime execution diagnostics. These values are OpenRepublic validation
+// outcomes; they make no claim about any external game's command model.
+enum class ConstructionFailureReason : std::uint8_t {
+    None = 0, InvalidFacilityType, OutOfBounds, OccupiedCell, CapacityExceeded,
+    InvalidRoadGeometry, DuplicateRoadSegment, InvalidTransportPlan,
+    TruckNotAtCommandBoundary, DisconnectedRoute, StorageRetargetUnavailable,
+    DiagnosticUnavailableFromSave
+};
+
 struct ConstructionResult {
     std::uint64_t commandId{};
     ConstructionCommandType type{ConstructionCommandType::FacilityPlacement};
     bool accepted{};
     // Facility ID for FacilityPlacement, road edge ID for RoadSegment; zero on rejection.
     EntityId entityId{};
+    ConstructionFailureReason failureReason{ConstructionFailureReason::None};
 };
 
 struct RoadNodeView {
@@ -117,6 +127,9 @@ struct Snapshot {
     std::vector<RoadNodeView> roadNodes;
     std::vector<RoadView> roads;
     SimulationRules rules;
+    // Monotonic process-local revision. It is intentionally not part of the
+    // save format; loading valid state advances the receiving instance's revision.
+    std::uint64_t stateRevision{};
 };
 
 // OpenRepublic-authored demonstration scenario. Values are synthetic and do not
@@ -155,6 +168,7 @@ public:
     void Step();
     void Step(std::uint64_t count);
     Snapshot GetSnapshot() const;
+    std::uint64_t GetStateRevision() const noexcept;
     SimulationRules GetRules() const;
     bool SetRules(const SimulationRules& rules, std::string* error = nullptr);
 

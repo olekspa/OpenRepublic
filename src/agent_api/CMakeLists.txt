@@ -1,0 +1,4 @@
+add_library(OpenRepublicAgentApi agent_api.cpp)
+target_include_directories(OpenRepublicAgentApi PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(OpenRepublicAgentApi PUBLIC OpenRepublicSimulation)
+target_compile_features(OpenRepublicAgentApi PUBLIC cxx_std_17)

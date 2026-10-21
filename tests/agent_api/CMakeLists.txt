@@ -1,0 +1,4 @@
+add_executable(OpenRepublicAgentApiTests agent_api_tests.cpp)
+target_link_libraries(OpenRepublicAgentApiTests PRIVATE OpenRepublicAgentApi)
+enable_testing()
+add_test(NAME OpenRepublicAgentApiTests COMMAND OpenRepublicAgentApiTests)

@@ -54,6 +54,7 @@ bool ReadSigned(std::istream& in, Int& value) {
 
 struct Simulation::State {
     Tick tick{};
+    std::uint64_t revision{1};
     SimulationRules rules{};
     std::uint64_t deliveredFlourTotal{};
     // Built-ins and player entities share the same inventory-bearing records.
@@ -323,11 +324,18 @@ struct Simulation::State {
         for (const auto& request : commandQueue) {
             bool accepted = false;
             EntityId entity = 0;
+            ConstructionFailureReason failure = ConstructionFailureReason::None;
             if (request.type == ConstructionCommandType::FacilityPlacement) {
                 const bool validType = request.facilityType == FacilityType::Farm || request.facilityType == FacilityType::Mill;
-                const bool validCell = request.ax >= Simulation::PrototypeGridMin && request.ax <= Simulation::PrototypeGridMax &&
-                    request.az >= Simulation::PrototypeGridMin && request.az <= Simulation::PrototypeGridMax && !CellOccupied(request.ax, request.az);
-                accepted = validType && validCell && facilities.size() < Simulation::MaxFacilities + 2;
+                const bool inBounds = request.ax >= Simulation::PrototypeGridMin && request.ax <= Simulation::PrototypeGridMax &&
+                    request.az >= Simulation::PrototypeGridMin && request.az <= Simulation::PrototypeGridMax;
+                const bool occupied = inBounds && CellOccupied(request.ax, request.az);
+                const bool capacity = facilities.size() >= Simulation::MaxFacilities + 2;
+                accepted = validType && inBounds && !occupied && !capacity;
+                if (!validType) failure = ConstructionFailureReason::InvalidFacilityType;
+                else if (!inBounds) failure = ConstructionFailureReason::OutOfBounds;
+                else if (occupied) failure = ConstructionFailureReason::OccupiedCell;
+                else if (capacity) failure = ConstructionFailureReason::CapacityExceeded;
                 if (accepted) {
                     entity = Simulation::FirstFacilityId + static_cast<EntityId>(facilities.size() - 2);
                     facilities.push_back(FacilityView{entity, request.facilityType, request.ax, request.az, {0,0}});
@@ -352,9 +360,13 @@ struct Simulation::State {
                     return (e.a==existingA && e.b==existingB)||(e.a==existingB && e.b==existingA);
                 });
                 const auto missing = static_cast<std::size_t>(!hasA) + static_cast<std::size_t>(!hasB);
-                accepted = inBounds && adjacent && !duplicate && edges.size() < Simulation::MaxRoadSegments &&
-                    nodes.size() + missing <= Simulation::MaxRoadNodes && nextRoadId != std::numeric_limits<EntityId>::max() &&
-                    nextRoadNodeId <= std::numeric_limits<EntityId>::max() - missing;
+                const bool capacity = edges.size() >= Simulation::MaxRoadSegments ||
+                    nodes.size() + missing > Simulation::MaxRoadNodes || nextRoadId == std::numeric_limits<EntityId>::max() ||
+                    nextRoadNodeId > std::numeric_limits<EntityId>::max() - missing;
+                accepted = inBounds && adjacent && !duplicate && !capacity;
+                if (!inBounds || !adjacent) failure = ConstructionFailureReason::InvalidRoadGeometry;
+                else if (duplicate) failure = ConstructionFailureReason::DuplicateRoadSegment;
+                else if (capacity) failure = ConstructionFailureReason::CapacityExceeded;
                 if (accepted) {
                     // No mutation occurs until every geometric and capacity check passes.
                     EntityId aid = hasA ? existingA : nextRoadNodeId++;
@@ -367,8 +379,12 @@ struct Simulation::State {
             } else if (request.type == ConstructionCommandType::StoragePlacement) {
                 const bool inBounds = request.ax >= Simulation::PrototypeGridMin && request.ax <= Simulation::PrototypeGridMax &&
                     request.az >= Simulation::PrototypeGridMin && request.az <= Simulation::PrototypeGridMax;
-                accepted = inBounds && prototypeStorages.size() < Simulation::MaxPrototypeStorages &&
-                    storages.size() < Simulation::MaxStorages && !CellOccupied(request.ax, request.az);
+                const bool occupied = inBounds && CellOccupied(request.ax, request.az);
+                const bool capacity = prototypeStorages.size() >= Simulation::MaxPrototypeStorages || storages.size() >= Simulation::MaxStorages;
+                accepted = inBounds && !capacity && !occupied;
+                if (!inBounds) failure = ConstructionFailureReason::OutOfBounds;
+                else if (occupied) failure = ConstructionFailureReason::OccupiedCell;
+                else if (capacity) failure = ConstructionFailureReason::CapacityExceeded;
                 if (accepted) {
                     entity = Simulation::FirstPrototypeStorageId + static_cast<EntityId>(prototypeStorages.size());
                     const PlacedStorageView placed{entity, request.ax, request.az, {0,0}};
@@ -378,14 +394,23 @@ struct Simulation::State {
             } else if (request.type == ConstructionCommandType::TruckPlan) {
                 std::vector<EntityId> approach;
                 bool storageRetarget = false;
-                accepted = TruckPlanBoundarySafe() && PrepareTruckPlan(request.plan, approach);
+                const bool atBoundary = TruckPlanBoundarySafe();
+                accepted = atBoundary && PrepareTruckPlan(request.plan, approach);
+                const bool atFlourRetarget = stage == TruckStage::DeliverFlourToWarehouse &&
+                    cargo == Resource::Flour && request.plan.storageId != truckPlan.storageId;
                 if (!accepted) {
                     storageRetarget = PrepareStorageRetarget(request.plan, approach);
                     accepted = storageRetarget;
                 }
+                if (!accepted) {
+                    if (!atBoundary) failure = atFlourRetarget ? ConstructionFailureReason::StorageRetargetUnavailable :
+                        ConstructionFailureReason::TruckNotAtCommandBoundary;
+                    else if (!PlanEndpointsConnected(request.plan)) failure = ConstructionFailureReason::DisconnectedRoute;
+                    else failure = ConstructionFailureReason::InvalidTransportPlan;
+                }
                 if (accepted) ApplyTruckPlan(request.plan, std::move(approach), storageRetarget);
             }
-            commandResults.push_back(ConstructionResult{request.commandId, request.type, accepted, entity});
+            commandResults.push_back(ConstructionResult{request.commandId, request.type, accepted, entity, failure});
         }
         commandQueue.clear();
     }
@@ -402,6 +427,7 @@ void Simulation::Step() {
     // Synthetic rules are data-driven; the mill conversion remains 1:1 and
     // process/output limits are explicit OpenRepublic prototype constraints.
     ++state_->tick;
+    if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
     state_->ApplyCommands();
     for (auto& facility : state_->facilities) {
         if (facility.type == FacilityType::Farm && state_->tick % state_->rules.farmHarvestIntervalTicks == 0) {
@@ -467,9 +493,12 @@ Snapshot Simulation::GetSnapshot() const {
         state_->commandResults,
         std::move(roadNodes),
         std::move(roads),
-        state_->rules
+        state_->rules,
+        state_->revision
     };
 }
+
+std::uint64_t Simulation::GetStateRevision() const noexcept { return state_->revision; }
 
 SimulationRules Simulation::GetRules() const {
     return state_->rules;
@@ -487,7 +516,12 @@ bool Simulation::SetRules(const SimulationRules& rules, std::string* error) {
         if (error) *error = problem;
         return false;
     }
-    state_->rules = rules;
+    if (state_->rules.farmGrainPerHarvest != rules.farmGrainPerHarvest ||
+        state_->rules.farmHarvestIntervalTicks != rules.farmHarvestIntervalTicks ||
+        state_->rules.millGrainPerTick != rules.millGrainPerTick) {
+        state_->rules = rules;
+        if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
+    }
     if (error) error->clear();
     return true;
 }
@@ -503,6 +537,7 @@ EntityId Simulation::PlacePrototypeStorage(std::int32_t gridX, std::int32_t grid
     const PlacedStorageView placed{id, gridX, gridZ, {0,0}};
     state_->prototypeStorages.push_back(placed);
     state_->storages.push_back(placed);
+    if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
     return id;
 }
 
@@ -513,6 +548,7 @@ std::uint64_t Simulation::QueueFacilityPlacement(FacilityType type, std::int32_t
         state_->nextCommandId == std::numeric_limits<std::uint64_t>::max()) return 0;
     const auto id = state_->nextCommandId++;
     state_->commandQueue.push_back(State::PendingCommand{id, ConstructionCommandType::FacilityPlacement, type, gridX, gridZ, 0, 0});
+    if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
     return id;
 }
 
@@ -523,6 +559,7 @@ std::uint64_t Simulation::QueueRoadSegment(std::int32_t ax, std::int32_t az, std
         state_->nextCommandId == std::numeric_limits<std::uint64_t>::max()) return 0;
     const auto id = state_->nextCommandId++;
     state_->commandQueue.push_back(State::PendingCommand{id, ConstructionCommandType::RoadSegment, FacilityType::Farm, ax, az, bx, bz});
+    if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
     return id;
 }
 
@@ -534,6 +571,7 @@ std::uint64_t Simulation::QueueStoragePlacement(std::int32_t gridX, std::int32_t
     const auto id = state_->nextCommandId++;
     state_->commandQueue.push_back(State::PendingCommand{id, ConstructionCommandType::StoragePlacement,
         FacilityType::Farm, gridX, gridZ, 0, 0});
+    if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
     return id;
 }
 
@@ -548,6 +586,7 @@ std::uint64_t Simulation::QueueTruckPlan(const TruckPlan& plan) {
     request.type = ConstructionCommandType::TruckPlan;
     request.plan = plan;
     state_->commandQueue.push_back(request);
+    if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
     return id;
 }
 
@@ -556,6 +595,7 @@ bool Simulation::AcknowledgeConstructionResult(std::uint64_t commandId) {
         [commandId](const ConstructionResult& result) { return result.commandId == commandId; });
     if (it == state_->commandResults.end()) return false;
     state_->commandResults.erase(it);
+    if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
     return true;
 }
 
@@ -578,6 +618,7 @@ bool Simulation::SetTruckPlan(const TruckPlan& plan, std::string* error) {
         return false;
     }
     state_->ApplyTruckPlan(plan, std::move(approach), storageRetarget);
+    if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
     if (error) error->clear();
     return true;
 }
@@ -603,9 +644,11 @@ bool Simulation::SetRoadEnabled(EntityId edgeId, bool enabled) {
             state_->route = std::move(alternate);
             state_->routeCursor = 0;
         }
+        if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
         return true;
     }
     it->enabled = enabled;
+    if (state_->revision != std::numeric_limits<std::uint64_t>::max()) ++state_->revision;
     return true;
 }
 
@@ -809,7 +852,9 @@ bool Simulation::Load(std::string_view data, std::string* error) {
                 ConstructionResult result{}; unsigned type=0,accepted=0;
                 if (!ReadUnsigned(in,result.commandId)||!ReadUnsigned(in,type)||!ReadUnsigned(in,accepted)||!ReadUnsigned(in,result.entityId)||accepted>1||
                     type>std::numeric_limits<std::uint8_t>::max()) return fail("invalid construction result entry");
-                result.type=static_cast<ConstructionCommandType>(type); result.accepted=accepted!=0; candidate.commandResults.push_back(result);
+                result.type=static_cast<ConstructionCommandType>(type); result.accepted=accepted!=0;
+                if (!result.accepted) result.failureReason=ConstructionFailureReason::DiagnosticUnavailableFromSave;
+                candidate.commandResults.push_back(result);
             }
         } else if (!(in >> tag) || tag != "PLACEMENT_RESULTS" || !ReadUnsigned(in, resultCount))
             return fail("invalid placement results record");
@@ -818,7 +863,9 @@ bool Simulation::Load(std::string_view data, std::string* error) {
             for (std::uint64_t i=0;i<resultCount;++i) {
                 ConstructionResult result{}; unsigned accepted=0;
                 if (!ReadUnsigned(in,result.commandId)||!ReadUnsigned(in,accepted)||!ReadUnsigned(in,result.entityId)||accepted>1) return fail("invalid placement result entry");
-                result.type=ConstructionCommandType::FacilityPlacement; result.accepted=accepted!=0; candidate.commandResults.push_back(result);
+                result.type=ConstructionCommandType::FacilityPlacement; result.accepted=accepted!=0;
+                if (!result.accepted) result.failureReason=ConstructionFailureReason::DiagnosticUnavailableFromSave;
+                candidate.commandResults.push_back(result);
             }
         }
     }
@@ -1059,6 +1106,9 @@ bool Simulation::Load(std::string_view data, std::string* error) {
         if (candidate.route.empty() && candidate.truckNode != assignedStorageNode && candidate.truckNode != assignedFarmNode) return fail("invalid return origin");
         break;
     }
+    const auto receivingRevision = state_->revision;
+    candidate.revision = receivingRevision == std::numeric_limits<std::uint64_t>::max()
+        ? receivingRevision : receivingRevision + 1;
     *state_ = std::move(candidate);
     if (error) error->clear();
     return true;
