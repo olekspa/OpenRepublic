@@ -290,18 +290,21 @@ void TestFlaggedNormalStreamAndAlignment() {
           "unflagged source normals are absent");
 }
 
-void TestUnknownBitOneDoesNotAdvanceTheStream() {
-    ObjectSpec first;
-    first.lods[0].flags = 0x1;
-    ObjectSpec following;
-    following.lods[0].positions[0] = {17, 23, -31};
-    const auto bytes = Fixture({first, following});
-    NmfStaticGeometry out;
-    std::string error;
-    Check(ParseNmfStaticGeometry(bytes, out, &error),
-          "build-scoped flag 0x1 without a stream branch parses");
-    Check(out.objects.size() == 2 && out.objects[1].lod.positions[0].x == 17,
-          "flag 0x1 consumes no bytes in this profile");
+void TestBuildScopedNonStreamBitsDoNotAdvanceTheStream() {
+    for (const auto flag : {0x1u, 0x2u}) {
+        ObjectSpec first;
+        first.lods[0].flags = flag;
+        ObjectSpec following;
+        following.lods[0].positions[0] = {17, 23, -31};
+        const auto bytes = Fixture({first, following});
+        NmfStaticGeometry out;
+        std::string error;
+        Check(ParseNmfStaticGeometry(bytes, out, &error),
+              "build-scoped non-stream flag parses without a payload");
+        Check(out.objects.size() == 2 && out.objects[0].lod.vertexFlags == flag &&
+                  out.objects[1].lod.positions[0].x == 17,
+              "raw non-stream flag is preserved without advancing the next object cursor");
+    }
 }
 
 void TestAllAuxiliaryBranchesAndTruncation() {
@@ -419,8 +422,8 @@ void TestMalformedInputs() {
     WriteU32(headerField0x18, 20 + 0xe8 + 24, 1);
     ExpectFailure(std::move(headerField0x18), "nonzero raw LOD field +0x18");
     auto unknownFlags = Fixture({ObjectSpec{}});
-    WriteU32(unknownFlags, 20 + 0xe8 + 20, 0x2);
-    ExpectFailure(std::move(unknownFlags), "unknown vertex flag");
+    WriteU32(unknownFlags, 20 + 0xe8 + 20, 0x4);
+    ExpectFailure(std::move(unknownFlags), "unsupported vertex flag");
     auto badIndex = Fixture({ObjectSpec{}});
     WriteU16(badIndex, FirstLodData() + 4, 3);
     ExpectFailure(std::move(badIndex), "base index out of bounds");
@@ -460,7 +463,7 @@ void TestMalformedInputs() {
 int main() {
     TestMetadataAndSingleLodProfile();
     TestFlaggedNormalStreamAndAlignment();
-    TestUnknownBitOneDoesNotAdvanceTheStream();
+    TestBuildScopedNonStreamBitsDoNotAdvanceTheStream();
     TestAllAuxiliaryBranchesAndTruncation();
     TestMalformedInputs();
     if (failures) {

@@ -268,7 +268,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	application.SetWindow(window);
 	if (nmfCaptureMode)
 	{
-		ShowWindow(window, SW_HIDE);
+		ShowWindow(window, SW_SHOWNOACTIVATE);
 	}
 	else
 	{

@@ -105,8 +105,9 @@ namespace openrepublic
 
 				const float distance = std::max(cameraDistance, 12.0f);
 				const XMFLOAT3 eye = index == 0
-					? XMFLOAT3(cameraTarget.x, cameraTarget.y + distance * 0.38f, cameraTarget.z - distance)
-					: XMFLOAT3(cameraTarget.x + distance * 0.65f, cameraTarget.y + distance * 0.42f,
+					? XMFLOAT3(cameraTarget.x + distance * 0.65f, cameraTarget.y + distance * 0.42f,
+						cameraTarget.z + distance * 0.65f)
+					: XMFLOAT3(cameraTarget.x - distance * 0.65f, cameraTarget.y + distance * 0.42f,
 						cameraTarget.z + distance * 0.65f);
 				camera->Eye = eye;
 				XMStoreFloat3(&camera->At,
@@ -117,11 +118,17 @@ namespace openrepublic
 
 			void PostRender() override
 			{
-				// The first render callback can run while the device is still presenting
-				// its initialization frame. Let a few complete frames settle before readback.
+				// Let renderer startup and asynchronous PSO creation settle for a bounded
+				// number of complete frames before readback.
 				if (warmupFramesRemaining > 0)
 				{
 					--warmupFramesRemaining;
+					if (warmupFramesRemaining == 0)
+					{
+						// Apply view A after path activation and let its next full frame render
+						// before the first readback.
+						SetDiagnosticCameraView(0);
+					}
 					return;
 				}
 				if (nextCapture >= outputPaths.size())
@@ -154,7 +161,7 @@ namespace openrepublic
 			std::vector<std::filesystem::path> outputPaths;
 			XMFLOAT3 cameraTarget{};
 			float cameraDistance = 12.0f;
-			std::uint32_t warmupFramesRemaining = 3;
+			std::uint32_t warmupFramesRemaining = 60;
 			std::size_t nextCapture = 0;
 		};
 
@@ -1592,10 +1599,6 @@ namespace openrepublic
 		}
 
 		ActivatePath(renderPath.get());
-		if (capturePreview && nmfPreviewLoaded)
-		{
-			static_cast<NmfPreviewCaptureRenderPath*>(renderPath.get())->SetDiagnosticCameraView(0);
-		}
 		if (!capturePreview)
 		{
 			UpdateSimulationPresentation();

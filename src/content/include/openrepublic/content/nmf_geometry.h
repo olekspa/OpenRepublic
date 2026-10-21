@@ -50,7 +50,9 @@ struct NmfStaticLod {
     std::uint32_t headerField0x18{};
     std::vector<NmfPosition> positions;
     // In build 23935965, flag 0x8 is loaded as the _NRM FLOAT3 vertex semantic.
-    // Preserve its source values as-is; other builds and shading parity remain unknown.
+    // Bits 0x1 and 0x2 have no vertex-element or input-stream branch in the
+    // inspected loader and remain semantically unknown; all raw bits are retained.
+    // Preserve source normals as-is; other builds and shading parity remain unknown.
     std::vector<NmfNormal> vertexNormals;
     std::vector<std::uint32_t> indices;
     std::vector<NmfGeometrySubset> subsets;

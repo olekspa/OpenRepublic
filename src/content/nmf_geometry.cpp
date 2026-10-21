@@ -17,6 +17,9 @@ constexpr std::size_t kLodHeaderSize = 0x1c;
 constexpr std::size_t kPartitionHeaderSize = 12;
 // The loader has no byte-consumption branch for bit 0x1; its meaning is unknown.
 constexpr std::uint32_t kFlagNoStreamBit0x1 = 0x1;
+// In build 23935965, CreateVertexFormat and LoadFromMemory have no vertex-element
+// or input-stream branch for bit 0x2. Preserve it without assigning a meaning.
+constexpr std::uint32_t kFlagNoStreamDataBit0x2 = 0x2;
 constexpr std::uint32_t kFlagAttribute0x8 = 0x8;
 constexpr std::uint32_t kFlagStream0x10Vec3 = 0x10;
 constexpr std::uint32_t kFlagStream0x20Vec3 = 0x20;
@@ -30,7 +33,8 @@ constexpr std::uint32_t kFlagStream0x40000 = 0x40000;
 constexpr std::size_t kStream0x40000FirstBytesPerTriangle = 16;
 constexpr std::size_t kStream0x40000SecondBytesPerTriangle = 24;
 constexpr std::uint32_t kSupportedFlags =
-    kFlagNoStreamBit0x1 | kFlagAttribute0x8 | kFlagStream0x10Vec3 | kFlagStream0x20Vec3 |
+    kFlagNoStreamBit0x1 | kFlagNoStreamDataBit0x2 | kFlagAttribute0x8 |
+    kFlagStream0x10Vec3 | kFlagStream0x20Vec3 |
     kFlagStream0x100EightBytes | kFlagStream0x200EightBytes | kFlagStream0x400EightBytes |
     kFlagStream0x800EightBytes | kFlagStream0x10000FourBytes | kFlagStream0x20000EightBytes |
     kFlagStream0x40000;
