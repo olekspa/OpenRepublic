@@ -24,10 +24,10 @@
 ## Build receipt
 
 **Upstream revision:** `4f93f3fd4f337aeb38dbfe410701b83024ccdd42`
-**Configuration:** Release, x64; VS 2022 Community 17.14.37806.7; MSVC 14.44.35207; Windows SDK selected by the installed VS environment
+**Configuration:** Release, x64; VS 2022 Community 17.14.37806.7; MSVC 14.44.35207; effective Windows SDK version not recovered from the available build logs. SDKs 10.0.19041.0, 10.0.22621.0, and 10.0.26100.0 were installed at inventory time.
 **Outcome:** `Editor_Windows` and `Template_Windows` compiled. This is upstream compile evidence only; neither executable was launched in this task.
 
-The upstream Visual Studio projects specify toolset v145. The installed v143 toolset succeeded with an MSBuild property override. The editor solution target and sample project were built separately; when invoking the sample `.vcxproj` directly, pass the upstream root as `SolutionDir` so its include/library paths resolve.
+The upstream Visual Studio projects specify toolset v145. The installed v143 toolset succeeded with an MSBuild property override. The editor solution target and sample project were built separately; when invoking the sample `.vcxproj` directly, pass the upstream root as `SolutionDir` so its include/library paths resolve. Build logs did not retain a usable record of the effective Windows SDK version, so select and record an explicit SDK version during the next reproducible build.
 
 From an x64 VS Developer Command Prompt, these commands reproduce the targets (replace `<repo>` with the checkout root):
 

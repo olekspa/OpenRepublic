@@ -14,7 +14,7 @@ OpenRepublic targets an independent client and simulation. Original-game plugins
 ## D-002: Wicked Engine is the first renderer candidate
 
 **Date:** 21 October 2026
-**Status:** Accepted for feasibility evaluation; no dependency revision pinned
+**Status:** Exact revision pinned for feasibility; no long-term production pin approved
 
 Use Wicked Engine's upstream Windows build and blank scene as the first renderer/tooling gate. Revision `4f93f3fd4f337aeb38dbfe410701b83024ccdd42` is pinned as a Git submodule; the local checkout was fetched shallowly. The upstream editor and template sample compile in Release/x64 using the installed VS 2022/MSVC v143 override; the source projects request v145 by default.
 

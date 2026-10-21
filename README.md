@@ -32,6 +32,22 @@ Local-only loading and non-redistribution are project safeguards. They do not es
 - [Project decisions](docs/DECISIONS.md)
 - [Contribution and evidence rules](CONTRIBUTING.md)
 
+## Get the source
+
+Clone with submodules initialized so the pinned Wicked Engine source is present:
+
+```sh
+git clone --recurse-submodules https://github.com/olekspa/OpenRepublic.git
+```
+
+If you already cloned without submodules, run this from the repository root:
+
+```sh
+git submodule update --init --recursive
+```
+
+The current build receipt covers upstream Wicked Engine targets only; see [toolchain status](docs/TOOLCHAIN_STATUS.md) before attempting a build.
+
 ## First milestones
 
 1. [x] Pin Wicked Engine and compile its upstream editor and template sample using VS 2022/MSVC v143.
