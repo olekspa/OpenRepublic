@@ -250,3 +250,12 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - **VERIFIED — Release source/build/test:** `OpenRepublicAgentHost` and `OpenRepublicAgentProtocolTests` built successfully; targeted protocol and external-controller CTest passed 2/2. `git diff --check` passed.
 - **KNOWN API gap:** request `id` remains correlation only. Replaying the same mutation after a lost response can submit duplicate work; bounded idempotency is not implemented and must be addressed before using the protocol for remote or multi-client commands.
 - No WRSR process, save, Steam installation file, original asset, or private Rival Republics data was accessed or modified for this protocol change. No compatibility behavior is claimed.
+
+## Publication receipt — shared desktop simulation and terrain preview transforms
+
+**2026-10-21 16:36 EDT (20:36 UTC)**
+
+- The reviewed shared-simulation Agent API integration, opaque command-handle mapping, and eight-orientation terrain preview transform were committed as `569cdc3` (`Integrate desktop Agent API and terrain transforms`) and pushed to `origin/main`.
+- **VERIFIED — Windows Release source/build/test:** the client rebuilt after the final source correction and full CTest passed **11/11**. The headless Release build succeeded and full CTest passed **10/10**; it does not compile the desktop-only terrain-summary code changed in the final correction. `git diff --check` passed before publication. Independent read-only API/app and terrain/render reviews found no actionable issues.
+- **UNKNOWN — graphical acceptance:** the injected Agent API app path and explicit terrain transform preview were not launched or visually exercised in this turn. No WRSR game, save, Steam installation file, or original asset was accessed or modified; no compatibility or standalone-use-rights claim is made.
+- The next content gate is a bounded static NMF geometry reader for one build-scoped profile, connected to the existing normalized-mesh render path. Object/geometry layout remains unknown and must be established from private read-only evidence before coding that format.
