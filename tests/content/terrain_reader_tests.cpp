@@ -1,4 +1,5 @@
 #include "openrepublic/content/terrain_dds.h"
+#include "openrepublic/content/terrain_preview.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -305,6 +306,72 @@ void TestTerrainSampling() {
           output == -12.5, "single-cell raster with zero height scale yields flat terrain");
 }
 
+void TestTerrainPreviewGrid() {
+    const Heightmap ramp{3, 2, {0.0f, 10.0f, 20.0f, 100.0f, 110.0f, 120.0f}};
+    TerrainTransform transform;
+    transform.originX = -10.0;
+    transform.originZ = 20.0;
+    transform.baseHeight = 5.0;
+    transform.sizeX = 20.0;
+    transform.sizeZ = 10.0;
+    transform.heightScale = 2.0;
+    transform.rowOrder = RasterRowOrder::FirstRowAtMinZ;
+
+    TerrainPreviewGrid preview;
+    std::string error = "stale error";
+    Check(BuildTerrainPreviewGrid(ramp, transform, 5, 3, preview, &error),
+          "non-square preview grid samples synthetic non-square heightmap");
+    Check(error.empty(), "preview success clears diagnostic");
+    Check(preview.width == 5 && preview.height == 3 && preview.heights.size() == 15,
+          "preview reports dimensions and row-major sample count");
+    Check(preview.heights == std::vector<float>({5.0f, 15.0f, 25.0f, 35.0f, 45.0f,
+                                                  105.0f, 115.0f, 125.0f, 135.0f, 145.0f,
+                                                  205.0f, 215.0f, 225.0f, 235.0f, 245.0f}),
+          "preview samples inclusive corners and bilinear X/Z interpolation in increasing world Z");
+    Check(preview.minHeight == 5.0f && preview.maxHeight == 245.0f,
+          "preview reports sampled height range");
+
+    transform.rowOrder = RasterRowOrder::FirstRowAtMaxZ;
+    Check(BuildTerrainPreviewGrid(ramp, transform, 5, 3, preview, &error),
+          "preview supports caller-selected reversed source row order");
+    Check(preview.heights == std::vector<float>({205.0f, 215.0f, 225.0f, 235.0f, 245.0f,
+                                                  105.0f, 115.0f, 125.0f, 135.0f, 145.0f,
+                                                  5.0f, 15.0f, 25.0f, 35.0f, 45.0f}),
+          "reversed raster rows still produce output rows in increasing world Z");
+    Check(preview.minHeight == 5.0f && preview.maxHeight == 245.0f,
+          "reversed row order preserves sampled range");
+
+    const TerrainPreviewGrid beforeFailure = preview;
+    const auto expectFailure = [&](const Heightmap& map, const TerrainTransform& xform,
+                                   std::uint32_t width, std::uint32_t height,
+                                   const std::string& label) {
+        error.clear();
+        Check(!BuildTerrainPreviewGrid(map, xform, width, height, preview, &error) && !error.empty(),
+              label + " rejected with diagnostic");
+        Check(preview.width == beforeFailure.width && preview.height == beforeFailure.height &&
+              preview.heights == beforeFailure.heights && preview.minHeight == beforeFailure.minHeight &&
+              preview.maxHeight == beforeFailure.maxHeight,
+              label + " leaves existing output unchanged");
+    };
+    expectFailure(ramp, transform, 1, 3, "preview width below surface minimum");
+    expectFailure(ramp, transform, 3, 1, "preview height below surface minimum");
+    expectFailure(ramp, transform, 4097, 2, "preview dimension above configured maximum");
+    expectFailure(ramp, transform, 4096, 4096, "preview sample count above configured maximum");
+    auto invalidTransform = transform;
+    invalidTransform.sizeZ = 0.0;
+    expectFailure(ramp, invalidTransform, 5, 3, "invalid transform extent");
+    invalidTransform = transform;
+    invalidTransform.originX = 1.0e20;
+    invalidTransform.sizeX = 32768.0;
+    expectFailure(ramp, invalidTransform, 5, 3,
+                  "requested preview resolution collapses adjacent X coordinates");
+    expectFailure(Heightmap{3, 2, {0.0f}}, transform, 5, 3,
+                  "heightmap dimensions inconsistent with decoded samples");
+    expectFailure(Heightmap{3, 2, {0.0f, 10.0f, 20.0f, 100.0f,
+                                  std::numeric_limits<float>::quiet_NaN(), 120.0f}},
+                  transform, 5, 3, "non-finite sample encountered during full-grid traversal");
+}
+
 } // namespace
 
 int main() {
@@ -313,6 +380,7 @@ int main() {
     TestFileDdsReader();
     TestTerrainMetadata();
     TestTerrainSampling();
+    TestTerrainPreviewGrid();
     if (failures != 0) {
         std::cerr << failures << " terrain reader check(s) failed\n";
         return 1;

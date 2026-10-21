@@ -3,6 +3,7 @@
 #include "openrepublic/content/glb_container.h"
 #include "openrepublic/content/glb_semantic.h"
 #include "openrepublic/content/terrain_dds.h"
+#include "openrepublic/content/terrain_preview.h"
 
 #ifdef OPENREPUBLIC_WITH_LUA_RULES
 #include "openrepublic/scripting/lua_rules_loader.h"
@@ -243,6 +244,7 @@ namespace openrepublic
 		}
 
 		bool CreateTerrainPreview(wi::scene::Scene& scene, const std::filesystem::path& heightmapPath,
+			const std::optional<openrepublic::content::TerrainTransform>& explicitTransform,
 			wi::ecs::Entity& terrainEntity, std::string& description, std::string& error)
 		{
 			openrepublic::content::Heightmap heightmap;
@@ -256,56 +258,77 @@ namespace openrepublic
 				return false;
 			}
 
-			const std::filesystem::path metadataPath = heightmapPath.parent_path() / L"script.ini";
 			openrepublic::content::TerrainMetadata metadata;
 			bool hasMetadata = false;
-			std::error_code filesystemError;
-			const bool metadataExists = std::filesystem::exists(metadataPath, filesystemError);
-			if (filesystemError)
+			if (!explicitTransform)
 			{
-				error = "could not check for adjacent terrain script.ini metadata";
+				const std::filesystem::path metadataPath = heightmapPath.parent_path() / L"script.ini";
+				std::error_code filesystemError;
+				const bool metadataExists = std::filesystem::exists(metadataPath, filesystemError);
+				if (filesystemError)
+				{
+					error = "could not check for adjacent terrain script.ini metadata";
+					return false;
+				}
+				if (metadataExists)
+				{
+					const auto metadataBytes = std::filesystem::file_size(metadataPath, filesystemError);
+					if (filesystemError || metadataBytes > kMaxTerrainMetadataBytes)
+					{
+						error = "adjacent terrain script.ini is unreadable or exceeds the 64 KiB limit";
+						return false;
+					}
+					std::ifstream metadataStream(metadataPath, std::ios::binary);
+					if (!metadataStream)
+					{
+						error = "could not open adjacent terrain script.ini";
+						return false;
+					}
+					std::string metadataText(static_cast<std::size_t>(metadataBytes), '\0');
+					metadataStream.read(metadataText.data(), static_cast<std::streamsize>(metadataText.size()));
+					if (!metadataStream || metadataStream.peek() != std::char_traits<char>::eof())
+					{
+						error = "terrain script.ini changed during read or could not be read completely";
+						return false;
+					}
+					if (!openrepublic::content::ParseTerrainMetadata(metadataText, heightmap, metadata, &error))
+					{
+						return false;
+					}
+					hasMetadata = true;
+				}
+			}
+
+			const std::uint32_t previewWidth = std::min(heightmap.width, kTerrainPreviewMaxSide);
+			const std::uint32_t previewHeight = std::min(heightmap.height, kTerrainPreviewMaxSide);
+			openrepublic::content::TerrainPreviewGrid transformedGrid;
+			if (explicitTransform && !openrepublic::content::BuildTerrainPreviewGrid(
+				heightmap, *explicitTransform, previewWidth, previewHeight, transformedGrid, &error))
+			{
 				return false;
 			}
-			if (metadataExists)
+
+			double minimumHeight = explicitTransform
+				? static_cast<double>(transformedGrid.minHeight)
+				: std::numeric_limits<double>::infinity();
+			double maximumHeight = explicitTransform
+				? static_cast<double>(transformedGrid.maxHeight)
+				: -std::numeric_limits<double>::infinity();
+			if (!explicitTransform)
 			{
-				const auto metadataBytes = std::filesystem::file_size(metadataPath, filesystemError);
-				if (filesystemError || metadataBytes > kMaxTerrainMetadataBytes)
+				for (const float rawHeight : heightmap.samples)
 				{
-					error = "adjacent terrain script.ini is unreadable or exceeds the 64 KiB limit";
-					return false;
+					const double height = hasMetadata
+						? static_cast<double>(rawHeight) * metadata.heightScale + metadata.worldPositionY
+						: static_cast<double>(rawHeight);
+					minimumHeight = std::min(minimumHeight, height);
+					maximumHeight = std::max(maximumHeight, height);
 				}
-				std::ifstream metadataStream(metadataPath, std::ios::binary);
-				if (!metadataStream)
-				{
-					error = "could not open adjacent terrain script.ini";
-					return false;
-				}
-				std::string metadataText(static_cast<std::size_t>(metadataBytes), '\0');
-				metadataStream.read(metadataText.data(), static_cast<std::streamsize>(metadataText.size()));
-				if (!metadataStream || metadataStream.peek() != std::char_traits<char>::eof())
-				{
-					error = "terrain script.ini changed during read or could not be read completely";
-					return false;
-				}
-				if (!openrepublic::content::ParseTerrainMetadata(metadataText, heightmap, metadata, &error))
-				{
-					return false;
-				}
-				hasMetadata = true;
 			}
 
-			double minimumHeight = std::numeric_limits<double>::infinity();
-			double maximumHeight = -std::numeric_limits<double>::infinity();
-			for (const float rawHeight : heightmap.samples)
-			{
-				const double height = hasMetadata
-					? static_cast<double>(rawHeight) * metadata.heightScale + metadata.worldPositionY
-					: static_cast<double>(rawHeight);
-				minimumHeight = std::min(minimumHeight, height);
-				maximumHeight = std::max(maximumHeight, height);
-			}
-
-			const double verticalScale = hasMetadata ? kTerrainVerticalPreviewScale : kRawPreviewVerticalScale;
+			const double verticalScale = explicitTransform || hasMetadata
+				? kTerrainVerticalPreviewScale
+				: kRawPreviewVerticalScale;
 			const double verticalSpan = (maximumHeight - minimumHeight) * verticalScale;
 			if (!std::isfinite(verticalSpan) || verticalSpan > kMaxTerrainPreviewHeight)
 			{
@@ -313,27 +336,39 @@ namespace openrepublic
 				return false;
 			}
 
-			const std::uint32_t previewWidth = std::min(heightmap.width, kTerrainPreviewMaxSide);
-			const std::uint32_t previewHeight = std::min(heightmap.height, kTerrainPreviewMaxSide);
 			const double defaultWidth = std::max(1.0, static_cast<double>(heightmap.width) * 0.01);
 			const double defaultDepth = std::max(1.0, static_cast<double>(heightmap.height) * 0.01);
-			const double displayWidth = std::clamp(hasMetadata ? metadata.worldSizeX * kTerrainDisplayUnitsPerMeter : defaultWidth, 1.0, 100.0);
-			const double displayDepth = std::clamp(hasMetadata ? metadata.worldSizeY * kTerrainDisplayUnitsPerMeter : defaultDepth, 1.0, 100.0);
+			const double candidateWidth = explicitTransform
+				? explicitTransform->sizeX * kTerrainDisplayUnitsPerMeter
+				: hasMetadata ? metadata.worldSizeX * kTerrainDisplayUnitsPerMeter : defaultWidth;
+			const double candidateDepth = explicitTransform
+				? explicitTransform->sizeZ * kTerrainDisplayUnitsPerMeter
+				: hasMetadata ? metadata.worldSizeY * kTerrainDisplayUnitsPerMeter : defaultDepth;
+			const double displayWidth = std::clamp(candidateWidth, 1.0, 100.0);
+			const double displayDepth = std::clamp(candidateDepth, 1.0, 100.0);
 
 			std::vector<XMFLOAT3> positions;
 			positions.reserve(static_cast<std::size_t>(previewWidth) * previewHeight);
 			for (std::uint32_t z = 0; z < previewHeight; ++z)
 			{
-				const std::uint64_t sourceZNumerator = static_cast<std::uint64_t>(z) * (heightmap.height - 1u);
-				const std::uint32_t sourceZ = static_cast<std::uint32_t>((sourceZNumerator + (previewHeight - 1u) / 2u) / (previewHeight - 1u));
 				for (std::uint32_t x = 0; x < previewWidth; ++x)
 				{
-					const std::uint64_t sourceXNumerator = static_cast<std::uint64_t>(x) * (heightmap.width - 1u);
-					const std::uint32_t sourceX = static_cast<std::uint32_t>((sourceXNumerator + (previewWidth - 1u) / 2u) / (previewWidth - 1u));
-					const std::size_t sourceIndex = static_cast<std::size_t>(sourceZ) * heightmap.width + sourceX;
-					const double sourceHeight = hasMetadata
-						? static_cast<double>(heightmap.samples[sourceIndex]) * metadata.heightScale + metadata.worldPositionY
-						: static_cast<double>(heightmap.samples[sourceIndex]);
+					double sourceHeight = 0.0;
+					if (explicitTransform)
+					{
+						sourceHeight = transformedGrid.heights[static_cast<std::size_t>(z) * previewWidth + x];
+					}
+					else
+					{
+						const std::uint64_t sourceZNumerator = static_cast<std::uint64_t>(z) * (heightmap.height - 1u);
+						const std::uint32_t sourceZ = static_cast<std::uint32_t>((sourceZNumerator + (previewHeight - 1u) / 2u) / (previewHeight - 1u));
+						const std::uint64_t sourceXNumerator = static_cast<std::uint64_t>(x) * (heightmap.width - 1u);
+						const std::uint32_t sourceX = static_cast<std::uint32_t>((sourceXNumerator + (previewWidth - 1u) / 2u) / (previewWidth - 1u));
+						const std::size_t sourceIndex = static_cast<std::size_t>(sourceZ) * heightmap.width + sourceX;
+						sourceHeight = hasMetadata
+							? static_cast<double>(heightmap.samples[sourceIndex]) * metadata.heightScale + metadata.worldPositionY
+							: static_cast<double>(heightmap.samples[sourceIndex]);
+					}
 					const double displayY = (sourceHeight - minimumHeight) * verticalScale;
 					if (!std::isfinite(displayY) || displayY > kMaxTerrainPreviewHeight)
 					{
@@ -393,6 +428,13 @@ namespace openrepublic
 			{
 				summary << "; candidate height raw*" << metadata.heightScale << " + offset " << metadata.worldPositionY
 					<< " (5x vertical preview exaggeration; coordinates/orientation unverified)";
+			}
+			else if (explicitTransform)
+			{
+				summary << "; explicit caller transform sampled with row order "
+					<< (explicitTransform->rowOrder == openrepublic::content::RasterRowOrder::FirstRowAtMinZ
+						? "first row at min-Z" : "first row at max-Z")
+					<< " (5x vertical preview exaggeration; horizontal placement remains centered)";
 			}
 			else
 			{
@@ -467,6 +509,13 @@ namespace openrepublic
 	void OpenRepublicApplication::SetTerrainProbePath(std::filesystem::path path)
 	{
 		terrainProbePath = std::move(path);
+	}
+
+	void OpenRepublicApplication::SetTerrainProbeTransform(
+		std::optional<openrepublic::content::TerrainTransform> transform, std::string error)
+	{
+		terrainProbeTransform = std::move(transform);
+		terrainProbeTransformError = std::move(error);
 	}
 
 	void OpenRepublicApplication::Initialize()
@@ -662,12 +711,18 @@ namespace openrepublic
 			wilog("[OpenRepublic] GLB probe: %s", uiNotice.c_str());
 		}
 
-		if (!terrainProbePath.empty())
+		if (!terrainProbeTransformError.empty())
+		{
+			uiNotice = "Terrain probe transform rejected: " + terrainProbeTransformError;
+			wilog("[OpenRepublic] %s", uiNotice.c_str());
+		}
+		else if (!terrainProbePath.empty())
 		{
 			wi::ecs::Entity terrainEntity = wi::ecs::INVALID_ENTITY;
 			std::string description;
 			std::string error;
-			if (CreateTerrainPreview(previewWorld, terrainProbePath, terrainEntity, description, error))
+			if (CreateTerrainPreview(previewWorld, terrainProbePath, terrainProbeTransform,
+				terrainEntity, description, error))
 			{
 				terrainPreviewLoaded = true;
 				uiNotice = description;

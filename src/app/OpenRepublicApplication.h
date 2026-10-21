@@ -1,6 +1,7 @@
 #pragma once
 
 #include "WickedEngine.h"
+#include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/sim/simulation.h"
 
 #include <filesystem>
@@ -19,6 +20,8 @@ namespace openrepublic
 		void SetSceneProbePath(std::filesystem::path path);
 		void SetGlbProbePath(std::filesystem::path path);
 		void SetTerrainProbePath(std::filesystem::path path);
+		void SetTerrainProbeTransform(std::optional<openrepublic::content::TerrainTransform> transform,
+			std::string error = {});
 		void Initialize() override;
 		void Update(float dt) override;
 
@@ -55,6 +58,8 @@ namespace openrepublic
 		std::filesystem::path sceneProbePath;
 		std::filesystem::path glbProbePath;
 		std::filesystem::path terrainProbePath;
+		std::optional<openrepublic::content::TerrainTransform> terrainProbeTransform;
+		std::string terrainProbeTransformError;
 		wi::ecs::Entity farmBuilding = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity millBuilding = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity warehouseBuilding = wi::ecs::INVALID_ENTITY;

@@ -4,12 +4,28 @@
 #include <shellapi.h>
 
 #include <filesystem>
+#include <array>
+#include <cerrno>
+#include <cmath>
+#include <cwchar>
+#include <optional>
 #include <string_view>
 #include <utility>
 
 namespace
 {
 	openrepublic::OpenRepublicApplication application;
+
+	bool ParseFiniteDouble(const wchar_t* text, double& value)
+	{
+		if (text == nullptr || *text == L'\0') return false;
+		wchar_t* end = nullptr;
+		errno = 0;
+		const double parsed = std::wcstod(text, &end);
+		if (end == text || *end != L'\0' || errno == ERANGE || !std::isfinite(parsed)) return false;
+		value = parsed;
+		return true;
+	}
 
 	LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 	{
@@ -49,6 +65,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::filesystem::path sceneProbePath;
 	std::filesystem::path glbProbePath;
 	std::filesystem::path terrainProbePath;
+	std::optional<openrepublic::content::TerrainTransform> terrainProbeTransform;
+	std::string terrainProbeTransformError;
+	bool terrainTransformArgumentSeen = false;
 	if (arguments != nullptr)
 	{
 		for (int i = 1; i < argumentCount; ++i)
@@ -65,12 +84,72 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			{
 				terrainProbePath = arguments[++i];
 			}
+			else if (std::wstring_view(arguments[i]) == L"--terrain-transform")
+			{
+				if (terrainTransformArgumentSeen)
+				{
+					terrainProbeTransformError = "--terrain-transform may only be supplied once";
+				}
+				terrainTransformArgumentSeen = true;
+				if (i + 7 >= argumentCount)
+				{
+					terrainProbeTransformError =
+						"--terrain-transform requires originX originZ baseHeight sizeX sizeZ heightScale rowOrder";
+					continue;
+				}
+
+				std::array<double, 6> values{};
+				bool valuesValid = true;
+				for (std::size_t valueIndex = 0; valueIndex < values.size(); ++valueIndex)
+				{
+					valuesValid = ParseFiniteDouble(arguments[i + 1 + static_cast<int>(valueIndex)], values[valueIndex]) && valuesValid;
+				}
+				const std::wstring_view rowOrder(arguments[i + 7]);
+				i += 7;
+				if (!terrainProbeTransformError.empty())
+				{
+					continue;
+				}
+				if (!valuesValid)
+				{
+					terrainProbeTransformError = "--terrain-transform requires six finite numeric values";
+					continue;
+				}
+
+				openrepublic::content::TerrainTransform transform;
+				transform.originX = values[0];
+				transform.originZ = values[1];
+				transform.baseHeight = values[2];
+				transform.sizeX = values[3];
+				transform.sizeZ = values[4];
+				transform.heightScale = values[5];
+				if (rowOrder == L"first-row-at-min-z")
+				{
+					transform.rowOrder = openrepublic::content::RasterRowOrder::FirstRowAtMinZ;
+				}
+				else if (rowOrder == L"first-row-at-max-z")
+				{
+					transform.rowOrder = openrepublic::content::RasterRowOrder::FirstRowAtMaxZ;
+				}
+				else
+				{
+					terrainProbeTransformError =
+						"rowOrder must be first-row-at-min-z or first-row-at-max-z";
+					continue;
+				}
+				terrainProbeTransform = transform;
+			}
 		}
 		LocalFree(arguments);
+	}
+	if (terrainTransformArgumentSeen && terrainProbePath.empty() && terrainProbeTransformError.empty())
+	{
+		terrainProbeTransformError = "--terrain-transform requires --terrain-probe <heightmap.dds>";
 	}
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));
 	application.SetTerrainProbePath(std::move(terrainProbePath));
+	application.SetTerrainProbeTransform(std::move(terrainProbeTransform), std::move(terrainProbeTransformError));
 
 	WNDCLASSEXW windowClass{};
 	windowClass.cbSize = sizeof(windowClass);
