@@ -8,9 +8,9 @@ OpenRepublic aims to preserve the original game's economic and logistical depth 
 
 ## Project status
 
-**Research and feasibility. There is no OpenRepublic playable build yet.** The repository contains project direction, evidence-led research, and a staged feasibility plan, and pins Wicked Engine. Its upstream Windows editor and template sample compiled successfully under the installed VS 2022 toolchain with a local v143 override. The sample has not been launched; OpenRepublic has no app, renderer code, or game-content importer yet. The repository contains no WRSR assets or saves.
+**Research and feasibility. There is no OpenRepublic playable build yet.** The repository contains project direction, evidence-led research, and a staged feasibility plan, and pins Wicked Engine. Its upstream Windows editor and template sample compile with the installed VS 2022/MSVC v143 toolchain and Windows SDK 10.0.26100.0. The template opens on DirectX 12 and reaches its blank scene; OpenRepublic has no app, renderer code, or game-content importer yet. The repository contains no WRSR assets or saves.
 
-The first engineering gate is a repeatable Wicked Engine build and a blank scene. The next gate is a read-only, local content-viewer experiment. Importing some assets would not, by itself, mean that maps, saves, mods, or simulation behavior are compatible.
+The first engineering gate passed with an upstream build and blank-scene runtime smoke check. The next gate is a minimal OpenRepublic-owned window and scene, followed by a read-only, local content-viewer experiment. Importing some assets would not, by itself, mean that maps, saves, mods, or simulation behavior are compatible.
 
 ## Compatibility target
 
@@ -51,7 +51,7 @@ The current build receipt covers upstream Wicked Engine targets only; see [toolc
 ## First milestones
 
 1. [x] Pin Wicked Engine and compile its upstream editor and template sample using VS 2022/MSVC v143.
-2. [ ] Launch the template sample and record the graphics backend and a blank-scene screenshot.
+2. [x] Launch the template sample; confirm DirectX 12 and the blank scene (screenshot captured in this task session).
 3. [ ] Inventory candidate formats and approved local tooling without altering the game installation.
 4. [ ] Prove one representative asset/material path and one small terrain/world-coordinate path, or document the blocker and switch to a synthetic/open interchange fixture.
 5. [ ] Build an OpenRepublic-owned camera, selection, and world inspector.

@@ -16,9 +16,9 @@ OpenRepublic targets an independent client and simulation. Original-game plugins
 **Date:** 21 October 2026
 **Status:** Exact revision pinned for feasibility; no long-term production pin approved
 
-Use Wicked Engine's upstream Windows build and blank scene as the first renderer/tooling gate. Revision `4f93f3fd4f337aeb38dbfe410701b83024ccdd42` is pinned as a Git submodule; the local checkout was fetched shallowly. The upstream editor and template sample compile in Release/x64 using the installed VS 2022/MSVC v143 override; the source projects request v145 by default.
+Use Wicked Engine's upstream Windows build and blank scene as the first renderer/tooling gate. Revision `4f93f3fd4f337aeb38dbfe410701b83024ccdd42` is pinned as a Git submodule; the local checkout was fetched shallowly. The upstream editor and template sample compile in Release/x64 with VS 2022/MSVC v143 and Windows SDK 10.0.26100.0; the source projects request v145 by default. The template opens on DirectX 12 and reaches its blank scene.
 
-**Consequence:** the compile does not prove runtime rendering or OpenRepublic app integration. No performance or usability claim is made until a local build and benchmark exist. If it creates a measured blocker, evaluate an alternative renderer against the same headless simulation contract.
+**Consequence:** a blank sample scene confirms startup and basic runtime stability only; it does not establish useful rendering, OpenRepublic app integration, or a performance result. If the engine creates a measured blocker, evaluate an alternative renderer against the same headless simulation contract.
 
 ## D-003: Keep research/artifact intake separate from the public repository
 

@@ -1,7 +1,7 @@
 # OpenRepublic project plan
 
 **Prepared:** 21 October 2026
-**Status:** Research, public repo, and Wicked Engine pin/build complete; blank-scene runtime and OpenRepublic implementation remain pending
+**Status:** Research, public repo, and Wicked Engine build/runtime smoke check complete; OpenRepublic implementation and local asset survey remain pending
 **Project:** independent WRSR-compatible client and simulation engine
 
 ## 1. Mission
