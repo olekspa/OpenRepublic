@@ -1,7 +1,7 @@
 # OpenRepublic project plan
 
 **Prepared:** 21 October 2026
-**Status:** Research, public repo, and Wicked Engine build/runtime smoke check complete; OpenRepublic implementation and local asset survey remain pending
+**Status:** Research and public repo are established; the OpenRepublic-owned Wicked Engine app builds, initializes, and visibly renders its synthetic scene. Camera movement, zoom, and object picking are implemented and build, but runtime interaction verification is pending. WRSR asset ingestion remains unverified.
 **Project:** independent WRSR-compatible client and simulation engine
 
 ## 1. Mission
@@ -114,13 +114,26 @@ The 14 days are an intensive planning envelope, not a deadline guarantee. Record
 - Pinned upstream Wicked Engine revision `4f93f3fd4f337aeb38dbfe410701b83024ccdd42` as a Git submodule.
 - Built `Editor_Windows` and the upstream `Template_Windows` sample in Release/x64 with VS 2022/MSVC 14.44 by passing `PlatformToolset=v143`. Upstream project files request v145, which is not installed here; no upstream files were modified.
 - The compile emitted warnings from bundled `lodepng` and `zstd` sources. The build succeeded, and those vendor warnings were not suppressed or patched.
-- Runtime launch, blank-scene visual output, graphics API selection, and OpenRepublic code are not yet verified. The build output is local and ignored by Git.
+- The upstream `Template_Windows` sample opens on DirectX 12 and reaches its blank scene; its overlay reported Wicked Engine 0.72.126. The displayed frame rate was not a controlled benchmark.
+- A first OpenRepublic-owned Windows target now compiles against the pinned Wicked Engine through CMake. It creates a private synthetic scene with a plane, cube, and directional light. At runtime the expected window opened, the engine logged `Wicked Engine Initialized`, and the process closed cleanly with exit code 0.
+- A window-specific capture visually confirmed the plane and cube render in the OpenRepublic window.
+- The app source implements WASD/arrow camera movement, Space/Ctrl vertical movement, wheel zoom, and ray picking for a synthetic building ID (`OR-0001`) with highlight/title feedback and Escape-to-clear. The Release/x64 target rebuilt after these controls were added.
+- **Not yet runtime-verified:** the camera and selection interactions. A follow-up computer-use session was interrupted before interaction could be checked. Actual WRSR asset import, terrain/world placement, graphics API selection for the OpenRepublic target, and performance also remain open. No original game files were copied or added to Git.
+
+Reproduce the OpenRepublic target from a VS 2022 Developer shell (quote the SDK argument in PowerShell):
+
+```powershell
+cmake -S . -B build/openrepublic-vs2022 -G "Visual Studio 17 2022" -A x64 -T v143 "-DCMAKE_SYSTEM_VERSION=10.0.26100.0"
+cmake --build build/openrepublic-vs2022 --config Release --target OpenRepublic --parallel
+```
+
+The executable is `build/openrepublic-vs2022/src/app/Release/OpenRepublic.exe`; run it with `build/openrepublic-vs2022/` as the working directory so the generated `Content` directory is found.
 
 If authentic terrain or placements are blocked, an accurate isolated viewer or a synthetic but fully inspectable world is a conditional result. Do not spend the sprint adding graphics effects while import, coordinates, or source provenance remain unresolved.
 
 ### Go / conditional / pivot criteria
 
-- **Go:** blank engine build repeats; at least one bounded asset path and one world/placement path have evidence; the most important unknowns have named next checks; no proprietary material entered Git.
+- **Go:** blank engine build repeats; the OpenRepublic-owned app reaches engine initialization; at least one bounded asset path and one world/placement path have evidence; the most important unknowns have named next checks; no proprietary material entered Git.
 - **Conditional:** mesh/material import works but terrain, placement, or legal interpretation is unresolved. Give the blocker a fixed 2–4 week/person-hour budget and avoid expanding the renderer during that investigation.
 - **Pivot:** selected game data cannot be used in a standalone viewer under acceptable terms, or the format cost is disproportionate. Continue the independent simulation on synthetic/open content and pursue written clarification or a user-provided supported interchange workflow.
 

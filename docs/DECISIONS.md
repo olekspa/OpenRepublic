@@ -46,3 +46,12 @@ The repository's original source and documentation use MIT. The license does not
 A legitimate installation and read-only loading are project assumptions and engineering controls. Neither proves that use in an independent client is authorized. The official in-game Workshop modding guidance is narrower than standalone distribution.
 
 **Consequence:** keep early content experiments local and make rights-holder clarification/legal review a gate before publishing an asset-reading runtime or content.
+
+## D-006: Prove the OpenRepublic viewer with synthetic content first
+
+**Date:** 21 October 2026
+**Status:** Accepted for the first viewer milestone
+
+The first OpenRepublic-owned application scene uses only OpenRepublic-created geometry and materials. Current community and official modding documents describe game-side mod and ModelViewer workflows, but do not establish a standalone vanilla-asset export/import contract. A synthetic scene lets us validate the app and renderer integration before a content-format experiment.
+
+**Consequence:** this is a sequencing choice, not a replacement for the requested local WRSR-asset investigation. Keep the first local asset/material and terrain/placement gates explicit; do not call the synthetic viewer WRSR-compatible.
