@@ -90,3 +90,10 @@ add_executable(OpenRepublicTextTableTests
 target_link_libraries(OpenRepublicTextTableTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicTextTableTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicTextTableTests COMMAND OpenRepublicTextTableTests)
+
+add_executable(OpenRepublicMapPlacementTests
+    map_placement_tests.cpp
+)
+target_link_libraries(OpenRepublicMapPlacementTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicMapPlacementTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicMapPlacementTests COMMAND OpenRepublicMapPlacementTests)

@@ -188,6 +188,12 @@ namespace openrepublic
 		nmfMaterialPath = std::move(path);
 	}
 
+	void OpenRepublicApplication::SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters)
+	{
+		mapPlacement = std::move(request);
+		mapRadiusMeters = radiusMeters;
+	}
+
 	void OpenRepublicApplication::SetNmfUnlitPreview(bool enabled)
 	{
 		nmfUnlitPreview = enabled;
@@ -461,13 +467,28 @@ namespace openrepublic
 				wi::ecs::Entity meshEntity = wi::ecs::INVALID_ENTITY;
 				std::string description;
 				std::string error;
+				preview::NmfPreviewFrame previewFrame;
 				if (CreateNmfStaticPreview(previewWorld, nmfProbePath, meshEntity,
 					nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfUnlitPreview,
 					nmfMaterialUnlitPreview, nmfTextureRoots, nmfMaterialPath,
-					description, geometryAuditSummary, error))
+					description, geometryAuditSummary, error, &previewFrame))
 				{
 					nmfPreviewLoaded = true;
 					uiNotice = description;
+					if (mapPlacement)
+					{
+						std::string terrainDescription;
+						std::string terrainError;
+						if (preview::CreateMapTerrainAroundPlacement(previewWorld, *mapPlacement, previewFrame,
+							mapRadiusMeters, terrainDescription, terrainError))
+						{
+							wilog("[OpenRepublic] %s", terrainDescription.c_str());
+						}
+						else
+						{
+							wilog("[OpenRepublic] Map terrain placement failed: %s", terrainError.c_str());
+						}
+					}
 					// Fill light so faces turned away from the preview sun remain legible; the
 					// synthetic scene keeps Wicked's default weather.
 					const wi::ecs::Entity weatherEntity = wi::ecs::CreateEntity();

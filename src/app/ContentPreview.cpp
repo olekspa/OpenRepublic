@@ -703,7 +703,7 @@ namespace openrepublic::preview
 		const std::vector<std::filesystem::path>& textureRoots,
 		const std::filesystem::path& explicitMtlPath,
 		std::string& description, std::string& geometryAuditSummary,
-		std::string& error)
+		std::string& error, NmfPreviewFrame* frame)
 	{
 		openrepublic::content::NmfStaticGeometry geometry;
 		if (!openrepublic::content::LoadNmfStaticGeometry(nmfPath, geometry, &error))
@@ -781,6 +781,18 @@ namespace openrepublic::preview
 		previewCameraTarget = XMFLOAT3(previewGeometry.cameraTarget.x,
 			previewGeometry.cameraTarget.y, previewGeometry.cameraTarget.z);
 		previewCameraDistance = previewGeometry.cameraDistance;
+		if (frame != nullptr)
+		{
+			frame->displayScale = previewGeometry.displayScale;
+			frame->sourceMinimumY = previewGeometry.sourceMinimum.y;
+			frame->sourceCenterX = (static_cast<double>(previewGeometry.sourceMinimum.x) +
+				previewGeometry.sourceMaximum.x) * 0.5;
+			frame->sourceCenterZ = (static_cast<double>(previewGeometry.sourceMinimum.z) +
+				previewGeometry.sourceMaximum.z) * 0.5;
+			frame->sourceMaxHorizontalExtent = std::max(
+				static_cast<double>(previewGeometry.sourceMaximum.x) - previewGeometry.sourceMinimum.x,
+				static_cast<double>(previewGeometry.sourceMaximum.z) - previewGeometry.sourceMinimum.z);
+		}
 		const std::size_t vertexCount = previewGeometry.positions.size();
 		const std::size_t indexCount = previewGeometry.indices.size();
 		const std::size_t sourceNormalCount = previewGeometry.sourceNormalCount;
@@ -1213,4 +1225,95 @@ namespace openrepublic::preview
 		return true;
 	}
 
+
+	bool CreateMapTerrainAroundPlacement(wi::scene::Scene& scene,
+		const openrepublic::content::MapPlacementRequest& request, const NmfPreviewFrame& frame,
+		double radiusMeters, std::string& description, std::string& error)
+	{
+		using namespace openrepublic::content;
+		if (!(frame.displayScale > 0.0))
+		{
+			error = "NMF preview frame is not available for terrain placement";
+			return false;
+		}
+		const TerrainTransform transform = MakeMapTerrainTransform(request.metadata);
+		const PlacedBuilding& placement = request.placement;
+		const double radius = radiusMeters > 0.0
+			? radiusMeters
+			: std::max(60.0, frame.sourceMaxHorizontalExtent * 1.1);
+		// Keep the sampled square inside the terrain; a placement at the map edge gets a
+		// smaller region on that side rather than a failure.
+		const double minX = std::max(transform.originX, placement.X() - radius);
+		const double maxX = std::min(transform.originX + transform.sizeX, placement.X() + radius);
+		const double minZ = std::max(transform.originZ, placement.Z() - radius);
+		const double maxZ = std::min(transform.originZ + transform.sizeZ, placement.Z() + radius);
+		constexpr std::uint32_t kRegionSamples = 193;
+		TerrainPreviewGrid grid;
+		if (!BuildTerrainRegionGrid(request.heightmap, transform, minX, minZ, maxX - minX, maxZ - minZ,
+			kRegionSamples, kRegionSamples, grid, &error))
+		{
+			return false;
+		}
+
+		const double s = frame.displayScale;
+		const auto& m = placement.matrix;
+		std::vector<XMFLOAT3> positions;
+		positions.reserve(static_cast<std::size_t>(kRegionSamples) * kRegionSamples);
+		for (std::uint32_t z = 0; z < kRegionSamples; ++z)
+		{
+			for (std::uint32_t x = 0; x < kRegionSamples; ++x)
+			{
+				const double dx = grid.worldXCoordinates[x] - placement.X();
+				const double dz = grid.worldZCoordinates[z] - placement.Z();
+				// world = local * M (row vectors), so local = offset * transpose(rotation block).
+				const double localX = dx * m[0] + dz * m[2];
+				const double localZ = dx * m[8] + dz * m[10];
+				const double localY = static_cast<double>(
+					grid.heights[static_cast<std::size_t>(z) * kRegionSamples + x]) - placement.Y();
+				positions.emplace_back(
+					static_cast<float>(NmfPreviewCenterX + (localX - frame.sourceCenterX) * s),
+					static_cast<float>((localY - frame.sourceMinimumY) * s),
+					static_cast<float>((localZ - frame.sourceCenterZ) * s));
+			}
+		}
+		std::vector<std::uint32_t> indices;
+		indices.reserve(static_cast<std::size_t>(kRegionSamples - 1) * (kRegionSamples - 1) * 6);
+		for (std::uint32_t z = 0; z + 1 < kRegionSamples; ++z)
+		{
+			for (std::uint32_t x = 0; x + 1 < kRegionSamples; ++x)
+			{
+				const std::uint32_t a = z * kRegionSamples + x;
+				const std::uint32_t b = a + 1;
+				const std::uint32_t c = a + kRegionSamples;
+				const std::uint32_t d = c + 1;
+				indices.insert(indices.end(), { a, b, c, b, d, c });
+			}
+		}
+		const wi::ecs::Entity terrainEntity = scene.Entity_CreateMeshFromData(
+			"OpenRepublic map terrain around placement", indices.size(), indices.data(),
+			positions.size(), positions.data());
+		wi::scene::MeshComponent* mesh = scene.meshes.GetComponent(terrainEntity);
+		wi::scene::MaterialComponent* material = scene.materials.GetComponent(terrainEntity);
+		if (mesh == nullptr || material == nullptr)
+		{
+			error = "Wicked Engine did not create the map terrain components";
+			return false;
+		}
+		mesh->CreateRenderData();
+		material->SetBaseColor(XMFLOAT4(0.30f, 0.42f, 0.24f, 1.0f));
+		material->SetRoughness(1.0f);
+		material->SetReflectance(0.0f);
+		material->CreateRenderData(true);
+
+		std::ostringstream summary;
+		summary << "Map terrain around placement " << request.placementIndex + 1 << '/'
+			<< request.placementCount << " (" << placement.typeName << " at x=" << placement.X()
+			<< " y=" << placement.Y() << " z=" << placement.Z() << ", yaw " << placement.YawRadians()
+			<< " rad); region " << (maxX - minX) << " x " << (maxZ - minZ) << " m from "
+			<< request.heightmap.width << 'x' << request.heightmap.height
+			<< " R32F; transform: centred extent, height = raw*" << request.metadata.heightScale << '+'
+			<< request.metadata.worldPositionY << ", rows ascend with Z (verified on one map package)";
+		description = summary.str();
+		return true;
+	}
 }

@@ -34,4 +34,15 @@ bool BuildTerrainPreviewGrid(const Heightmap& heightmap, const TerrainTransform&
                              std::uint32_t previewWidth, std::uint32_t previewHeight,
                              TerrainPreviewGrid& output, std::string* error = nullptr);
 
+// Like BuildTerrainPreviewGrid, but samples only the axis-aligned world region
+// [regionMinX, regionMinX + regionSizeX] x [regionMinZ, regionMinZ + regionSizeZ]
+// out of the full terrain described by `transform`. The region must lie inside
+// the transform's extent and have positive size; the same dimension and sample
+// bounds apply. Rows ascend in world Z. On failure output is unchanged.
+bool BuildTerrainRegionGrid(const Heightmap& heightmap, const TerrainTransform& transform,
+                            double regionMinX, double regionMinZ, double regionSizeX,
+                            double regionSizeZ, std::uint32_t previewWidth,
+                            std::uint32_t previewHeight, TerrainPreviewGrid& output,
+                            std::string* error = nullptr);
+
 } // namespace openrepublic::content

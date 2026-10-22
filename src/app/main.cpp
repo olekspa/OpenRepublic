@@ -88,6 +88,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::filesystem::path nmfProbePath;
 	std::filesystem::path nmfMaterialPath;
 	std::filesystem::path contentRoot;
+	std::filesystem::path mapPackage;
+	std::size_t mapBuildingIndex = 0;
+	double mapRadiusMeters = 0.0;
 	std::string buildingTypeName;
 	int buildingModelLevel = 0;
 	std::vector<std::filesystem::path> nmfTextureRoots;
@@ -122,6 +125,37 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			else if (std::wstring_view(arguments[i]) == L"--content-root" && i + 1 < argumentCount)
 			{
 				contentRoot = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--map-package" && i + 1 < argumentCount)
+			{
+				mapPackage = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--map-building" && i + 1 < argumentCount)
+			{
+				const std::wstring_view value = arguments[++i];
+				double parsed = 0.0;
+				if (!ParseFiniteDouble(arguments[i], parsed) || parsed < 0.0 || parsed > 65535.0 ||
+					parsed != static_cast<double>(static_cast<std::size_t>(parsed)))
+				{
+					nmfCaptureArgumentError = "--map-building requires a placement index from 0 through 65535";
+				}
+				else
+				{
+					mapBuildingIndex = static_cast<std::size_t>(parsed);
+				}
+				static_cast<void>(value);
+			}
+			else if (std::wstring_view(arguments[i]) == L"--map-radius" && i + 1 < argumentCount)
+			{
+				double parsed = 0.0;
+				if (!ParseFiniteDouble(arguments[++i], parsed) || parsed < 10.0 || parsed > 5000.0)
+				{
+					nmfCaptureArgumentError = "--map-radius requires meters from 10 through 5000";
+				}
+				else
+				{
+					mapRadiusMeters = parsed;
+				}
 			}
 			else if (std::wstring_view(arguments[i]) == L"--building-type" && i + 1 < argumentCount)
 			{
@@ -296,7 +330,40 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		}
 		LocalFree(arguments);
 	}
-	if (nmfCaptureArgumentError.empty() && (!buildingTypeName.empty() || !contentRoot.empty()))
+	std::optional<openrepublic::content::MapPlacementRequest> mapPlacementRequest;
+	if (nmfCaptureArgumentError.empty() && !mapPackage.empty())
+	{
+		// Place one of a map package's buildings on its terrain. The package's
+		// heightmap, script.ini and buildings_game.bin plus the content root's
+		// building-type data resolve the model; it replaces --nmf-probe.
+		std::error_code mapError;
+		if (contentRoot.empty() || !buildingTypeName.empty() || !nmfProbePath.empty())
+		{
+			nmfCaptureArgumentError = "--map-package requires --content-root and cannot be combined with --building-type or --nmf-probe";
+		}
+		else if (!contentRoot.is_absolute() || !std::filesystem::is_directory(contentRoot, mapError) || mapError ||
+			!mapPackage.is_absolute() || !std::filesystem::is_directory(mapPackage, mapError) || mapError)
+		{
+			nmfCaptureArgumentError = "--content-root and --map-package require existing absolute local directories";
+		}
+		else
+		{
+			openrepublic::content::MapPlacementRequest request;
+			std::string mapResolveError;
+			if (!openrepublic::content::ResolveMapPlacement(contentRoot, mapPackage, mapBuildingIndex, request, &mapResolveError))
+			{
+				nmfCaptureArgumentError = "map placement could not be resolved: " + mapResolveError;
+			}
+			else
+			{
+				nmfProbePath = request.assets.model;
+				nmfMaterialPath = request.assets.material;
+				nmfTextureRoots.insert(nmfTextureRoots.begin(), contentRoot);
+				mapPlacementRequest = std::move(request);
+			}
+		}
+	}
+	else if (nmfCaptureArgumentError.empty() && (!buildingTypeName.empty() || !contentRoot.empty()))
 	{
 		// Resolve a building type from the content root's building-type data file
 		// (OBSERVED location: buildings/buildingtypes.ini). The type's model and
@@ -475,6 +542,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	application.SetNmfProbePath(std::move(nmfProbePath));
 	application.SetNmfTextureRoots(std::move(nmfTextureRoots));
 	application.SetNmfMaterialPath(std::move(nmfMaterialPath));
+	if (mapPlacementRequest)
+	{
+		application.SetMapPlacement(std::move(*mapPlacementRequest), mapRadiusMeters);
+	}
 	application.SetNmfUnlitPreview(nmfUnlitPreview);
 	application.SetNmfMaterialUnlitPreview(nmfMaterialUnlitPreview);
 	application.SetNmfCaptureZoom(static_cast<float>(nmfCaptureZoom));

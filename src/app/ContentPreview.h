@@ -3,6 +3,7 @@
 #include "WickedEngine.h"
 #include "openrepublic/content/glb_container.h"
 #include "openrepublic/content/glb_semantic.h"
+#include "openrepublic/content/map_placement.h"
 #include "openrepublic/content/terrain_dds.h"
 
 #include <windows.h>
@@ -150,11 +151,32 @@ namespace openrepublic::preview
 		const std::optional<openrepublic::content::TerrainTransform>& explicitTransform,
 		wi::ecs::Entity& terrainEntity, std::string& description, std::string& error);
 
+	// How the NMF preview maps source model coordinates into preview space:
+	// preview = (NmfPreviewCenterX + (x - centerX) * scale, (y - minimumY) * scale,
+	// (z - centerZ) * scale), where the centre is the midpoint of the source bounds.
+	struct NmfPreviewFrame
+	{
+		double displayScale = 0.0;
+		double sourceMinimumY = 0.0;
+		double sourceCenterX = 0.0;
+		double sourceCenterZ = 0.0;
+		double sourceMaxHorizontalExtent = 0.0;
+	};
+
 	bool CreateNmfStaticPreview(wi::scene::Scene& scene, const std::filesystem::path& nmfPath,
 		wi::ecs::Entity& meshEntity, XMFLOAT3& previewCameraTarget, float& previewCameraDistance,
 		bool unlitDiagnostic, bool materialUnlitDiagnostic,
 		const std::vector<std::filesystem::path>& textureRoots,
 		const std::filesystem::path& explicitMtlPath,
 		std::string& description, std::string& geometryAuditSummary,
-		std::string& error);
+		std::string& error, NmfPreviewFrame* frame = nullptr);
+
+	// Adds the terrain around a placed building in that building's local frame so
+	// it lines up with the NMF preview: the region around the placement is sampled
+	// with the map's verified terrain transform, rotated by the placement matrix
+	// and mapped through `frame` (1:1, no vertical exaggeration). `radiusMeters`
+	// <= 0 selects an automatic radius from the model size.
+	bool CreateMapTerrainAroundPlacement(wi::scene::Scene& scene,
+		const openrepublic::content::MapPlacementRequest& request, const NmfPreviewFrame& frame,
+		double radiusMeters, std::string& description, std::string& error);
 }

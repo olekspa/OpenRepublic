@@ -2,6 +2,7 @@ add_library(OpenRepublicContent STATIC
     building_definition.cpp
     building_types.cpp
     glb_container.cpp
+    map_placement.cpp
     mtl_dependencies.cpp
     mtl_preview_color.cpp
     mtl_preview_texture.cpp

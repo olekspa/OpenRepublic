@@ -2,6 +2,7 @@
 
 #include "WickedEngine.h"
 #include "openrepublic/agent_api/agent_api.h"
+#include "openrepublic/content/map_placement.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/sim/simulation.h"
 
@@ -24,6 +25,7 @@ namespace openrepublic
 		void SetNmfProbePath(std::filesystem::path path);
 		void SetNmfTextureRoots(std::vector<std::filesystem::path> roots);
 		void SetNmfMaterialPath(std::filesystem::path path);
+		void SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters);
 		void SetNmfUnlitPreview(bool enabled);
 		void SetNmfMaterialUnlitPreview(bool enabled);
 		void SetNmfCapturePaths(std::vector<std::filesystem::path> paths);
@@ -72,6 +74,8 @@ namespace openrepublic
 		std::filesystem::path nmfProbePath;
 		std::vector<std::filesystem::path> nmfTextureRoots;
 		std::filesystem::path nmfMaterialPath;
+		std::optional<openrepublic::content::MapPlacementRequest> mapPlacement;
+		double mapRadiusMeters = 0.0;
 		bool nmfUnlitPreview = false;
 		bool nmfMaterialUnlitPreview = false;
 		std::vector<std::filesystem::path> nmfCapturePaths;

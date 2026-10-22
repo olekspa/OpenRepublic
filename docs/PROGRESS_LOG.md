@@ -14,6 +14,10 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **~22:50 EDT [02:50 UTC]** Architecture review: `src/sim` is a hard-coded Farm/Mill/Storage demo and the app was a 3.3k-line monolith. Extracted content-preview code into `ContentPreview.*` / `NmfPreviewCapture.h` (commit `e0a02df`). Started a Luna `codex exec` worker in worktree `OpenRepublic-wt-economy` (branch `luna/economy-core`) to build a data-driven economy library.
 - **~23:10 EDT [03:10 UTC]** Found the authentic gameplay definitions (`buildings_types/*.ini`); `ParseBuildingDefinition` parses all 488 files. Started SOVIET64.exe Ghidra analysis (project `soviet64`) for the loader and rate units.
 
+- **~00:30 EDT [04:30 UTC, 22 Oct]** SOVIET64 loader traces: per-worker rates and the x60 per-second conversion (ledger). Added localized text-table reader.
+- **~01:10 EDT [05:10 UTC]** Imported the OpenNR bridge as `CodexBridge-v5-OpenRepublic` (ports 8890/8891, own venv), running; merged the Luna economy core (reformatted) into `main`; started worker `ECON-API` through the v5 bridge in worktree `OpenRepublic-wt-econapi`.
+- **~02:00 EDT [06:00 UTC]** Verified the map terrain transform against 28 building placements and the placement rotation convention; implemented `ExtractPlacedBuildings`, `MakeMapTerrainRegion`, `--map-package` preview (commit follows).
+
 ## Operating notes
 
 - Launching the game: `steam.exe -applaunch 784150` works; running the game launcher exe directly or `steam://rungameid` fails (reported by the project owner on 2026-10-21). The game and saves remain read-only research sources per `AGENTS.md`.

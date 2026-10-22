@@ -123,4 +123,60 @@ bool BuildTerrainPreviewGrid(const Heightmap& heightmap, const TerrainTransform&
     return true;
 }
 
+bool BuildTerrainRegionGrid(const Heightmap& heightmap, const TerrainTransform& transform,
+                            double regionMinX, double regionMinZ, double regionSizeX,
+                            double regionSizeZ, std::uint32_t previewWidth,
+                            std::uint32_t previewHeight, TerrainPreviewGrid& output,
+                            std::string* error) {
+    if (previewWidth < 2 || previewHeight < 2)
+        return Fail(error, "terrain region dimensions must both be at least 2");
+    if (previewWidth > kMaxPreviewDimension || previewHeight > kMaxPreviewDimension ||
+        static_cast<std::uint64_t>(previewWidth) * previewHeight > kMaxPreviewPoints)
+        return Fail(error, "terrain region sample count exceeds the configured bound");
+    if (!std::isfinite(regionMinX) || !std::isfinite(regionMinZ) || !std::isfinite(regionSizeX) ||
+        !std::isfinite(regionSizeZ) || regionSizeX <= 0.0 || regionSizeZ <= 0.0)
+        return Fail(error, "terrain region must be finite with positive size");
+    if (regionMinX < transform.originX || regionMinZ < transform.originZ ||
+        regionMinX + regionSizeX > transform.originX + transform.sizeX ||
+        regionMinZ + regionSizeZ > transform.originZ + transform.sizeZ)
+        return Fail(error, "terrain region lies outside the terrain extent");
+
+    TerrainPreviewGrid candidate;
+    candidate.width = previewWidth;
+    candidate.height = previewHeight;
+    try {
+        candidate.worldXCoordinates.resize(previewWidth);
+        candidate.worldZCoordinates.resize(previewHeight);
+        candidate.heights.resize(static_cast<std::size_t>(previewWidth) * previewHeight);
+    } catch (const std::bad_alloc&) {
+        return Fail(error, "unable to allocate bounded terrain region grid");
+    }
+    for (std::uint32_t x = 0; x < previewWidth; ++x)
+        candidate.worldXCoordinates[x] = regionMinX + regionSizeX * x / (previewWidth - 1);
+    for (std::uint32_t z = 0; z < previewHeight; ++z)
+        candidate.worldZCoordinates[z] = regionMinZ + regionSizeZ * z / (previewHeight - 1);
+
+    bool first = true;
+    std::string samplingError;
+    for (std::uint32_t z = 0; z < previewHeight; ++z) {
+        for (std::uint32_t x = 0; x < previewWidth; ++x) {
+            double height = 0.0;
+            if (!SampleTerrainHeight(heightmap, transform, candidate.worldXCoordinates[x],
+                                     candidate.worldZCoordinates[z], height, &samplingError)) {
+                if (error != nullptr) *error = "terrain region sample failed: " + samplingError;
+                return false;
+            }
+            const float value = static_cast<float>(height);
+            if (!std::isfinite(value)) return Fail(error, "terrain region height is not finite");
+            candidate.heights[static_cast<std::size_t>(z) * previewWidth + x] = value;
+            if (first || value < candidate.minHeight) candidate.minHeight = value;
+            if (first || value > candidate.maxHeight) candidate.maxHeight = value;
+            first = false;
+        }
+    }
+    output = std::move(candidate);
+    if (error != nullptr) error->clear();
+    return true;
+}
+
 } // namespace openrepublic::content
