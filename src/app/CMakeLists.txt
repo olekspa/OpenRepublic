@@ -14,7 +14,7 @@ target_include_directories(OpenRepublic PRIVATE
 )
 
 target_compile_definitions(OpenRepublic PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_link_libraries(OpenRepublic PRIVATE WickedEngine OpenRepublicSimulation OpenRepublicContent OpenRepublicAgentApi shell32)
+target_link_libraries(OpenRepublic PRIVATE WickedEngine OpenRepublicSimulation OpenRepublicContent OpenRepublicAgentApi OpenRepublicRuntime shell32)
 
 if(TARGET OpenRepublicScripting)
     target_link_libraries(OpenRepublic PRIVATE OpenRepublicScripting)

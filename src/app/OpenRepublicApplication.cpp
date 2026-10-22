@@ -119,6 +119,81 @@ namespace openrepublic
 			return actual == expected;
 		}
 
+		// Applies the renderer-independent settings to a Wicked path. Anything the device or
+		// backend cannot do is logged, never silently dropped.
+		void ApplyGraphicsSettings(wi::RenderPath3D& path, const openrepublic::runtime::GraphicsSettings& settings)
+		{
+			using openrepublic::runtime::AmbientOcclusion;
+			using openrepublic::runtime::Upscaler;
+			const bool rayTracing = wi::graphics::GetDevice() != nullptr &&
+				wi::graphics::GetDevice()->CheckCapability(wi::graphics::GraphicsDeviceCapability::RAYTRACING);
+			wilog("[OpenRepublic] Graphics settings: %s (hardware ray tracing %s)",
+				openrepublic::runtime::FormatGraphicsSettings(settings).c_str(), rayTracing ? "available" : "unavailable");
+
+			path.setFSR2Enabled(false);
+			switch (settings.upscaler)
+			{
+			case Upscaler::None:
+				break;
+			case Upscaler::Fsr2Quality:
+				path.setFSR2Preset(wi::RenderPath3D::FSR2_Preset::Quality);
+				path.setFSR2Enabled(true);
+				break;
+			case Upscaler::Fsr2Balanced:
+				path.setFSR2Preset(wi::RenderPath3D::FSR2_Preset::Balanced);
+				path.setFSR2Enabled(true);
+				break;
+			case Upscaler::Fsr2Performance:
+				path.setFSR2Preset(wi::RenderPath3D::FSR2_Preset::Performance);
+				path.setFSR2Enabled(true);
+				break;
+			case Upscaler::Fsr2UltraPerformance:
+				path.setFSR2Preset(wi::RenderPath3D::FSR2_Preset::Ultra_Performance);
+				path.setFSR2Enabled(true);
+				break;
+			case Upscaler::Dlss:
+				wilog("[OpenRepublic] DLSS requested but unavailable: the NVIDIA Streamline SDK is not integrated; rendering without an upscaler");
+				break;
+			}
+
+			wi::RenderPath3D::AO ao = wi::RenderPath3D::AO_DISABLED;
+			switch (settings.ambientOcclusion)
+			{
+			case AmbientOcclusion::Off: break;
+			case AmbientOcclusion::Ssao: ao = wi::RenderPath3D::AO_SSAO; break;
+			case AmbientOcclusion::Hbao: ao = wi::RenderPath3D::AO_HBAO; break;
+			case AmbientOcclusion::Msao: ao = wi::RenderPath3D::AO_MSAO; break;
+			case AmbientOcclusion::RayTraced:
+				if (rayTracing)
+				{
+					ao = wi::RenderPath3D::AO_RTAO;
+				}
+				else
+				{
+					wilog("[OpenRepublic] Ray-traced AO requested without hardware ray tracing; AO disabled");
+				}
+				break;
+			}
+			path.setAO(ao);
+
+			const bool wantsRayTracing = settings.rayTracedReflections || settings.rayTracedDiffuse;
+			if (wantsRayTracing && !rayTracing)
+			{
+				wilog("[OpenRepublic] Ray-traced reflections/diffuse requested without hardware ray tracing; they stay off");
+			}
+			path.setRaytracedReflectionsEnabled(settings.rayTracedReflections && rayTracing);
+			path.setRaytracedDiffuseEnabled(settings.rayTracedDiffuse && rayTracing);
+			path.setSSREnabled(settings.screenSpaceReflections);
+			path.setFXAAEnabled(settings.fxaa);
+			path.setBloomEnabled(settings.bloom);
+			path.setExposure(settings.exposure);
+			if (settings.sharpen >= 0.0f)
+			{
+				path.setSharpenFilterEnabled(true);
+				path.setSharpenFilterAmount(settings.sharpen);
+			}
+		}
+
 		void StyleButton(wi::gui::Button& button)
 		{
 			button.SetColor(kUiButtonIdle, wi::gui::IDLE);
@@ -195,6 +270,11 @@ namespace openrepublic
 		mapRadiusMeters = radiusMeters;
 		mapRegionPreview = regionPreview;
 		mapContentRoot = std::move(contentRoot);
+	}
+
+	void OpenRepublicApplication::SetGraphicsSettings(openrepublic::runtime::GraphicsSettings settings)
+	{
+		graphicsSettings = settings;
 	}
 
 	void OpenRepublicApplication::SetNmfUnlitPreview(bool enabled)
@@ -578,6 +658,17 @@ namespace openrepublic
 		renderPath->scene = &previewWorld;
 		renderPath->setBloomEnabled(false);
 		renderPath->setDepthOfFieldEnabled(false);
+		if (graphicsSettings)
+		{
+			ApplyGraphicsSettings(*renderPath, *graphicsSettings);
+			const bool temporal = graphicsSettings->upscaler != openrepublic::runtime::Upscaler::None ||
+				graphicsSettings->rayTracedReflections || graphicsSettings->rayTracedDiffuse ||
+				graphicsSettings->ambientOcclusion == openrepublic::runtime::AmbientOcclusion::RayTraced;
+			if (auto* capturePath = dynamic_cast<NmfPreviewCaptureRenderPath*>(renderPath.get()); capturePath && temporal)
+			{
+				capturePath->SetSettleFrames(48);
+			}
+		}
 
 		wi::gui::GUI& gui = renderPath->GetGUI();
 		pauseButton.Create("SimulationPauseButton");

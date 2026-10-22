@@ -58,7 +58,7 @@ bool ReadFile(const std::filesystem::path &path, std::string &text) {
 bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::filesystem::path &mapDir,
                       long centerIndex, double radius, economy::Catalog &catalog,
                       std::unique_ptr<economy::World> &world, std::string &description,
-                      std::string &error) {
+                      std::string &regionInfoJson, std::string &error) {
   std::map<std::string, content::BuildingDefinition> definitions;
   std::error_code ec;
   for (const auto &entry : std::filesystem::directory_iterator(contentRoot / "buildings_types", ec)) {
@@ -115,6 +115,13 @@ bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::files
           << " + 4*cx .. +4, z " << imported.originZ << " + 4*cz .. +4.\n"
           << compat::DescribeRegionImport(imported) << "\n" << compat::DescribeRegionRoads(roadReport);
   description = summary.str();
+  std::ostringstream info;
+  info.precision(17);
+  info << "{\"originX\":" << imported.originX << ",\"originZ\":" << imported.originZ
+       << ",\"cellSizeMeters\":" << options.cellSizeMeters << ",\"gridWidth\":" << imported.gridWidth
+       << ",\"gridDepth\":" << imported.gridDepth << ",\"centerPlacement\":" << center
+       << ",\"radiusMeters\":" << radius << "}";
+  regionInfoJson = info.str();
   return true;
 }
 } // namespace
@@ -178,6 +185,7 @@ int main(int argc, char **argv) {
 
   std::unique_ptr<economy::World> regionWorld;
   std::string regionDescription;
+  std::string regionInfoJson;
   if (!regionDir.empty()) {
     if (contentRoot.empty() || !catalogPath.empty() || !(radius >= 10.0 && radius <= 1000.0)) {
       std::cerr << "--region needs --content-root, excludes --catalog, and a radius of 10..1000 m.\n";
@@ -185,7 +193,7 @@ int main(int argc, char **argv) {
     }
     std::string error;
     if (!BuildRegionWorld(contentRoot, regionDir, centerIndex, radius, catalog, regionWorld,
-                          regionDescription, error)) {
+                          regionDescription, regionInfoJson, error)) {
       std::cerr << "Region import failed: " << error << "\n";
       return 2;
     }
@@ -194,6 +202,8 @@ int main(int argc, char **argv) {
                                                     : economy_host::Dispatcher(role, catalog);
   if (regionWorld)
     dispatcher.SetRegionDescription(regionDescription);
+  if (regionWorld)
+    dispatcher.SetRegionInfoJson(regionInfoJson);
   std::string line;
   std::size_t requests = 0;
   while (!dispatcher.ShutdownRequested()) {

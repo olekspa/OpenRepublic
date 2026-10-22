@@ -481,6 +481,10 @@ void Dispatcher::SetRegionDescription(std::string description) {
   regionDescription_ = std::move(description);
 }
 
+void Dispatcher::SetRegionInfoJson(std::string json) {
+  regionInfoJson_ = std::move(json);
+}
+
 bool Dispatcher::ShutdownRequested() const noexcept {
   return shutdown_;
 }
@@ -540,6 +544,11 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                {"uint64Encoding", "decimal_string"}};
     if (!regionDescription_.empty())
       out["region"] = regionDescription_;
+    if (!regionInfoJson_.empty()) {
+      Json info = Json::parse(regionInfoJson_, nullptr, false);
+      if (!info.is_discarded())
+        out["regionInfo"] = info;
+    }
   } else if (method == "catalog") {
     if (!Fields(req, {}, message))
       return invalid(message);

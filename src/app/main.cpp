@@ -1,6 +1,7 @@
 #include "OpenRepublicApplication.h"
 #include "openrepublic/content/building_types.h"
 #include "openrepublic/content/mtl_dependencies.h"
+#include "openrepublic/runtime/graphics_settings.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -94,6 +95,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool mapRegion = false;
 	double mapRadiusMeters = 0.0;
 	std::string buildingTypeName;
+	std::optional<openrepublic::runtime::GraphicsSettings> graphicsSettings;
 	int buildingModelLevel = 0;
 	std::vector<std::filesystem::path> nmfTextureRoots;
 	bool nmfUnlitPreview = false;
@@ -127,6 +129,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			else if (std::wstring_view(arguments[i]) == L"--content-root" && i + 1 < argumentCount)
 			{
 				contentRoot = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--graphics" && i + 1 < argumentCount)
+			{
+				const std::wstring wide = arguments[++i];
+				std::string narrow;
+				for (const wchar_t value : wide)
+				{
+					narrow.push_back(value < 0x80 ? static_cast<char>(value) : '?');
+				}
+				openrepublic::runtime::GraphicsSettings parsed;
+				std::string graphicsError;
+				if (openrepublic::runtime::ParseGraphicsSettings(narrow, parsed, &graphicsError))
+				{
+					graphicsSettings = parsed;
+				}
+				else
+				{
+					nmfCaptureArgumentError = "--graphics: " + graphicsError;
+				}
 			}
 			else if (std::wstring_view(arguments[i]) == L"--map-package" && i + 1 < argumentCount)
 			{
@@ -560,6 +581,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	application.SetNmfProbePath(std::move(nmfProbePath));
 	application.SetNmfTextureRoots(std::move(nmfTextureRoots));
 	application.SetNmfMaterialPath(std::move(nmfMaterialPath));
+	if (graphicsSettings)
+	{
+		application.SetGraphicsSettings(*graphicsSettings);
+	}
 	if (mapPlacementRequest)
 	{
 		application.SetMapPlacement(std::move(*mapPlacementRequest), mapRadiusMeters, mapRegion, contentRoot);

@@ -76,6 +76,13 @@ namespace openrepublic
 			camera->UpdateCamera();
 		}
 
+		// Frames to wait after each camera change before reading back; temporal features
+		// (FSR2, ray-traced denoisers) need history that matches the new view.
+		void SetSettleFrames(std::uint32_t frames)
+		{
+			settleFrames = frames;
+		}
+
 		void PostRender() override
 		{
 			// Let renderer startup and asynchronous PSO creation settle for a bounded
@@ -88,11 +95,17 @@ namespace openrepublic
 					// Apply view A after path activation and let its next full frame render
 					// before the first readback.
 					SetDiagnosticCameraView(0);
+					settleRemaining = settleFrames;
 				}
 				return;
 			}
 			if (nextCapture >= outputPaths.size())
 			{
+				return;
+			}
+			if (settleRemaining > 0)
+			{
+				--settleRemaining;
 				return;
 			}
 
@@ -139,6 +152,7 @@ namespace openrepublic
 			if (nextCapture < outputPaths.size())
 			{
 				SetDiagnosticCameraView(nextCapture);
+				settleRemaining = settleFrames;
 				return;
 			}
 			PostQuitMessage(0);
@@ -198,5 +212,7 @@ namespace openrepublic
 		std::optional<float> cameraElevationDegrees;
 		std::uint32_t warmupFramesRemaining = 60;
 		std::size_t nextCapture = 0;
+		std::uint32_t settleFrames = 0;
+		std::uint32_t settleRemaining = 0;
 	};
 }

@@ -1,0 +1,4 @@
+add_executable(OpenRepublicGraphicsSettingsTests graphics_settings_tests.cpp)
+target_link_libraries(OpenRepublicGraphicsSettingsTests PRIVATE OpenRepublicRuntime)
+target_compile_features(OpenRepublicGraphicsSettingsTests PRIVATE cxx_std_17)
+add_test(NAME RuntimeGraphicsSettings COMMAND OpenRepublicGraphicsSettingsTests)

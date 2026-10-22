@@ -26,12 +26,15 @@ public:
   bool ShutdownRequested() const noexcept;
   /** Free-text provenance reported by `hello` (for example an imported map region). */
   void SetRegionDescription(std::string description);
+  /** Machine-readable region geometry (a JSON object text) reported by `hello` as `regionInfo`. */
+  void SetRegionInfoJson(std::string json);
 
 private:
   economy_api::EconomyApi api_;
   Role role_;
   bool shutdown_{};
   std::string regionDescription_;
+  std::string regionInfoJson_;
 };
 
 } // namespace openrepublic::economy_host

@@ -1,0 +1,3 @@
+add_library(OpenRepublicRuntime graphics_settings.cpp)
+target_include_directories(OpenRepublicRuntime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_compile_features(OpenRepublicRuntime PUBLIC cxx_std_17)
