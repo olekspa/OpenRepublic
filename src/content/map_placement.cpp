@@ -180,6 +180,19 @@ bool ResolveMapPlacement(const std::filesystem::path& contentRoot,
     candidate.placementIndex = index;
     candidate.placementCount = all.size();
     candidate.allPlacements = std::move(all);
+    {
+        // Roads are optional: a missing or unreadable file leaves hasRoads false.
+        const auto roadPath = mapDirectory / "road.bin";
+        const auto roadBytes = std::filesystem::file_size(roadPath, ec);
+        if (!ec && roadBytes <= 256u * 1024u * 1024u) {
+            std::string data(static_cast<std::size_t>(roadBytes), '\0');
+            std::ifstream in(roadPath, std::ios::binary);
+            in.read(data.data(), static_cast<std::streamsize>(data.size()));
+            if (in && in.gcount() == static_cast<std::streamsize>(data.size())) {
+                candidate.hasRoads = ExtractRoadNetwork(data, candidate.roads, nullptr);
+            }
+        }
+    }
 
     if (!requireAssets) {
         output = std::move(candidate);

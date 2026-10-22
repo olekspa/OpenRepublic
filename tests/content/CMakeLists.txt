@@ -97,3 +97,10 @@ add_executable(OpenRepublicMapPlacementTests
 target_link_libraries(OpenRepublicMapPlacementTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicMapPlacementTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicMapPlacementTests COMMAND OpenRepublicMapPlacementTests)
+
+add_executable(OpenRepublicRoadNetworkTests
+    road_network_tests.cpp
+)
+target_link_libraries(OpenRepublicRoadNetworkTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicRoadNetworkTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicRoadNetworkTests COMMAND OpenRepublicRoadNetworkTests)

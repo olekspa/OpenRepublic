@@ -1393,6 +1393,89 @@ namespace openrepublic::preview
 		terrainMaterial->SetReflectance(0.0f);
 		terrainMaterial->CreateRenderData(true);
 
+		// Roads: straight ribbons between linked junctions, draped on the terrain. Segment
+		// polylines are not decoded, so curved roads appear as chords.
+		std::size_t roadEdges = 0;
+		if (request.hasRoads)
+		{
+			constexpr float kRoadHalfWidth = 2.5f;
+			constexpr float kRoadLift = 0.25f;
+			constexpr double kRoadStep = 8.0;
+			constexpr std::size_t kMaxRoadVertices = 240000;
+			std::vector<XMFLOAT3> roadPositions;
+			std::vector<std::uint32_t> roadIndices;
+			const double limit = regionRadius * 1.1;
+			const auto& nodes = request.roads.nodes;
+			const auto heightAt = [&](double wx, double wz)
+			{
+				double h = 0.0;
+				const double cx = std::min(std::max(wx, transform.originX), transform.originX + transform.sizeX);
+				const double cz = std::min(std::max(wz, transform.originZ), transform.originZ + transform.sizeZ);
+				SampleTerrainHeight(request.heightmap, transform, cx, cz, h, nullptr);
+				return h;
+			};
+			for (std::size_t i = 0; i < nodes.size() && roadPositions.size() < kMaxRoadVertices; ++i)
+			{
+				for (const std::uint32_t j : nodes[i].neighbors)
+				{
+					if (j <= i || j >= nodes.size())
+					{
+						continue;
+					}
+					const double ax = nodes[i].x;
+					const double az = nodes[i].z;
+					const double bx = nodes[j].x;
+					const double bz = nodes[j].z;
+					const bool inside =
+						(std::fabs(ax - center.X()) < limit && std::fabs(az - center.Z()) < limit) ||
+						(std::fabs(bx - center.X()) < limit && std::fabs(bz - center.Z()) < limit);
+					const double length = std::hypot(bx - ax, bz - az);
+					if (!inside || length < 0.5)
+					{
+						continue;
+					}
+					const double dx = (bx - ax) / length;
+					const double dz = (bz - az) / length;
+					const int steps = std::max(1, static_cast<int>(std::ceil(length / kRoadStep)));
+					const std::uint32_t base = static_cast<std::uint32_t>(roadPositions.size());
+					for (int s = 0; s <= steps; ++s)
+					{
+						const double t = length * s / steps;
+						const double wx = ax + dx * t;
+						const double wz = az + dz * t;
+						const float y = static_cast<float>(heightAt(wx, wz)) + kRoadLift;
+						roadPositions.emplace_back(static_cast<float>(wx - center.X() - dz * kRoadHalfWidth), y,
+							static_cast<float>(wz - center.Z() + dx * kRoadHalfWidth));
+						roadPositions.emplace_back(static_cast<float>(wx - center.X() + dz * kRoadHalfWidth), y,
+							static_cast<float>(wz - center.Z() - dx * kRoadHalfWidth));
+					}
+					for (int s = 0; s < steps; ++s)
+					{
+						const std::uint32_t a = base + 2u * s;
+						roadIndices.insert(roadIndices.end(), { a, a + 1, a + 2, a + 1, a + 3, a + 2 });
+					}
+					++roadEdges;
+				}
+			}
+			if (!roadIndices.empty())
+			{
+				const wi::ecs::Entity roadEntity = scene.Entity_CreateMeshFromData(
+					"OpenRepublic map region roads", roadIndices.size(), roadIndices.data(),
+					roadPositions.size(), roadPositions.data());
+				wi::scene::MeshComponent* roadMesh = scene.meshes.GetComponent(roadEntity);
+				wi::scene::MaterialComponent* roadMaterial = scene.materials.GetComponent(roadEntity);
+				if (roadMesh != nullptr && roadMaterial != nullptr)
+				{
+					roadMesh->CreateRenderData();
+					roadMaterial->SetBaseColor(XMFLOAT4(0.16f, 0.17f, 0.19f, 1.0f));
+					roadMaterial->SetRoughness(1.0f);
+					roadMaterial->SetReflectance(0.0f);
+					roadMaterial->SetDoubleSided(true);
+					roadMaterial->CreateRenderData(true);
+				}
+			}
+		}
+
 		// Buildings: one mesh per distinct type, one object per placement.
 		std::map<std::string, wi::ecs::Entity> meshByType;
 		std::size_t instances = 0;
@@ -1477,7 +1560,8 @@ namespace openrepublic::preview
 			<< " m of placement " << request.placementIndex + 1 << '/' << request.placementCount << " ("
 			<< center.typeName << "); " << selected.size() << " placements selected, " << unresolvedTypes
 			<< " unresolved types, " << failedLoads << " failed loads, " << skippedByLimit
-			<< " skipped by the instance/type limits; 1:1 metres, verified terrain transform, placement"
+			<< " skipped by the instance/type limits; " << roadEdges << " road links drawn as chords; 1:1 metres,"
+			<< " verified terrain transform, placement"
 			<< " matrices applied as stored";
 		description = summary.str();
 		return true;

@@ -141,6 +141,12 @@ Use one entry per claim. Do not collapse observed behavior into a format/API con
 |---|---|---|---|---|---|
 | Recorded production roughly matches nominal per-day per-worker totals for continuous producers. | OBSERVED (one 736-building save; not a controlled test) | `stats.ini` of the save holds 3,529 dated records with `$Resources_Produced`. Averaging the last 200 records and comparing with the sum over the save's buildings of (data rate x workers declared before it) gives ratios of 1.44 (electricity), 1.65 (food), 1.52 (fabric) and 1.61 (clothes); extractors and processing chains differ widely (coal 0.45, gravel 0.19, raw coal 60) and several idle types give 0. | Staffing, efficiency, input starvation, records' time span (about 4 days per record on average) and extraction mechanics are unknown, so no unit factor is derived; per-day units are consistent in order of magnitude only. | Controlled observation in the running game (launch with `steam.exe -applaunch 784150`) on one fully supplied factory. |
 
+## Road network file — 22 October 2026 (Claude takeover)
+
+| System | Claim | Status | Evidence | Limits | Next action |
+|---|---|---|---|---|---|
+| `road.bin` node layout. | VERIFIED (66 files, 43,033 nodes; one build) | `FUN_14056ea60` (SOVIET64) writes three u32 counts (nodes, segments, groups), then node records via `FUN_14056f560` and segment records via `FUN_14056fe40`. A node record is a 0x48-byte block (float x, y, z; u32 counts) followed by u32 arrays: three arrays of the last count, then neighbor node indices, segment ids, type ids and one more per-connection word. Walking all nodes sequentially lands every position inside the map (x, z within +-9,800 m) and the neighbor lists are symmetric in all 66 files (0 asymmetric of 68,718+ links, none out of range). In the region view the decoded graph runs between the placed buildings. `ExtractRoadNetwork` implements it. | Segment records (polylines, lanes, 0x88 header + 0x2c0 sub-structs) are not decoded; roads are drawn as straight chords. The meaning of the type id and the extra word is unknown. | Decode segment records for curves and widths. |
+
 ## Rules
 
 - Include the game build and executable/file identity for executable-specific claims. Keep private exact hashes out of public docs unless there is a clear reason to publish them.

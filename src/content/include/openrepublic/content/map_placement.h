@@ -1,6 +1,7 @@
 #pragma once
 
 #include "openrepublic/content/building_types.h"
+#include "openrepublic/content/road_network.h"
 #include "openrepublic/content/terrain_dds.h"
 
 #include <array>
@@ -76,6 +77,9 @@ struct MapPlacementRequest {
     PlacedBuilding placement;
     // Every placement in the package (the selected one is allPlacements[placementIndex]).
     std::vector<PlacedBuilding> allPlacements;
+    // The package's road junction graph when `road.bin` is present and readable.
+    RoadNetwork roads;
+    bool hasRoads = false;
     std::size_t placementIndex = 0;
     std::size_t placementCount = 0;
     BuildingTypeAssetPaths assets;

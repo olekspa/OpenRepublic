@@ -22,7 +22,10 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 
 - **~03:30 EDT [07:30 UTC]** Merged the economy API/host (`786a2e3`), removed a machine-specific CMake fallback, recorded D-008, started worker `ECON-IMPORT` (WRSR definitions -> economy Catalog) in `OpenRepublic-wt-econimport`.
 
+- **~05:00 EDT [09:00 UTC]** Merged ECON-IMPORT (88 real building types / 54 resources from the install; catalog drives the economy host), started ECON-REGION. Decoded the road node layout (66 files validated), roads drawn in the region view. Granted computer-use access to the running app (see operating notes).
+
 ## Operating notes
 
 - Launching the game: `steam.exe -applaunch 784150` works; running the game launcher exe directly or `steam://rungameid` fails (reported by the project owner on 2026-10-21). The game and saves remain read-only research sources per `AGENTS.md`.
+- Computer-use access to OpenRepublic: `request_access` only matches installed Start-menu apps or running processes; the running app is matched by executable name (`OpenRepublic.exe`) while it is running, and a Start-menu shortcut `OpenRepublic` (region view of a save) exists for launching it.
 - Ghidra projects must live under a path without dot-prefixed folders (e.g. `D:\ghidra_claude_c3d`); trace scripts and outputs are archived in the private research folder `OpenRepublic-Research\ghidra-claude`.
