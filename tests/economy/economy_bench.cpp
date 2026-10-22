@@ -22,5 +22,25 @@ int main() {
         const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         std::cout << threads << " thread(s): " << buildings << " buildings, " << ms / 100 << " ms/tick\n";
     }
+    // Haul movement: one road row with farm/mill pairs and a truck per order.
+    for (const int pairs : {100, 400}) {
+        World w(catalog, 2100, 8);
+        for (int x = 1; x < 4 * pairs * 2; ++x)
+            w.BuildRoad({x, 1}, {x + 1, 1});
+        for (int i = 0; i < pairs * 2; ++i)
+            w.PlaceBuilding(static_cast<BuildingTypeId>(i % 2), {2 + i * 4, 2});
+        w.Step();
+        ResourceId grain{};
+        catalog.FindResource("grain", grain);
+        for (int i = 0; i < pairs; ++i)
+            w.CreateHaulOrder(static_cast<BuildingId>(2 * i + 1), static_cast<BuildingId>(2 * i + 2), grain, 0);
+        for (int i = 0; i < 20; ++i)
+            w.Step();
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < 200; ++i)
+            w.Step();
+        const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        std::cout << pairs << " haul orders: " << ms / 200 << " ms/tick\n";
+    }
     return 0;
 }
