@@ -1,4 +1,5 @@
 #include "openrepublic/economy_api/economy_api.h"
+#include "openrepublic/economy/checkpoint.h"
 
 #include <algorithm>
 #include <limits>
@@ -43,6 +44,7 @@ WorldView MakeWorld(const economy::Catalog& c, const economy::WorldSnapshot& s) 
     v.revision = s.revision;
     v.tick = s.tick;
     v.stateHash = s.stateHash;
+    v.commandHistory = s.commandHistory;
     for (const auto& b : s.buildings) {
         v.buildings.push_back(MakeBuilding(c, b));
     }
@@ -81,13 +83,73 @@ Capabilities EconomyApi::DiscoverCapabilities() const {
         return c;
     }
     c.actions = {Action::QueryWorld, Action::QueryCatalog, Action::ExplainBuilding,
-        Action::PollCommand, Action::ReadEvents};
+        Action::PollCommand, Action::ReadEvents, Action::ExportCheckpoint};
     if (permissions_.control && permissions_.query) {
         c.actions.insert(c.actions.end(), {Action::Step, Action::PlaceBuilding, Action::RemoveBuilding,
             Action::BuildRoad, Action::SetRoadEnabled, Action::SetBuildingEnabled,
-            Action::CreateHaulOrder, Action::CancelHaulOrder});
+            Action::CreateHaulOrder, Action::CancelHaulOrder, Action::RetargetHaulOrder,
+            Action::CompactCommandHistory});
     }
     return c;
+}
+CheckpointExport EconomyApi::ExportCheckpoint(std::uint64_t expectedRevision) const {
+    CheckpointExport result;
+    if (!permissions_.query) {
+        result.error = ErrorCode::PermissionDenied;
+        return result;
+    }
+    if (expectedRevision != world_->Revision()) {
+        result.error = ErrorCode::StaleRevision;
+        return result;
+    }
+    economy::ParseError error;
+    if (!economy::SaveCheckpoint(*world_, result.text, error)) {
+        result.error = ErrorCode::PersistenceFailed;
+        result.message = error.message;
+        return result;
+    }
+    result.revision = world_->Revision();
+    result.tick = world_->Tick();
+    return result;
+}
+HistoryCompaction EconomyApi::CompactCommandHistory(std::uint64_t expectedRevision,
+    std::uint32_t keepRecent) {
+    HistoryCompaction result;
+    if (!permissions_.query || !permissions_.control) {
+        result.error = ErrorCode::PermissionDenied;
+        return result;
+    }
+    if (expectedRevision != world_->Revision()) {
+        result.error = ErrorCode::StaleRevision;
+        return result;
+    }
+    const auto compacted = world_->CompactCommandHistory(keepRecent);
+    switch (compacted.error) {
+    case economy::CommandHistoryError::None:
+        break;
+    case economy::CommandHistoryError::InvalidRetention:
+        result.error = ErrorCode::InvalidArgument;
+        return result;
+    case economy::CommandHistoryError::RevisionExhausted:
+        result.error = ErrorCode::RevisionExhausted;
+        return result;
+    }
+    result.removedResults = compacted.removedResults;
+    result.history = compacted.history;
+    result.revision = world_->Revision();
+
+    // A world may also be compacted directly while this API is attached. Drop all handles
+    // below its authoritative retention floor, even when this API call itself was a no-op.
+    for (auto it = commands_.begin(); it != commands_.end();) {
+        if (it->second < result.history.firstRetainedCommandId) {
+            terminalCommands_.erase(it->first);
+            it = commands_.erase(it);
+            ++result.expiredHandles;
+        } else {
+            ++it;
+        }
+    }
+    return result;
 }
 CatalogView EconomyApi::DescribeCatalog() const {
     CatalogView v;
@@ -203,6 +265,8 @@ Submission EconomyApi::Submit(std::uint64_t revision, economy::CommandId id) {
     if (world_->Revision() != revision) {
         return {ErrorCode::StaleRevision, 0, {}};
     }
+    if (id == 0)
+        return {ErrorCode::CommandQueueExhausted, 0, {}};
     if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
         return {ErrorCode::CommandHandleExhausted, 0, {}};
     const auto handle = nextHandle_++;
@@ -221,6 +285,8 @@ Submission EconomyApi::PlaceBuilding(std::uint64_t revision, const std::string& 
     if (!catalog_->FindBuildingType(type, id)) {
         return {ErrorCode::InvalidArgument, 0, {}};
     }
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->PlaceBuilding(id, c));
 }
 Submission EconomyApi::RemoveBuilding(std::uint64_t revision, economy::BuildingId id) {
@@ -230,6 +296,8 @@ Submission EconomyApi::RemoveBuilding(std::uint64_t revision, economy::BuildingI
     if (world_->Revision() != revision) {
         return {ErrorCode::StaleRevision, 0, {}};
     }
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->RemoveBuilding(id));
 }
 Submission EconomyApi::BuildRoad(std::uint64_t revision, economy::Cell a, economy::Cell b) {
@@ -239,6 +307,8 @@ Submission EconomyApi::BuildRoad(std::uint64_t revision, economy::Cell a, econom
     if (world_->Revision() != revision) {
         return {ErrorCode::StaleRevision, 0, {}};
     }
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->BuildRoad(a, b));
 }
 Submission EconomyApi::SetRoadEnabled(std::uint64_t revision, economy::RoadId id, bool enabled) {
@@ -248,6 +318,8 @@ Submission EconomyApi::SetRoadEnabled(std::uint64_t revision, economy::RoadId id
     if (world_->Revision() != revision) {
         return {ErrorCode::StaleRevision, 0, {}};
     }
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->SetRoadEnabled(id, enabled));
 }
 Submission EconomyApi::SetBuildingEnabled(std::uint64_t revision, economy::BuildingId id, bool enabled) {
@@ -257,6 +329,8 @@ Submission EconomyApi::SetBuildingEnabled(std::uint64_t revision, economy::Build
     if (world_->Revision() != revision) {
         return {ErrorCode::StaleRevision, 0, {}};
     }
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->SetBuildingEnabled(id, enabled));
 }
 Submission EconomyApi::CreateHaulOrder(std::uint64_t revision, economy::BuildingId s, economy::BuildingId d,
@@ -271,6 +345,8 @@ Submission EconomyApi::CreateHaulOrder(std::uint64_t revision, economy::Building
     economy::VehicleTypeId v{};
     if (!catalog_->FindResource(resource, r) || !catalog_->FindVehicleType(vehicle, v))
         return {ErrorCode::InvalidArgument, 0, {}};
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->CreateHaulOrder(s, d, r, v));
 }
 Submission EconomyApi::CancelHaulOrder(std::uint64_t revision, economy::OrderId id) {
@@ -280,7 +356,21 @@ Submission EconomyApi::CancelHaulOrder(std::uint64_t revision, economy::OrderId 
     if (world_->Revision() != revision) {
         return {ErrorCode::StaleRevision, 0, {}};
     }
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->CancelHaulOrder(id));
+}
+Submission EconomyApi::RetargetHaulOrder(std::uint64_t revision, economy::OrderId id,
+    economy::BuildingId destination) {
+    if (!Allowed(true)) {
+        return {ErrorCode::PermissionDenied, 0, {}};
+    }
+    if (world_->Revision() != revision) {
+        return {ErrorCode::StaleRevision, 0, {}};
+    }
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
+    return Submit(revision, world_->RetargetHaulOrder(id, destination));
 }
 PollResult EconomyApi::PollCommand(std::uint64_t h) const {
     if (!permissions_.query) {
@@ -288,9 +378,20 @@ PollResult EconomyApi::PollCommand(std::uint64_t h) const {
     }
     auto it = commands_.find(h);
     if (it == commands_.end()) {
+        if (h != 0 && h < nextHandle_) {
+            economy::CommandResult expired;
+            expired.state = economy::CommandState::Expired;
+            expired.failure = economy::CommandFailure::None;
+            expired.message = "command handle expired";
+            return {ErrorCode::CommandExpired, std::move(expired)};
+        }
         return {ErrorCode::UnknownCommand, {}};
     }
-    return {ErrorCode::None, world_->GetCommandResult(it->second)};
+    auto result = world_->GetCommandResult(it->second);
+    if (result.state == economy::CommandState::Expired) {
+        return {ErrorCode::CommandExpired, std::move(result)};
+    }
+    return {ErrorCode::None, std::move(result)};
 }
 void EconomyApi::Record(Event e) {
     if (sequence_ == std::numeric_limits<std::uint64_t>::max()) {

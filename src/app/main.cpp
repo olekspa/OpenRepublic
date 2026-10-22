@@ -1,7 +1,9 @@
 #include "OpenRepublicApplication.h"
+#include "wiHelper.h"
 #include "openrepublic/content/building_types.h"
 #include "openrepublic/content/mtl_dependencies.h"
 #include "openrepublic/runtime/graphics_settings.h"
+#include "openrepublic/economy/checkpoint.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -9,6 +11,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <array>
 #include <cerrno>
@@ -16,6 +19,8 @@
 #include <cwchar>
 #include <cwctype>
 #include <limits>
+#include <memory>
+#include <cstdio>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -24,6 +29,61 @@
 namespace
 {
 	openrepublic::OpenRepublicApplication application;
+
+	bool IsStandaloneEconomyIncompatibleOption(std::wstring_view argument)
+	{
+		static constexpr std::wstring_view incompatible[] = {
+			L"--scene-probe", L"--glb-probe", L"--nmf-probe", L"--content-root", L"--economy-url",
+			L"--map-package", L"--map-building", L"--map-region", L"--synthetic-region-fixture",
+			L"--map-radius", L"--map-lod", L"--showcase-capture", L"--showcase-look",
+			L"--showcase-camera", L"--scene-pipe-name", L"--showcase-sun", L"--building-type",
+			L"--building-lod", L"--nmf-texture-root", L"--nmf-unlit-preview",
+			L"--nmf-material-unlit-preview", L"--capture-preview", L"--capture-preview-zoom",
+			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform" };
+		return std::find(std::begin(incompatible), std::end(incompatible), argument) != std::end(incompatible);
+	}
+
+	bool ReadCheckpointFile(const std::filesystem::path& path, std::string& text, std::string& error)
+	{
+		std::ifstream input(path, std::ios::binary);
+		if (!input)
+		{
+			error = "could not open checkpoint file";
+			return false;
+		}
+		const std::size_t probeSize = openrepublic::economy::MaxCheckpointBytes + 1;
+		text.resize(probeSize);
+		input.read(text.data(), static_cast<std::streamsize>(probeSize));
+		const std::streamsize count = input.gcount();
+		if (input.bad() || (input.fail() && !input.eof()))
+		{
+			text.clear();
+			error = "checkpoint file read failed";
+			return false;
+		}
+		if (count < 0 || static_cast<std::size_t>(count) > openrepublic::economy::MaxCheckpointBytes)
+		{
+			text.clear();
+			error = "checkpoint file exceeds the " + std::to_string(openrepublic::economy::MaxCheckpointBytes) + " byte limit";
+			return false;
+		}
+		text.resize(static_cast<std::size_t>(count));
+		return true;
+	}
+
+	int LogCheckpointStartupError(const std::string& error)
+	{
+		std::fprintf(stderr, "OpenRepublic economy checkpoint startup failed: %s\n", error.c_str());
+		wilog("[OpenRepublic] economy checkpoint startup failed: %s", error.c_str());
+		return 2;
+	}
+
+	int LogNativeEconomyStartupError(const std::string& error)
+	{
+		std::fprintf(stderr, "OpenRepublic native economy startup failed: %s\n", error.c_str());
+		wilog("[OpenRepublic] native economy startup failed: %s", error.c_str());
+		return 2;
+	}
 
 	bool ParseFiniteDouble(const wchar_t* text, double& value)
 	{
@@ -184,6 +244,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::optional<double> nmfCaptureElevationDegrees;
 	bool nmfCaptureElevationArgumentSeen = false;
 	std::filesystem::path terrainProbePath;
+	std::filesystem::path economyCheckpointPath;
+	std::unique_ptr<openrepublic::economy::RestoredCheckpoint> economyCheckpoint;
+	bool economyCheckpointArgumentSeen = false;
+	bool nativeEconomyArgumentSeen = false;
+	std::string nativeEconomyArgumentError;
+	std::vector<std::wstring> economyCheckpointIncompatibleOptions;
+	std::string economyCheckpointArgumentError;
 	std::optional<openrepublic::content::TerrainTransform> terrainProbeTransform;
 	std::string terrainProbeTransformError;
 	std::string nmfCaptureArgumentError;
@@ -192,11 +259,48 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		for (int i = 1; i < argumentCount; ++i)
 		{
-			if (std::wstring_view(arguments[i]) == L"--scene-probe" && i + 1 < argumentCount)
+			const std::wstring_view argument = arguments[i];
+			if (IsStandaloneEconomyIncompatibleOption(argument))
+			{
+				if (std::find(economyCheckpointIncompatibleOptions.begin(),
+					economyCheckpointIncompatibleOptions.end(), argument) ==
+					economyCheckpointIncompatibleOptions.end())
+				{
+					economyCheckpointIncompatibleOptions.emplace_back(argument);
+				}
+			}
+			if (argument == L"--economy-checkpoint")
+			{
+				if (economyCheckpointArgumentSeen)
+				{
+					economyCheckpointArgumentError = "--economy-checkpoint may only be supplied once";
+					if (i + 1 < argumentCount && std::wstring_view(arguments[i + 1]).rfind(L"--", 0) != 0)
+						++i;
+					continue;
+				}
+				economyCheckpointArgumentSeen = true;
+				if (i + 1 >= argumentCount || std::wstring_view(arguments[i + 1]).empty() ||
+					std::wstring_view(arguments[i + 1]).rfind(L"--", 0) == 0)
+				{
+					economyCheckpointArgumentError = "--economy-checkpoint requires a non-empty file path";
+					continue;
+				}
+				economyCheckpointPath = arguments[++i];
+			}
+			else if (argument == L"--native-economy")
+			{
+				if (nativeEconomyArgumentSeen)
+				{
+					nativeEconomyArgumentError = "--native-economy may only be supplied once";
+					continue;
+				}
+				nativeEconomyArgumentSeen = true;
+			}
+			else if (argument == L"--scene-probe" && i + 1 < argumentCount)
 			{
 				sceneProbePath = arguments[++i];
 			}
-			else if (std::wstring_view(arguments[i]) == L"--glb-probe" && i + 1 < argumentCount)
+			else if (argument == L"--glb-probe" && i + 1 < argumentCount)
 			{
 				glbProbePath = arguments[++i];
 			}
@@ -621,6 +725,75 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		}
 		LocalFree(arguments);
 	}
+	if (!nativeEconomyArgumentError.empty())
+	{
+		return LogNativeEconomyStartupError(nativeEconomyArgumentError);
+	}
+	if (nativeEconomyArgumentSeen && economyCheckpointArgumentSeen)
+	{
+		return LogNativeEconomyStartupError("--native-economy cannot be combined with --economy-checkpoint");
+	}
+	if ((nativeEconomyArgumentSeen || economyCheckpointArgumentSeen) && !economyCheckpointIncompatibleOptions.empty())
+	{
+		std::string conflicts = nativeEconomyArgumentSeen
+			? "--native-economy cannot be combined with"
+			: "--economy-checkpoint cannot be combined with";
+		for (const auto& option : economyCheckpointIncompatibleOptions)
+		{
+			conflicts += " --";
+			for (std::size_t character = 2; character < option.size(); ++character)
+				conflicts.push_back(static_cast<char>(option[character]));
+		}
+		return nativeEconomyArgumentSeen
+			? LogNativeEconomyStartupError(conflicts)
+			: LogCheckpointStartupError(conflicts);
+	}
+	if (!economyCheckpointArgumentError.empty())
+	{
+		return LogCheckpointStartupError(economyCheckpointArgumentError);
+	}
+	if (economyCheckpointArgumentSeen)
+	{
+		std::string checkpointText;
+		std::string readError;
+		if (!ReadCheckpointFile(economyCheckpointPath, checkpointText, readError))
+		{
+			return LogCheckpointStartupError(readError);
+		}
+		economyCheckpoint = std::make_unique<openrepublic::economy::RestoredCheckpoint>();
+		openrepublic::economy::ParseError parseError;
+		if (!openrepublic::economy::RestoreCheckpoint(checkpointText, *economyCheckpoint, parseError) ||
+			!economyCheckpoint->catalog || !economyCheckpoint->world)
+		{
+			return LogCheckpointStartupError(parseError.message.empty()
+				? "checkpoint contents are invalid"
+				: parseError.message);
+		}
+		openrepublic::runtime::NativeEconomyScenePlan plan;
+		std::string layoutError;
+		if (!openrepublic::runtime::BuildNativeEconomyScenePlan(economyCheckpoint->world->Snapshot(),
+			*economyCheckpoint->catalog, plan, layoutError) ||
+			!openrepublic::runtime::NativeEconomyPlanFitsFloatPrecision(plan, layoutError))
+		{
+			return LogCheckpointStartupError(layoutError);
+		}
+	}
+	if (nativeEconomyArgumentSeen)
+	{
+		economyCheckpoint = std::make_unique<openrepublic::economy::RestoredCheckpoint>();
+		economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>(
+			openrepublic::economy::MakeSyntheticCatalog());
+		economyCheckpoint->world = std::make_unique<openrepublic::economy::World>(
+			*economyCheckpoint->catalog, 64, 64);
+		openrepublic::runtime::NativeEconomyScenePlan plan;
+		std::string layoutError;
+		if (!openrepublic::runtime::BuildNativeEconomyScenePlan(economyCheckpoint->world->Snapshot(),
+			*economyCheckpoint->catalog, plan, layoutError) ||
+			!openrepublic::runtime::NativeEconomyPlanFitsFloatPrecision(plan, layoutError))
+		{
+			return LogNativeEconomyStartupError(layoutError);
+		}
+	}
 	if (nmfCaptureArgumentError.empty() && mapBuildingModelLevelGiven && (mapPackage.empty() || !mapRegion))
 	{
 		nmfCaptureArgumentError = "--map-lod requires --map-package and --map-region";
@@ -631,9 +804,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		{
 			nmfCaptureArgumentError = "--economy-pipe-name cannot be combined with --economy-url";
 		}
-		else if (mapPackage.empty() || !mapRegion)
+		else if (!(economyCheckpointArgumentSeen || nativeEconomyArgumentSeen) &&
+			(mapPackage.empty() || !mapRegion))
 		{
-			nmfCaptureArgumentError = "--economy-pipe-name requires --map-package and --map-region";
+			nmfCaptureArgumentError = "--economy-pipe-name requires --map-package and --map-region, --economy-checkpoint, or --native-economy";
 		}
 		else if (!nmfCapturePaths.empty() || !mapShowcaseCapturePath.empty() || !sceneProbePath.empty() ||
 			!glbProbePath.empty() || !nmfProbePath.empty() || !terrainProbePath.empty() ||
@@ -935,6 +1109,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		MessageBoxA(nullptr, nmfCaptureArgumentError.c_str(), "OpenRepublic content preview options", MB_OK | MB_ICONERROR);
 		return 2;
+	}
+	if (economyCheckpoint)
+	{
+		application.SetEconomyCheckpoint(std::move(*economyCheckpoint), nativeEconomyArgumentSeen);
 	}
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));

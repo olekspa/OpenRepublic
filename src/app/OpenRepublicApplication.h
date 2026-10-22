@@ -4,10 +4,14 @@
 #include "openrepublic/agent_api/agent_api.h"
 #include "openrepublic/compat/region_import.h"
 #include "EconomyOverlay.h"
+#include "NativeEconomyScene.h"
+#include "NativeEconomyTools.h"
+#include "openrepublic/economy/checkpoint.h"
 #include "ShowcaseEnvironment.h"
 #include "openrepublic/content/map_placement.h"
 #include "openrepublic/economy_api/economy_api.h"
 #include "openrepublic/runtime/graphics_settings.h"
+#include "openrepublic/runtime/native_economy_clock.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/sim/simulation.h"
 #include "../economy_host/economy_protocol.h"
@@ -15,6 +19,7 @@
 #include "openrepublic/scene_control.h"
 
 #include <filesystem>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -40,6 +45,7 @@ namespace openrepublic
 		void SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
 			bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel);
 		void SetSyntheticRegionFixture();
+		void SetEconomyCheckpoint(openrepublic::economy::RestoredCheckpoint checkpoint, bool freshWorld = false);
 		void SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees);
 		void SetScenePipeName(std::wstring name);
 		void SetMapShowcaseCapture(std::filesystem::path outputPath, bool enhancedLook,
@@ -84,19 +90,55 @@ namespace openrepublic
 		void SetEntityColor(wi::ecs::Entity entity, const XMFLOAT4& color);
 		void UpdateRegionStatus();
 		void PumpLocalEconomyRequests();
+		void StartLocalEconomyEndpoint();
 		void RefreshRegionEconomy();
 		void UpdateRegionEconomyPresentation();
 		std::optional<openrepublic::preview::EconomyBuildingStatus> GetRegionBuildingForInstance(
 			wi::ecs::Entity instance) const;
-		void QueueRegionStep();
+		bool QueueRegionStep(std::uint32_t ticks, bool automatic = false);
+		void FrameNativeEconomyWorld();
 		void QueueRegionBuildingToggle();
 		void SetRegionHaulSource();
 		void QueueRegionHaul();
+		void BeginNativeBuildingPlacement();
+		void BeginNativeRoadPlacement();
+		void CancelNativeConstruction();
+		void QueueNativeRemoval();
+		void QueueNativeConstruction(economy::Cell cell);
+		std::optional<economy::Cell> NativeCellAtPointer() const;
+		void UpdateNativeConstructionPreview(bool pointerAvailable);
+		void ClearNativeConstructionPreview();
+		void RefreshNativeHaulChoices();
+		openrepublic::economy::World* ActiveOwnedEconomyWorld() noexcept;
+		const openrepublic::economy::World* ActiveOwnedEconomyWorld() const noexcept;
+		void QueueNativeOrderChange(bool retarget);
+		void QueueNativeRoadToggle();
+		void SaveNativeCheckpoint();
+		void LayoutNativeControls();
+		void ToggleNativeRunPause();
+		bool TrackNativeSubmission(const economy_api::Submission& submitted, const std::string& action);
+		bool CanQueueNativeCommand();
 
 		wi::scene::Scene previewWorld;
 		std::unique_ptr<wi::RenderPath3D> renderPath;
 		openrepublic::sim::Simulation simulation;
 		openrepublic::agent_api::AgentApi agentApi;
+		// Keep the checkpoint's heap catalog/world alive until after API and endpoint teardown.
+		openrepublic::economy::RestoredCheckpoint nativeEconomyCheckpoint;
+		openrepublic::preview::NativeEconomyScene nativeEconomyScene;
+		openrepublic::preview::NativeEconomyTools nativeEconomyTools;
+		bool nativeEconomyFreshWorld = false;
+		enum class NativeConstructionMode { None, Building, Road };
+		NativeConstructionMode nativeConstructionMode = NativeConstructionMode::None;
+		economy::BuildingTypeId nativePlacementType = economy::InvalidBuildingTypeId;
+		std::optional<economy::Cell> nativeRoadStart;
+		std::optional<economy::Cell> nativeHoverCell;
+		wi::ecs::Entity nativeConstructionPreview = wi::ecs::INVALID_ENTITY;
+		float nativeStatusTop = 126.0f;
+		bool nativeToolsReady = false;
+		bool nativeDetailsExpanded = false;
+		wi::gui::Button nativeDetailsButton;
+		wi::gui::Button nativeSaveButton;
 		// Lifetime order is intentional: EconomyApi references regionEconomyWorld,
 		// which references regionEconomyCatalog. Destruction runs in reverse order.
 		openrepublic::economy::Catalog regionEconomyCatalog;
@@ -122,6 +164,8 @@ namespace openrepublic
 		double mapRadiusMeters = 0.0;
 		bool mapRegionPreview = false;
 		bool syntheticRegionFixtureMode = false;
+		bool nativeEconomyCheckpointMode = false;
+		bool nativeEconomyPresentationValid = false;
 		double syntheticRegionCenterX = 0.0;
 		double syntheticRegionCenterZ = 0.0;
 		int mapRegionModelLevel = 0;
@@ -195,10 +239,16 @@ namespace openrepublic
 		wi::gui::Button saveButton;
 		wi::gui::Button loadButton;
 		wi::gui::Button reloadRulesButton;
+		wi::gui::Button regionStepOneButton;
 		wi::gui::Button regionStepButton;
 		wi::gui::Button regionToggleButton;
 		wi::gui::Button regionHaulSourceButton;
 		wi::gui::Button regionHaulButton;
+		wi::gui::Button nativeFrameButton;
+		wi::gui::Button nativeStepManyButton;
+		wi::gui::Button nativeRunPauseButton;
+		bool nativeEconomyRunning = false;
+		openrepublic::runtime::NativeEconomyClock nativeEconomyRunClock;
 		wi::gui::Label simulationStatus;
 		std::optional<openrepublic::sim::SimulationRules> pendingRules;
 		std::optional<openrepublic::sim::FacilityType> activeFacilityPlacement;

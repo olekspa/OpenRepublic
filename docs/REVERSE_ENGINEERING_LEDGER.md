@@ -283,3 +283,137 @@ This entry supersedes the earlier UNKNOWN claim that no electro point geometry w
 | OpenRepublic exposes a safe render-facing candidate path adapter without claiming pole/cable semantics. | VERIFIED (source and synthetic tests) | `ExtractPowerLinePolylineCandidates` requires complete decoded geometry, valid endpoint IDs, finite world-bounded points, and preserves ordered XYZ records transactionally. Its output intentionally names candidate polylines and does not reinterpret node positions as pylons. | It only adapts decoder output; it does not prove visual fidelity or add support placements. | A showcase may draw the candidate sequences as provisional line paths while retaining its current support fallback until support evidence is available. |
 
 All package bytes, exact paths, executable fingerprints, private calculations and any captures remain outside Git. Original files were read-only; no game was launched.
+
+
+
+## Tree placement extraction - build 23935965 evidence boundary
+
+| Claim | Status | Evidence | Limits / uncertainty | Next action |
+|---|---|---|---|---|
+| OpenRepublic can extract tree XYZ positions and species groups from the observed trees.bin profile. | VERIFIED (bounded OpenRepublic parser and synthetic tests); OBSERVED (byte structure in 16 local save packages, build 23935965 context) | The profile observed in those packages has a little-endian species count, an opaque second header word, one 64-byte species prefix with an ASCII NUL-terminated model name and count at +64, then that count of 17-byte records. The first 12 bytes of each record parse as finite XYZ floats; five trailing bytes per record and a four-byte file trailer are retained as opaque. The private package cross-check found 9 species groups and 941,209-942,767 records per sample; each file's group counts exactly cover its record span and four-byte trailer. Across the 16 samples the count is 15,066,719: afghan_leaved1a 1,737,782; afghan_leaved2a 1,742,357; pine1 1,588,833; pine2 1,581,241; pine3 1,591,409; pine4 1,587,322; topol 1,719,623; strom 1,761,709; kriak 1,756,443. Detailed private sample identity and fingerprints remain outside this repository per D-003. | This is a partial byte-profile decoder; no serializer/loader call path has confirmed field semantics. The exact meaning of the second header word, opaque prefix bytes, record bytes 12-16, and trailer is unknown. Explicit per-record positions are observed, so the payload is placement-like rather than merely a density raster, but their relation to tree generation, season/variant selection, yaw, scale, and vertical alignment is unresolved. Filename spelling does not prove runtime model resolution. Coordinates in these samples fell within +/-10,000 m X/Z and Y was positive; this matches the one-map centered 20 km convention in the terrain entry, but auxiliary/tree transform equivalence is not verified. Positive Y does not establish above-sea-level placement because sea level is unknown. No game launch or save modification was performed. | Trace the build-matched serializer/loader and decode the remaining five record bytes; cross-check XYZ against terrain and tree rendering without assuming the heightmap transform, then validate supported game/build coverage. |
+
+## Tree decoder package validation update - 22 October 2026
+
+| Claim | Status | Evidence | Limits / uncertainty | Next action |
+|---|---|---|---|---|
+| The OpenRepublic C++ decoder accepts all locally inventoried trees.bin profiles beneath the installed media_soviet directory. | VERIFIED (Release headless executable; read-only package walk) | Path-driven validation loaded 65 files and decoded 65,749,343 total placements, including an empty zero-species file; every file passed its declared group counts, XYZ checks, and exact four-byte trailer boundary. Species group counts ranged from 0 to 35 and the largest placement count was 2,599,747. This is local build 23935965 context. | Parsing success verifies this OpenRepublic byte profile on the inventoried files, not the original serializer's semantic intent, tree rendering, terrain alignment, yaw/scale, season, or cross-build compatibility. Input identities and per-file details remain private under D-003. | Keep the C++ reader gated to the documented observed profile until a build-matched serializer/loader trace confirms the opaque fields and coordinate semantics. |
+
+
+## Independent economy continuation - 22 October 2026
+
+These claims concern OpenRepublic-authored synthetic behavior only. They add no original-game format or gameplay evidence. See [the current report](DEVELOPMENT_REPORT_2026-10-22_LOGISTICS.md).
+
+| Claim | Status | Evidence | Limits / next action |
+|---|---|---|---|
+| Existing haul orders can change destination without deleting cargo or changing truck/order identity. | VERIFIED (source, Windows Release client/headless tests, separate controller process) | World::RetargetHaulOrder, typed API and JSONL command; both full CTest suites 39/39. Session-bound process smoke delivered 4 units to the new destination, 0 to the previous one, conserving 12 total through tick 32. | Synthetic behavior only. GUI, live pipe retarget transport, visual movement, and WRSR comparison were not run. |
+| Cancellation preserves loaded cargo and blocked empty trucks load only at their source access cell. | VERIFIED (source and synthetic regression) | Loaded cancel rejects with cargo_in_transit; tests cover empty cancellation, full storage, disconnected routes and return-leg reconnection with per-tick accounting. | Autonomous planner integration, full save integrity and access-cell validation remain follow-ups. |
+| Economy v2 saves retain pending/active retargets and accept v1 data. | VERIFIED (same-build Windows Release synthetic replay) | v1 queued fixture and loaded migration; v2 pending/active replay; v1 rejects new enum values. Cargo, truck cell and loaded direction checks reject transactionally. | Broader NEXT, boolean, canonical ordering and queue/result integrity checks remain incomplete; no cross-platform determinism claim. |
+| Rule reloads preserve recipe resource identity and vehicle cargo bounds. | VERIFIED (source and transactional synthetic regression) | Ordered input/output resource IDs must match; amount/rate tuning remains accepted; capacity below onboard cargo rejects without catalog/hash changes. | No original-game formula or general mod schema claim. |
+
+
+## Independent economy save integrity - 22 October 2026
+
+| Claim | Status | Evidence | Limits / next action |
+|---|---|---|---|
+| Native economy loads reject malformed ID, numeric, boolean, history and queued-result state transactionally. | VERIFIED (source and Windows Release synthetic tests) | New EconomySaveIntegrity target checks malformed fixtures, valid v1/v2 replay, removed/cancelled ID history and deferred command dependencies. Both client and headless full Release CTest suites pass 40/40. | Bounded internal consistency only; no catalog fingerprint, authenticated history, cross-platform replay or WRSR save compatibility. Building access invariants remain separate. |
+| A native command history above the former 1,024-record parser limit can save, load and continue deterministically. | VERIFIED (synthetic regression) | 1,101 retained results reload with equal canonical text and continue under identical commands. Loader count bounds now follow input bytes; 24,000 queued commands exercise explicit empty-result writer failure at the shared 1 MiB limit. | This does not provide arbitrary-world-size persistence. Callers must handle empty SaveWorld results before writing. |
+| Counter limits cannot wrap through stepping, entity allocation, queued work or catalog reloads on the tested paths. | VERIFIED (source and boundary regressions) | Step preflight, entity mint guards, queue reservation, pending-load validation, and rule-reload reservation; typed API reports command_queue_exhausted without a queue event or world mutation. | Retired vehicle history is not separately stored; internal checks do not authenticate a forged world. Existing theoretical API handle exhaustion remains a separate edge. |
+
+See [the save-integrity continuation report](DEVELOPMENT_REPORT_2026-10-22_SAVE_INTEGRITY.md). No game process or original save was used.
+
+
+## Building access and synthetic region UI - 22 October 2026
+
+| Claim | Status | Evidence | Limits / next action |
+|---|---|---|---|
+| Native placement/loading preserve building footprints, access cells and enabled/disabled road reservations. | VERIFIED (source, Windows Release synthetic tests, separate JSONL controller) | Shared PlacementFailure validator, widened rectangle checks and deferred road-load occupancy validation; client/headless CTest 41/41. Controller smoke reports access_cell_unavailable, road_on_building, out_of_bounds and building_collision while preserving one accepted building/road at tick 2. | Native rules only. Old native access-conflicting saves reject transactionally; no relocation. Imported footprints remain provisional, not WRSR semantics. |
+| Region import distinguishes access conflicts without shifting accepted source identity. | VERIFIED (synthetic regressions) | skippedAccessConflict, source-order queue/result mapping, accepted-only source keys; bounded and zero-note budgets retain exact counts. Existing road connectors still pass. | No authentic package corpus was re-imported for this change. |
+| Synthetic graphical fixture renders and its human controls reach the app-owned economy. | OBSERVED (Windows Release live GUI) | Visible ground/road/three buildings; farm/mill picking; toggle/24-tick step at tick 26, re-enable/full grain at tick 50, farm-to-mill haul with one truck and full-flour stall by tick 74. | Earlier black viewport did not reproduce. Only synthetic geometry/recipes; no WRSR fidelity or pipe-retarget claim. |
+| Presentation follow-up resolves clipping, synthetic quantity units and truck marker scale/road alignment. | VERIFIED source/build; partial OBSERVED startup | Added Step 1 tick; wrapped/dynamic/scrollable status, native integer fixture quantities, smaller marker and overflow focus guard. Revised client builds; initial five-button layout fits. | Final selected inventory, single-step marker movement and scroll/camera isolation remain UNKNOWN pending foreground coordination after user input contention. Do not repeat GUI inputs until the owner answers the pending coordination question. |
+
+Full receipt: [access and UI report](DEVELOPMENT_REPORT_2026-10-22_ACCESS_AND_UI.md). No original game process, installation/save modification or proprietary fixture was used.
+
+
+## Autonomous logistics replanning and graphical follow-up - 22 October 2026
+
+| Claim | Status | Evidence | Limits / next action |
+|---|---|---|---|
+| The read-only adviser suggests reachable alternate storage for loaded full-storage stalls. | VERIFIED (source and Windows Release synthetic tests) | Enabled-road BFS from actual vehicle cell, whole-cargo room after saturating loaded/suggested reservations, duplicate prevention, stable ordering, maximum 32 emitted suggestions and truncation; canonical save/hash unchanged by queries. | Advice is a snapshot, not simulation reservation or arrival guarantee. Missing-input new-link advice retains its earlier first-recipe/Manhattan heuristic. |
+| The baseline controller uses retarget commands and reports terminal acceptance rather than queue admission alone. | VERIFIED (10 Python unit cases and separate-process matched comparison) | Revision/session-bound calls, refreshed advice after rejected placements, bounded stale retry without duplicating queued orders, step/poll. At tick 23 the retargeted original truck/order delivered four units to alternate storage versus idle zero; all 24 stored/onboard units conserved. | Small synthetic case only; no large-world performance or original-game economy claim. |
+| The updated synthetic region UI displays readable quantities and visible one-tick truck movement. | OBSERVED (owner-authorized Windows GUI) | Farm grain 20/20 at tick 26; small road-aligned marker moves across ticks 27/28; mill grain/flour 8/8 at tick 52. A short-window pass scrolls final inventory lines, drags the scrollbar and preserves selection on panel clicks, without apparent scene zoom. | Bounded visual evidence; no instrumented input/camera claim, genuine-content fidelity or pipe-retarget transport test. Earlier pending foreground question is answered; task-owned fixture windows closed. |
+| The current complete client/headless suites pass concurrently. | VERIFIED (Windows Release builds, CTest 44/44 each) | Added EconomyHaulAdviser, OpenRepublicAutopilotTests and OpenRepublicReplanningExternalController. Concurrent rerun exposed a shared global DDS test path; exclusive temporary-directory ownership fixes that collision, and concurrent full reruns pass. | Test harness isolation changes no terrain decoding behavior. No cross-platform test run. |
+
+Receipt: [replanning report](DEVELOPMENT_REPORT_2026-10-22_REPLANNING.md). These are OpenRepublic-authored synthetic results; no original game process or proprietary test payload was used. Local changes remain uncommitted.
+
+
+## Native economy checkpoints - 22 October 2026
+
+| Claim | Status | Evidence | Limits / next action |
+|---|---|---|---|
+| Native checkpoint v1 binds world IDs to the exact active canonical catalog and restores owned state transactionally. | VERIFIED (source and Windows Release synthetic tests) | SaveCheckpoint / RestoreCheckpoint / LoadCheckpoint; exact lengths, canonical catalog, size limits, malformed payloads, identity mismatches, lifetime moves, cargo and queued replay tests. | Native state only; no authenticity or WRSR format/behavior claim. Raw v1/v2 saves remain separately catalog-dependent. |
+| Query-only immutable chunk export and atomic client file publication preserve captured state and existing files. | VERIFIED (typed API/protocol/client tests and live loopback HTTP CLI) | Revision/session checks, one bounded frozen cache, Base64 binary slices, stale/oversized failure retains old cache, default exclusive file / explicit force; 8 Python cases. Both complete Release suites 49/49. | Cache is one per dispatcher; another successful begin invalidates its old ID. Default file publication requires hard-link support. Live named-pipe export was not run. |
+| A restarted host retains loaded cargo and pending work and continues deterministically in the tested build. | VERIFIED (separate-process synthetic comparison) | Equal initial tick/revision/hash, four grain aboard with retarget pending; 32 matched subsequent hashes, all 12 units conserved, fresh session/handles/events and empty historical rules log. Active tuned capacity persists and becomes the new reload base. Bounded startup/file/flag failures reject before stdout. | Same-build Windows only. Desktop scene/source bindings, region provenance, larger/long-running saves and cross-platform replay remain incomplete. |
+
+Receipt: [native checkpoint report](DEVELOPMENT_REPORT_2026-10-22_CHECKPOINTS.md). No original game process or proprietary fixture was used. Changes remain local and uncommitted.
+
+
+## Desktop native checkpoint restoration - 22 October 2026
+
+| Claim | Status | Evidence | Limits / next action |
+|---|---|---|---|
+| Desktop startup restores the exact catalog/world before window/API startup, preserving native IDs and pending work. | VERIFIED (source, bounded startup tests, live pipe/reference comparison) | Full Release builds; CTest 50/50 headless and 51/51 client. Desktop starts at tick 14/revision 53/hash 16367608665814369290, then matches four reference-host ticks through pending retarget/building/road changes, conserving all 24 units. | Native checkpoint only. New API sessions/handles/events; no package or original asset provenance. |
+| Native primitive geometry uses exact ID bindings and one centered X/Z transform, with explicit framing and float precision limits. | VERIFIED (headless planner tests and source); OBSERVED (Windows GUI) | Gapped/reordered IDs, both road axes, structure updates and high-coordinate precision cases; OR-6 selects after queued creation, Frame world preserves selection and queried hash. Truck turns along the vertical road. | Four display units/cell is presentation policy. Huge occupied spans reject; later fixed-origin precision failure retains a stale scene with picking disabled. No floating-origin streaming or scale benchmark. |
+| GUI actions and actual pipe CLI export preserve the authoritative world across host restart. | OBSERVED (GUI) and VERIFIED (pipe/host queries) | Mill OR-3 enabled/running at tick 44 with grain 2/8 and flour 6/8; market OR-6 disabled. CLI exports 2335 bytes at revision 97; restarted host hash 6564545351195520907 matches desktop. | Synthetic authored content on this Windows build only. No WRSR comparison, cross-platform replay or GPU performance acceptance. |
+
+Receipt: [desktop checkpoint report](DEVELOPMENT_REPORT_2026-10-22_DESKTOP_CHECKPOINTS.md). Earlier desktop/live-pipe UNKNOWN statements describe prior increments. No original game process/proprietary fixture was used. Task-owned acceptance processes closed; changes remain uncommitted.
+
+
+## Explicit command-history compaction - 22 October 2026
+
+| Claim | Status | Evidence | Limits / next action |
+|---|---|---|---|
+| Explicit native maintenance discards only an older terminal prefix and preserves every queued command, live state and minting counter. | VERIFIED (source and Windows Release synthetic tests) | Retained-ID floor, 0..4096 requested terminal retention, no-op immutability, exact revision/pending reservation checks and v3 dense-range/lifetime-counter validation. Three 75000-command core cycles exceed the save bound before compaction and save/reload afterward. Full Release builds and concurrent CTest 54/54 headless, 55/55 client. | No automatic core pruning. Live entities/catalogs/pending queues still have bounded persistence; an oversized pending regression stays unsaveable with work intact. |
+| API/session handle retirement distinguishes expired outcomes from never-issued handles without inventing native IDs or losing queued results. | VERIFIED (API/protocol regressions and independent review) | Permission/revision/field/session checks, expired issued vs unknown, offset handle/native-ID case, direct-core expiry/no-op cleanup, bounded rejection-event stability and frozen checkpoint cache. Autopilot has 16 unit cases and discovers maintenance after outcome polls. | Retired mappings return typed commandId zero; historical outcome unavailable. Existing event/Lua history contracts unchanged. Core-only maintenance does not clean every attached API until API maintenance. |
+| A history-heavy process can become saveable again, export and resume loaded cargo/pending work exactly. | VERIFIED (separate synthetic host processes and actual autopilot CLI) | 75008 stress commands; export initially persistence_failed without mutation. Compact keeps 32 terminals and one pending, retires 74996 results and mappings, exports 1395 bytes. New process matches 24 further ticks, all 12 grain units conserved, final tick38/hash7497992024173021514. Actual zero/all CLI modes retire33/0. Earlier uncompacted desktop checkpoint still matches tick44/hash6564545351195520907. | Same-build Windows native evidence; no new GUI, performance, cross-platform or original-game comparison. Older executables cannot load compacted native v3; checkpoint wrapper stays v1. |
+
+Receipt: [command-history report](DEVELOPMENT_REPORT_2026-10-22_COMMAND_HISTORY.md). Earlier long-running-history next-target statements are superseded for terminal-result accumulation only. Changes remain uncommitted; no original game process, proprietary asset or save used or modified.
+
+
+## Native authored construction and resource flow - 22 October 2026
+
+| Claim | Status | Evidence | Limits / next action |
+|---|---|---|---|
+| Native desktop construction uses current scene coordinates, exact native identity and authoritative queued validation. | VERIFIED (source and Windows Release synthetic tests) | Fresh 64x64 native startup; inverse coordinate and storage-intersection helpers; full builds and CTest 55/55 headless, 56/56 client. Native helper regressions include invalid/fractional/extreme coordinates, storage-only endpoints and full production/reload parity. Review repaired partial-road retry and initial framing. | Authored native rules only. Unit-road spans apply independently; drafts do not validate placement. No costs/workforce or original-game construction claim. |
+| A human GUI can create and operate a complete native resource chain. | OBSERVED (owner-authorized Windows GUI) | Farm, Mill, Bakery and Market; twelve roads, 16 construction commands applied; three explicit grain/flour/bread hauls. At tick241 market reports108 consume cycles. Overlapping placement rejects visibly at tick242; four buildings remain. | One synthetic catalog/world on this graphics build. Live removal, multiple vehicle choices and storage-only GUI hauling not tested. |
+| The GUI-built world exports and resumes with identical authoritative evolution. | VERIFIED (actual named-pipe CLI and separate host queries) | 1378-byte checkpoint at tick242/revision262/hash5904435322412779883. Fresh host starts at exact hash and matches24 further ticks to tick266/hash13674903108919557831. | Same-build Windows native replay only; no cross-platform, scale or WRSR comparison. |
+| Palette dismissal and Cancel do not queue accidental construction in the tested flow. | OBSERVED (GUI) and VERIFIED (post-interaction query) | World click closes palette without placing; Cancel clears armed draft; tick266 hash unchanged and pendingCommands0. | Injected Escape did not visibly dismiss palette; keyboard dismissal/cancellation remains UNKNOWN. No instrumented input-latency claim. |
+
+Receipt: [native construction report](DEVELOPMENT_REPORT_2026-10-22_NATIVE_CONSTRUCTION.md).
+No original game process, proprietary input, installation or save was used or modified.
+Task-owned test processes closed. Changes remain local/uncommitted; the broader goal
+remains incomplete. Next: native order/road controls, continuous run/pause, in-app
+checkpoint workflows and matched scale profiling.
+
+
+- **2026-10-22 native Run/Pause integration:** VERIFIED source and focused tests: shared EconomyApi, bounded four-ticks/sec presentation clock, manual-step pause, typed failure guard and retained command feedback. Headless clock test and client focused4/4 pass. Live GUI acceptance remains UNKNOWN. See [receipt](DEVELOPMENT_REPORT_2026-10-22_RUN_PAUSE.md). Earlier full-suite counts remain historical. No original-game/proprietary input; changes uncommitted, global goal incomplete.
+
+
+- **2026-10-22 Run/Pause live acceptance:** OBSERVED default-window layout, running trucks/production and manual24 pause. VERIFIED actual pipe: eight ticks in2 seconds (288->296), Pause stable at tick320/hash369290647084794390 for2 seconds; manual24 from running stable at tick381/hash6372372613752748602 for2 seconds. Fresh host replay139 ticks from242 matches exact hash. Task client/reference host closed. Stale-scene/error recovery remain UNKNOWN live. [Receipt](DEVELOPMENT_REPORT_2026-10-22_RUN_PAUSE.md). Original inputs untouched; goal incomplete.
+
+
+- **2026-10-22 native haul-order controls:** VERIFIED source/build and focused client7/7: order dropdown with exact IDs, in-place live label updates, removed-selection invalidation, truck/cargo/failure HUD, Retarget to selected and Cancel haul through revision-bound API/pending-result polling. Existing core conservation and loaded-cancel rejection retained. Live widgets/retarget/cancel acceptance remains UNKNOWN; no original-game input. [Receipt](DEVELOPMENT_REPORT_2026-10-22_ORDER_TOOLS.md). Changes uncommitted, global goal incomplete.
+
+
+- **2026-10-22 order-tools live follow-up:** OBSERVED GUI retarget of loaded haul1 to OR5; VERIFIED pipe at248 keeps truck1/cargo3, destination5, hash2357299413069524112. API-authored synthetic alternate destination/roads; not GUI construction evidence. Fixed observed default-window HUD occlusion with bottom-docked compact status and Details toggle; Release rebuild passed, default-window mill picking and details visible. Cancellation/removal-selection/running-dropdown acceptance remain UNKNOWN. Clients closed. [Receipt](DEVELOPMENT_REPORT_2026-10-22_ORDER_TOOLS.md). Original inputs untouched; changes local/uncommitted.
+
+
+- **2026-10-22 native road controls:** VERIFIED Release build and focused5/5, exact-ID selector and revision-bound enable command. OBSERVED GUI road1 disable -> no route at243, reopen -> truck1 resumes at244. Pipe proves only road1 disabled, then all12 enabled; fresh host identical commands matches tick244/hash3379502173887916597. Default window remains usable. Client/host closed; no original inputs. [Receipt](DEVELOPMENT_REPORT_2026-10-22_ROAD_TOOLS.md). Changes uncommitted, global goal incomplete.
+
+
+- **2026-10-22 native Save checkpoint:** VERIFIED Release desktop/helper builds, exclusive validated temporary-file publication and focused client3/3; helper passes both build trees including different-valid-payload existing-file preservation and Unicode/hash tests. OBSERVED dialog opening; modal filename focus unsupported in automation, so GUI file save remains UNKNOWN. Save pauses Run; synchronous dialog suspends pipe pumping. Exact task client closed, no original inputs. [Receipt](DEVELOPMENT_REPORT_2026-10-22_SAVE_UI.md). Goal incomplete, changes uncommitted.
+
+
+- **2026-10-22 shared region logistics:** VERIFIED Release build and full client58/58; tools choose actual owned region vs native world, shared storage resource/vehicle selection and exact-ID retarget/cancel, construction/native roads remain hidden in imported mode. GUI fixture selects OR1/OR2, explicitly queues grain/truck, reports1 applied at tick26 and mill grain/flour8/8. Details toolbar skip found/fixed with final rebuild/live check. Real-content acceptance remains UNKNOWN; no original inputs. [Receipt](DEVELOPMENT_REPORT_2026-10-22_REGION_LOGISTICS.md). Clients closed, changes uncommitted, global goal incomplete.
+
+
+- **2026-10-22 milestone review:** independent core/client/API integration reviews; API handle exhaustion found/fixed before all8 World enqueue calls. Tests prove0/MAX refusals preserve canonical world/revision/events and last usable handle polls. Re-review passes. Full Release builds and CTest57/57 headless,58/58 client. Authored source/tests/tools/docs only; bytecode/build outputs excluded. [Milestone scope and known gaps](DEVELOPMENT_REPORT_2026-10-22_MILESTONE_REVIEW.md). No GUI/original-game run in this review; global goal incomplete.

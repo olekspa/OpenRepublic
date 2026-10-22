@@ -55,4 +55,11 @@ format evidence and limits remain as recorded in the reverse-engineering ledger.
 
 ## Region roads
 
+The economy now reserves each accepted building's access cell against later
+footprints and rejects an access cell inside another footprint. Footprints also
+cannot cover enabled or disabled roads. Region import reports access conflicts
+separately (`skippedAccessConflict`), preserves accepted-only source-key mappings,
+and caps notes with `maxDiagnosticNotes` (default 32). These checks operate on
+provisional catalog footprints; they do not establish authentic building access.
+
 `ImportRoadsIntoWorld` (`region_roads.h`) rasterizes straight road links (the decoded game road graph flattened to chords) onto the economy's unit-step road grid with a 4-connected walk, drops duplicates, then joins each imported building's access cell to the nearest road cell by a breadth-first path around other buildings (default limit 40 cells). Verified on one real save region (local only): 1,471 of 1,591 unit segments accepted, all 10 catalog-known buildings connected, and a haul order from the real iron mine to the real iron processing plant delivered until the destination store was full. Curved roads are approximated by chords; lane/width data is not used.

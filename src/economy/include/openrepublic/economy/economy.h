@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -19,6 +20,9 @@ using CommandId = std::uint64_t;
 constexpr ResourceId InvalidResourceId = UINT32_MAX;
 constexpr BuildingTypeId InvalidBuildingTypeId = UINT32_MAX;
 constexpr VehicleTypeId InvalidVehicleTypeId = UINT32_MAX;
+constexpr std::size_t MaxWorldSaveBytes = 1024 * 1024;
+constexpr std::uint32_t MaxCommandHistoryRetention = 4096;
+constexpr std::uint32_t MaxWorldGridSize = INT32_MAX;
 
 struct Cell {
     std::int32_t x{};
@@ -207,13 +211,15 @@ enum class CommandFailure : std::uint8_t {
     RoadDisabled,
     StepLimitExceeded,
     SaveInvalid,
-    ParseInvalid
+    ParseInvalid,
+    CargoInTransit
 };
 enum class CommandState : std::uint8_t {
     Unknown = 0,
     Queued,
     Accepted,
-    Rejected
+    Rejected,
+    Expired
 };
 struct CommandResult {
     CommandId commandId{};
@@ -223,6 +229,22 @@ struct CommandResult {
     BuildingId building{};
     RoadId road{};
     OrderId order{};
+};
+struct CommandHistorySnapshot {
+    CommandId firstRetainedCommandId{1};
+    CommandId nextCommandId{1};
+    std::uint64_t retainedTerminalResults{};
+    std::uint64_t pendingCommands{};
+};
+enum class CommandHistoryError : std::uint8_t {
+    None = 0,
+    InvalidRetention,
+    RevisionExhausted
+};
+struct CommandHistoryCompactionResult {
+    CommandHistoryError error{CommandHistoryError::None};
+    std::uint64_t removedResults{};
+    CommandHistorySnapshot history;
 };
 struct StepResult {
     bool accepted{};
@@ -294,6 +316,7 @@ struct WorldSnapshot {
     std::uint64_t tick{};
     std::uint64_t revision{};
     std::uint64_t stateHash{};
+    CommandHistorySnapshot commandHistory;
     std::vector<BuildingSnapshot> buildings;
     std::vector<RoadSnapshot> roads;
     std::vector<VehicleSnapshot> vehicles;
@@ -306,7 +329,8 @@ void SetProductionThreads(unsigned threads) noexcept;
 
 class World final {
 public:
-    /** Constructs an empty bounded grid; catalog must outlive the world. */
+    /** Constructs an empty grid with dimensions 1..MaxWorldGridSize; otherwise throws invalid_argument.
+     *  The catalog must outlive the world. */
     World(const Catalog &catalog, std::uint32_t gridWidth, std::uint32_t gridDepth);
     World(const World &) = delete;
     World &operator=(const World &) = delete;
@@ -316,7 +340,10 @@ public:
     World &operator=(World &&other) noexcept;
     /** Releases world-owned state without changing the catalog. */
     ~World();
-    /** Queues placement; access is the cell below the footprint minimum-z edge center. */
+    // Command queue methods return 0 without mutation when command/tick/revision space is exhausted.
+    /** Queues placement; access is the cell below the footprint minimum-z edge center.
+     *  Footprints cannot overlap buildings, reserved access cells, or enabled/disabled roads.
+     *  Access must be in bounds and outside footprints; a road there is allowed, not required. */
     CommandId PlaceBuilding(BuildingTypeId type, Cell origin);
     /** Queues removal and rejects buildings referenced by haul orders. */
     CommandId RemoveBuilding(BuildingId building);
@@ -329,14 +356,21 @@ public:
     /** Queues a repeating haul order with one vehicle spawned at source access. */
     CommandId CreateHaulOrder(BuildingId source, BuildingId destination, ResourceId resource,
                               VehicleTypeId vehicleType);
-    /** Queues cancellation of an order and its owned vehicle. */
+    /** Queues cancellation of an empty order and its vehicle; loaded cargo prevents cancellation. */
     CommandId CancelHaulOrder(OrderId order);
+    /** Queues a new destination while preserving the order, vehicle, source, resource, and cargo.
+     *  A loaded vehicle routes from its current cell; an empty vehicle returns to source first. */
+    CommandId RetargetHaulOrder(OrderId order, BuildingId destination);
     /** Swaps in a tuned catalog of identical structure (names, ids, recipe and storage layout) between ticks.
-     *  Rejects the swap, leaving the world untouched, if the structure differs or a stored amount would
-     *  exceed a reduced capacity. The new catalog must outlive the world. */
+     *  Rejects the swap, leaving the world untouched, if the structure differs or building inventory
+     *  or onboard cargo would exceed a reduced capacity. The new catalog must outlive the world. */
     bool ReplaceCatalog(const Catalog &catalog, std::string &error);
     /** Returns queued, accepted, rejected, or unknown command status. */
     CommandResult GetCommandResult(CommandId command) const;
+    /** Returns command-history retention and counter state without mutation. */
+    CommandHistorySnapshot CommandHistory() const noexcept;
+    /** Explicitly drops all but the newest keepRecent terminal results, retaining every pending command. */
+    CommandHistoryCompactionResult CompactCommandHistory(std::uint32_t keepRecent);
     /** Applies queued commands, production, and haul movement for each bounded tick. */
     StepResult Step(std::uint32_t ticks = 1);
     /** Returns ID-ordered values and an FNV-1a hash of canonical little-endian state fields. */
@@ -361,7 +395,7 @@ private:
     Impl *impl_{};
 };
 
-/** Serializes state, queues, and command results in versioned text. */
+/** Serializes state, queues, and command results; returns empty if MaxWorldSaveBytes is exceeded. */
 std::string SaveWorld(const World &world);
 /** Validates and loads transactionally; failure leaves world unchanged. */
 bool LoadWorld(std::string_view text, const Catalog &catalog, World &world, ParseError &error);

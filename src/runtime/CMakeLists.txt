@@ -1,3 +1,4 @@
-add_library(OpenRepublicRuntime graphics_settings.cpp)
+add_library(OpenRepublicRuntime graphics_settings.cpp native_economy_layout.cpp native_economy_tools.cpp checkpoint_file.cpp)
 target_include_directories(OpenRepublicRuntime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_compile_features(OpenRepublicRuntime PUBLIC cxx_std_17)
+target_link_libraries(OpenRepublicRuntime PUBLIC OpenRepublicEconomy)

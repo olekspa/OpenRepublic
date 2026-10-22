@@ -22,6 +22,11 @@ struct SelectedPlacement {
     economy::Cell cell{};
 };
 
+void AddNote(RegionImportReport &report, std::size_t maximum, std::string note) {
+    if (report.notes.size() < maximum)
+        report.notes.push_back(std::move(note));
+}
+
 std::string BaseTypeName(const std::string &name) {
     if (name.compare(0, 8, kMirrorPrefix) == 0)
         return name.substr(8);
@@ -49,7 +54,8 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
         !std::isfinite(options.cellSizeMeters) || options.cellSizeMeters <= 0.0 ||
         !std::isfinite(options.radiusMeters) || options.radiusMeters < 0.0 ||
         !std::isfinite(placements[centerIndex].x) || !std::isfinite(placements[centerIndex].z)) {
-        next.notes.push_back("Import failed: invalid center placement or region options.");
+        AddNote(next, options.maxDiagnosticNotes,
+                "Import failed: invalid center placement or region options.");
         report = std::move(next);
         return false;
     }
@@ -58,7 +64,8 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
     for (const auto &placement : placements) {
         if (placement.sourcePlacementKey &&
             !sourcePlacementKeys.insert(*placement.sourcePlacementKey).second) {
-            next.notes.push_back("Import failed: duplicate source placement key.");
+            AddNote(next, options.maxDiagnosticNotes,
+                    "Import failed: duplicate source placement key.");
             report = std::move(next);
             return false;
         }
@@ -80,7 +87,7 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
     std::vector<std::size_t> selected;
     collect(effectiveRadius, selected);
     if (selected.empty()) {
-        next.notes.push_back("Import failed: center is not a finite placement.");
+        AddNote(next, options.maxDiagnosticNotes, "Import failed: center is not a finite placement.");
         report = std::move(next);
         return false;
     }
@@ -99,7 +106,8 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
     }
     if (maxWidth + kMarginCells > kMaximumGridDimension ||
         maxDepth + kMarginCells > kMaximumGridDimension) {
-        next.notes.push_back("Import failed: catalog footprint exceeds the supported grid.");
+        AddNote(next, options.maxDiagnosticNotes,
+                "Import failed: catalog footprint exceeds the supported grid.");
         report = std::move(next);
         return false;
     }
@@ -140,7 +148,8 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
         collect(effectiveRadius, selected);
         bounds();
         if (!dimensions(gridWidth, gridDepth)) {
-            next.notes.push_back("Import failed: selected region cannot fit the supported grid.");
+            AddNote(next, options.maxDiagnosticNotes,
+                    "Import failed: selected region cannot fit the supported grid.");
             report = std::move(next);
             return false;
         }
@@ -148,7 +157,7 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
         note.imbue(std::locale::classic());
         note << "Selection radius reduced from " << std::setprecision(17) << options.radiusMeters
              << " m to " << effectiveRadius << " m to fit the 512 by 512 grid.";
-        next.notes.push_back(note.str());
+        AddNote(next, options.maxDiagnosticNotes, note.str());
     }
 
     next.originX = minX - kMarginCells * options.cellSizeMeters;
@@ -156,7 +165,8 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
     next.gridWidth = gridWidth;
     next.gridDepth = gridDepth;
     next.considered = placements.size();
-    next.notes.push_back("Roads are not part of this step; import them with ImportRoadsIntoWorld.");
+    AddNote(next, options.maxDiagnosticNotes,
+            "Roads are not part of this step; import them with ImportRoadsIntoWorld.");
 
     std::vector<SelectedPlacement> known;
     known.reserve(selected.size());
@@ -195,7 +205,8 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
     if (!commands.empty()) {
         const auto step = candidate->Step(1);
         if (!step.accepted) {
-            next.notes.push_back("Import failed: economy world rejected the placement batch step.");
+            AddNote(next, options.maxDiagnosticNotes,
+                    "Import failed: economy world rejected the placement batch step.");
             report = std::move(next);
             return false;
         }
@@ -213,11 +224,16 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
             ++next.placed;
         } else if (result.failure == economy::CommandFailure::OutOfBounds) {
             ++next.skippedOutOfBounds;
-        } else if (result.failure == economy::CommandFailure::BuildingCollision ||
-                   result.failure == economy::CommandFailure::AccessCellUnavailable) {
+        } else if (result.failure == economy::CommandFailure::BuildingCollision) {
             ++next.skippedOverlap;
+        } else if (result.failure == economy::CommandFailure::AccessCellUnavailable) {
+            ++next.skippedAccessConflict;
+            AddNote(next, options.maxDiagnosticNotes,
+                    "Placement at source row " + std::to_string(command.first) +
+                        " skipped: access cell is unavailable.");
         } else {
-            next.notes.push_back("Import failed: an unexpected economy placement command failed.");
+            AddNote(next, options.maxDiagnosticNotes,
+                    "Import failed: an unexpected economy placement command failed.");
             report = std::move(next);
             return false;
         }
@@ -232,7 +248,8 @@ std::string DescribeRegionImport(const RegionImportReport &report) {
     output.imbue(std::locale::classic());
     output << "Region import: " << report.placed << " placed from " << report.considered
            << " placements; " << report.skippedUnknownType << " unknown type, "
-           << report.skippedOverlap << " overlap, " << report.skippedOutOfBounds
+           << report.skippedOverlap << " footprint overlap, " << report.skippedAccessConflict
+           << " access conflict, " << report.skippedOutOfBounds
            << " outside region or bounds. Grid: " << report.gridWidth << " x " << report.gridDepth
            << " cells at origin (" << std::setprecision(std::numeric_limits<double>::max_digits10)
            << report.originX << ", " << report.originZ << ").";

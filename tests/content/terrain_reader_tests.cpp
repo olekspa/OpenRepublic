@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -141,7 +142,23 @@ void TestDdsFailures() {
 }
 
 void TestFileDdsReader() {
-    const auto path = std::filesystem::temp_directory_path() / "openrepublic_synthetic_r32f_test.dds";
+    // Client and headless CTest trees may run at the same time. Exclusively
+    // reserve a directory before writing so the two processes cannot share a fixture.
+    const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    std::filesystem::path directory;
+    std::error_code ec;
+    for (unsigned attempt = 0; attempt < 32; ++attempt) {
+        const auto candidate = std::filesystem::temp_directory_path() /
+            ("openrepublic-terrain-test-" + std::to_string(nonce) + "-" + std::to_string(attempt));
+        if (std::filesystem::create_directory(candidate, ec)) {
+            directory = candidate;
+            break;
+        }
+        if (ec) break;
+    }
+    Check(!directory.empty(), "temporary terrain fixture directory is reserved exclusively");
+    if (directory.empty()) return;
+    const auto path = directory / "synthetic_r32f.dds";
     const auto bytes = MakeDds(1, 1, {0x41200000u});
     {
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -152,9 +169,10 @@ void TestFileDdsReader() {
     Check(LoadLegacyR32F(path, output, &error), "synthetic DDS path overload reads file");
     Check(output.width == 1 && output.height == 1 && output.samples == std::vector<float>{10.0f},
           "path overload returns decoded raw value");
-    std::error_code ec;
     std::filesystem::remove(path, ec);
     Check(!ec, "temporary synthetic DDS is removed");
+    std::filesystem::remove(directory, ec);
+    Check(!ec, "temporary terrain fixture directory is removed");
 }
 
 bool ParseMetadata(const std::string& text, const Heightmap& input,

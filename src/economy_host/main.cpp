@@ -5,6 +5,7 @@
 #include "openrepublic/compat/region_roads.h"
 #include "openrepublic/content/map_placement.h"
 #include "openrepublic/content/road_network.h"
+#include "openrepublic/economy/checkpoint.h"
 
 #ifdef OPENREPUBLIC_HAVE_LUA_RULES
 #include "openrepublic/scripting/economy_rules.h"
@@ -43,9 +44,11 @@ LineStatus ReadBoundedLine(std::istream &input, std::string &line) {
 void PrintUsage() {
   std::cerr << "Usage: OpenRepublicEconomyHost [--role observer|controller] [--catalog file]\n"
             << "       [--rules <economy_rules.lua>] [--region <map dir> --content-root <dir> [--center N] [--radius M]]\n"
+            << "       [--role observer|controller] --checkpoint <file>\n"
             << "Reads protocolVersion 0 JSONL requests from stdin and writes responses to stdout.\n"
             << "--region imports a local WRSR map package's placements and roads into the world\n"
-            << "(the catalog is built from <content-root>/buildings_types; local content only).\n";
+            << "(the catalog is built from <content-root>/buildings_types; local content only).\n"
+            << "--checkpoint restores a bounded native simulation checkpoint; do not combine it with catalog, rules, or region options.\n";
 }
 
 bool ReadFile(const std::filesystem::path &path, std::string &text) {
@@ -55,6 +58,30 @@ bool ReadFile(const std::filesystem::path &path, std::string &text) {
   std::ostringstream buffer;
   buffer << input.rdbuf();
   text = buffer.str();
+  return true;
+}
+
+bool ReadCheckpointFile(const std::filesystem::path &path, std::string &text, std::string &error) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    error = "could not open checkpoint file";
+    return false;
+  }
+  const std::size_t probeSize = economy::MaxCheckpointBytes + 1;
+  text.resize(probeSize);
+  input.read(text.data(), static_cast<std::streamsize>(probeSize));
+  const std::streamsize count = input.gcount();
+  if (input.bad() || (input.fail() && !input.eof())) {
+    text.clear();
+    error = "checkpoint file read failed";
+    return false;
+  }
+  if (count < 0 || static_cast<std::size_t>(count) > economy::MaxCheckpointBytes) {
+    text.clear();
+    error = "checkpoint file exceeds the " + std::to_string(economy::MaxCheckpointBytes) + " byte limit";
+    return false;
+  }
+  text.resize(static_cast<std::size_t>(count));
   return true;
 }
 
@@ -152,6 +179,14 @@ bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::files
 int main(int argc, char **argv) {
   economy_host::Role role = economy_host::Role::Observer;
   std::string catalogPath;
+  std::filesystem::path checkpointPath;
+  bool checkpointSpecified = false;
+  bool catalogSpecified = false;
+  bool rulesSpecified = false;
+  bool regionSpecified = false;
+  bool contentRootSpecified = false;
+  bool centerSpecified = false;
+  bool radiusSpecified = false;
   std::filesystem::path regionDir;
   std::filesystem::path contentRoot;
   std::filesystem::path rulesPath;
@@ -171,16 +206,30 @@ int main(int argc, char **argv) {
         return 2;
       }
     } else if (arg == "--catalog" && i + 1 < argc) {
+      catalogSpecified = true;
       catalogPath = argv[++i];
+    } else if (arg == "--checkpoint") {
+      checkpointSpecified = true;
+      if (i + 1 >= argc || std::string(argv[i + 1]).rfind("--", 0) == 0) {
+        std::cerr << "--checkpoint needs a file path.\n";
+        PrintUsage();
+        return 2;
+      }
+      checkpointPath = argv[++i];
     } else if (arg == "--region" && i + 1 < argc) {
+      regionSpecified = true;
       regionDir = argv[++i];
     } else if (arg == "--content-root" && i + 1 < argc) {
+      contentRootSpecified = true;
       contentRoot = argv[++i];
     } else if (arg == "--rules" && i + 1 < argc) {
+      rulesSpecified = true;
       rulesPath = argv[++i];
     } else if (arg == "--center" && i + 1 < argc) {
+      centerSpecified = true;
       centerIndex = std::strtol(argv[++i], nullptr, 10);
     } else if (arg == "--radius" && i + 1 < argc) {
+      radiusSpecified = true;
       radius = std::strtod(argv[++i], nullptr);
     } else if (arg == "--help" || arg == "-h") {
       PrintUsage();
@@ -192,8 +241,37 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (checkpointSpecified &&
+      (catalogSpecified || rulesSpecified || regionSpecified || contentRootSpecified ||
+       centerSpecified || radiusSpecified)) {
+    std::cerr << "--checkpoint cannot be combined with explicit catalog, rules, region, content-root, center, or radius options.\n";
+    PrintUsage();
+    return 2;
+  }
+  if (checkpointSpecified && checkpointPath.empty()) {
+    std::cerr << "--checkpoint needs a non-empty file path.\n";
+    PrintUsage();
+    return 2;
+  }
+
   economy::Catalog catalog = economy::MakeSyntheticCatalog();
-  if (!catalogPath.empty()) {
+  economy::RestoredCheckpoint restoredCheckpoint;
+  if (checkpointSpecified) {
+    std::string checkpointText;
+    std::string readError;
+    if (!ReadCheckpointFile(checkpointPath, checkpointText, readError)) {
+      std::cerr << "Checkpoint restore failed: " << readError << ".\n";
+      return 2;
+    }
+    economy::ParseError parseError;
+    if (!economy::RestoreCheckpoint(checkpointText, restoredCheckpoint, parseError) ||
+        !restoredCheckpoint.catalog || !restoredCheckpoint.world) {
+      std::cerr << "Checkpoint restore failed: "
+                << (parseError.message.empty() ? "invalid checkpoint contents" : parseError.message)
+                << ".\n";
+      return 2;
+    }
+  } else if (!catalogPath.empty()) {
     std::ifstream input(catalogPath, std::ios::binary);
     if (!input) {
       std::cerr << "Could not open catalog file.\n";
@@ -209,7 +287,7 @@ int main(int argc, char **argv) {
     catalog = std::move(parsed);
   }
 
-  if (regionDir.empty()) {
+  if (!checkpointSpecified && regionDir.empty()) {
     std::string rulesError;
     if (!ApplyRules(rulesPath, catalog, rulesError)) {
       std::cerr << "Lua rules rejected: " << rulesError << "\n";
@@ -219,7 +297,7 @@ int main(int argc, char **argv) {
   std::unique_ptr<economy::World> regionWorld;
   std::string regionDescription;
   std::string regionInfoJson;
-  if (!regionDir.empty()) {
+  if (!checkpointSpecified && !regionDir.empty()) {
     if (contentRoot.empty() || !catalogPath.empty() || !(radius >= 10.0 && radius <= 1000.0)) {
       std::cerr << "--region needs --content-root, excludes --catalog, and a radius of 10..1000 m.\n";
       return 2;
@@ -231,8 +309,10 @@ int main(int argc, char **argv) {
       return 2;
     }
   }
-  economy_host::Dispatcher dispatcher = regionWorld ? economy_host::Dispatcher(role, *regionWorld)
-                                                    : economy_host::Dispatcher(role, catalog);
+  economy_host::Dispatcher dispatcher = restoredCheckpoint.world
+                                            ? economy_host::Dispatcher(role, *restoredCheckpoint.world)
+                                        : regionWorld ? economy_host::Dispatcher(role, *regionWorld)
+                                                      : economy_host::Dispatcher(role, catalog);
   if (regionWorld)
     dispatcher.SetRegionDescription(regionDescription);
   if (regionWorld)
@@ -240,7 +320,10 @@ int main(int argc, char **argv) {
 #ifdef OPENREPUBLIC_HAVE_LUA_RULES
   {
     // Rules are always applied to the untuned base so repeated reloads do not compound.
-    const economy::Catalog &baseCatalog = regionWorld ? regionWorld->GetCatalog() : catalog;
+    const economy::Catalog &baseCatalog = restoredCheckpoint.catalog
+                                              ? *restoredCheckpoint.catalog
+                                          : regionWorld ? regionWorld->GetCatalog()
+                                                        : catalog;
     const auto baseCopy = std::make_shared<economy::Catalog>(baseCatalog);
     dispatcher.SetRulesBuilder([baseCopy](std::string_view text, economy::Catalog &out, std::string &error) {
       return scripting::EconomyRules::ApplyText(text, *baseCopy, out, &error);

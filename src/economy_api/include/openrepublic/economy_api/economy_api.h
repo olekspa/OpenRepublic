@@ -12,6 +12,7 @@
 #include <vector>
 
 namespace openrepublic::economy_api {
+struct EconomyApiTestAccess;
 
 constexpr std::uint32_t ApiVersion = 0;
 constexpr std::size_t MaxEntityPageSize = 32;
@@ -22,7 +23,7 @@ constexpr std::uint32_t MaxStepTicks = 100000;
 enum class Action : std::uint8_t {
     QueryWorld = 1, QueryCatalog, ExplainBuilding, Step, PlaceBuilding, RemoveBuilding,
     BuildRoad, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, CancelHaulOrder,
-    PollCommand, ReadEvents
+    PollCommand, ReadEvents, RetargetHaulOrder, ExportCheckpoint, CompactCommandHistory
 };
 struct Permissions {
     bool query{true};
@@ -35,7 +36,8 @@ struct Capabilities {
 enum class ErrorCode : std::uint8_t {
     None = 0, PermissionDenied, StaleRevision, InvalidArgument, UnknownCommand,
     InvalidPageLimit, InvalidEventLimit, FutureEventCursor, StepLimitExceeded,
-    CommandHandleExhausted
+    CommandHandleExhausted, CommandQueueExhausted, PersistenceFailed,
+    CommandExpired, RevisionExhausted
 };
 struct ResourceInfo {
     economy::ResourceId id{};
@@ -118,6 +120,7 @@ struct WorldView {
     std::vector<RoadView> roads;
     std::vector<VehicleView> vehicles;
     std::vector<OrderView> orders;
+    economy::CommandHistorySnapshot commandHistory;
 };
 struct WorldQuery {
     ErrorCode error{ErrorCode::None};
@@ -174,6 +177,17 @@ struct PollResult {
     ErrorCode error{ErrorCode::None};
     economy::CommandResult result;
 };
+struct CheckpointExport {
+    ErrorCode error{ErrorCode::None};
+    std::string text;
+    std::uint64_t revision{}, tick{};
+    std::string message;
+};
+struct HistoryCompaction {
+    ErrorCode error{ErrorCode::None};
+    std::uint64_t removedResults{}, expiredHandles{}, revision{};
+    economy::CommandHistorySnapshot history;
+};
 
 class EconomyApi final {
 public:
@@ -186,6 +200,14 @@ public:
     Capabilities DiscoverCapabilities() const;
     /** Returns named catalog definitions; query permission is required. */
     CatalogView DescribeCatalog() const;
+    /** Exports an immutable catalog-bound native checkpoint at the expected revision.
+     *  Query permission suffices; no simulation state or API handles/events are changed. */
+    CheckpointExport ExportCheckpoint(std::uint64_t expectedRevision) const;
+    /** Prunes an explicit prefix of terminal command results, retaining every queued command.
+     *  Requires query and control permission, an exact revision, and a retention within the
+     *  economy core's supported bounds. Expired API handles remain distinguishable from unknown. */
+    HistoryCompaction CompactCommandHistory(std::uint64_t expectedRevision,
+        std::uint32_t keepRecent);
     /** Returns all world collections and the matching tick, revision, and state hash. */
     WorldQuery QueryWorld() const;
     /** Returns one bounded collection page, rejecting stale revisions and unknown kinds. */
@@ -206,9 +228,13 @@ public:
     /** Queues a haul order using exact resource and vehicle type names. */
     Submission CreateHaulOrder(std::uint64_t revision, economy::BuildingId source,
         economy::BuildingId destination, const std::string& resource, const std::string& vehicleType);
-    /** Queues cancellation of a haul order after checking the expected revision. */
+    /** Queues cancellation after revision checks; execution rejects an order carrying cargo. */
     Submission CancelHaulOrder(std::uint64_t revision, economy::OrderId id);
-    /** Returns the queued or terminal simulation result associated with a command handle. */
+    /** Queues retargeting of a haul order after checking the expected revision. */
+    Submission RetargetHaulOrder(std::uint64_t revision, economy::OrderId id,
+        economy::BuildingId destination);
+    /** Returns the queued or terminal simulation result associated with a command handle.
+     *  For an expired API handle whose native ID mapping was retired, result.commandId is 0. */
     PollResult PollCommand(std::uint64_t handle) const;
     /** Advances up to MaxStepTicks; command outcomes are evaluated at tick boundaries. */
     ErrorCode Step(std::uint32_t ticks = 1);
@@ -217,6 +243,7 @@ public:
     /** Reads up to MaxEventPageSize entries after an exclusive cursor. */
     EventQuery ReadEvents(std::uint64_t afterSequence, std::size_t limit) const;
 private:
+    friend struct EconomyApiTestAccess;
     Submission Submit(std::uint64_t revision, economy::CommandId command);
     bool Allowed(bool control) const noexcept;
     void Record(Event event);

@@ -8,6 +8,8 @@
 #include <map>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace openrepublic::economy {
@@ -17,6 +19,60 @@ constexpr std::size_t MaxDefinitions = 1024;
 constexpr std::size_t MaxText = 1024 * 1024;
 constexpr std::size_t MaxLine = 4096;
 constexpr std::uint32_t MaxStep = 100000;
+
+// Unlike formatted stream extraction, unsigned from_chars never accepts a minus
+// sign or silently narrows counters. Bound every field before it reaches state.
+class WorldSaveInput final {
+public:
+    explicit WorldSaveInput(std::string_view text) : remaining_(text) {}
+    explicit operator bool() const noexcept { return !failed_; }
+    WorldSaveInput &operator>>(std::string &out) {
+        const auto token = Next();
+        if (!failed_)
+            out.assign(token);
+        return *this;
+    }
+    template <class T> WorldSaveInput &operator>>(T &out) {
+        static_assert(std::is_integral_v<T>);
+        const auto token = Next();
+        if (failed_)
+            return *this;
+        if constexpr (std::is_same_v<T, bool>) {
+            failed_ = token != "0" && token != "1";
+            if (!failed_)
+                out = token == "1";
+        } else {
+            T value{};
+            const auto result = std::from_chars(token.data(), token.data() + token.size(), value);
+            failed_ = result.ec != std::errc{} || result.ptr != token.data() + token.size();
+            if (!failed_)
+                out = value;
+        }
+        return *this;
+    }
+private:
+    static bool Space(char c) noexcept {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f';
+    }
+    std::string_view Next() {
+        if (failed_)
+            return {};
+        while (!remaining_.empty() && Space(remaining_.front()))
+            remaining_.remove_prefix(1);
+        if (remaining_.empty()) {
+            failed_ = true;
+            return {};
+        }
+        std::size_t size = 0;
+        while (size < remaining_.size() && !Space(remaining_[size]))
+            ++size;
+        const auto token = remaining_.substr(0, size);
+        remaining_.remove_prefix(size);
+        return token;
+    }
+    std::string_view remaining_;
+    bool failed_{};
+};
 
 void CatError(CatalogErrorInfo &e, CatalogError c, const std::string &m) {
     e.code = c;
@@ -132,7 +188,8 @@ enum class Kind : std::uint8_t {
     RoadEnabled,
     BuildingEnabled,
     Haul,
-    Cancel
+    Cancel,
+    Retarget
 };
 struct Pending {
     CommandId id{};
@@ -156,6 +213,7 @@ struct State {
     OrderId nextOrder{1};
     VehicleId nextVehicle{1};
     CommandId nextCommand{1};
+    CommandId firstRetainedCommand{1};
     std::vector<Building> buildings;
     std::vector<Road> roads;
     std::vector<Vehicle> vehicles;
@@ -204,15 +262,21 @@ const Vehicle *FindVehicle(const State &s, VehicleId id) {
             return &x;
     return nullptr;
 }
+bool InFootprint(const BuildingTypeDef &t, Cell origin, Cell c) {
+    return c.x >= origin.x && c.z >= origin.z &&
+           static_cast<std::int64_t>(c.x) < static_cast<std::int64_t>(origin.x) + t.width &&
+           static_cast<std::int64_t>(c.z) < static_cast<std::int64_t>(origin.z) + t.depth;
+}
+bool FootprintsOverlap(const BuildingTypeDef &a, Cell ao, const BuildingTypeDef &b, Cell bo) {
+    return ao.x < static_cast<std::int64_t>(bo.x) + b.width &&
+           bo.x < static_cast<std::int64_t>(ao.x) + a.width &&
+           ao.z < static_cast<std::int64_t>(bo.z) + b.depth &&
+           bo.z < static_cast<std::int64_t>(ao.z) + a.depth;
+}
 bool Occupied(const State &s, Cell c) {
-    for (const auto &b : s.buildings) {
-        const auto *t = s.catalog->BuildingType(b.type);
-        for (std::uint32_t x = 0; x < t->width; ++x)
-            for (std::uint32_t z = 0; z < t->depth; ++z)
-                if (b.origin.x + static_cast<std::int32_t>(x) == c.x &&
-                    b.origin.z + static_cast<std::int32_t>(z) == c.z)
-                    return true;
-    }
+    for (const auto &b : s.buildings)
+        if (InFootprint(*s.catalog->BuildingType(b.type), b.origin, c))
+            return true;
     return false;
 }
 bool RoadBetween(const State &s, Cell a, Cell b, bool open) {
@@ -227,15 +291,41 @@ bool RoadAt(const State &s, Cell c) {
             return true;
     return false;
 }
-bool Fits(const State &s, const BuildingTypeDef &t, Cell o) {
+CommandFailure PlacementFailure(const State &s, const BuildingTypeDef &t, Cell o) {
     if (o.x < 0 || o.z < 0 || static_cast<std::uint64_t>(o.x) + t.width > s.width ||
         static_cast<std::uint64_t>(o.z) + t.depth > s.depth)
-        return false;
-    for (std::uint32_t x = 0; x < t.width; ++x)
-        for (std::uint32_t z = 0; z < t.depth; ++z)
-            if (Occupied(s, {o.x + static_cast<std::int32_t>(x), o.z + static_cast<std::int32_t>(z)}))
-                return false;
-    return InGrid({o.x + static_cast<std::int32_t>((t.width - 1) / 2), o.z - 1}, s.width, s.depth);
+        return CommandFailure::OutOfBounds;
+    // Check overlap before access/road reservations so the diagnosis is stable
+    // when several existing buildings conflict with the proposed placement.
+    for (const auto &b : s.buildings)
+        if (FootprintsOverlap(t, o, *s.catalog->BuildingType(b.type), b.origin))
+            return CommandFailure::BuildingCollision;
+    const Cell access{o.x + static_cast<std::int32_t>((t.width - 1) / 2), o.z - 1};
+    if (!InGrid(access, s.width, s.depth) || Occupied(s, access))
+        return CommandFailure::AccessCellUnavailable;
+    for (const auto &b : s.buildings)
+        if (InFootprint(t, o, b.access))
+            return CommandFailure::AccessCellUnavailable;
+    // Disabled roads retain their cells too: reopening must not put a road
+    // through a building that was placed while it was closed.
+    for (const auto &r : s.roads)
+        if (InFootprint(t, o, r.a) || InFootprint(t, o, r.b))
+            return CommandFailure::RoadOnBuilding;
+    return CommandFailure::None;
+}
+const char *PlacementMessage(CommandFailure failure) {
+    switch (failure) {
+    case CommandFailure::OutOfBounds:
+        return "building footprint is outside the grid";
+    case CommandFailure::BuildingCollision:
+        return "building footprint overlaps another building";
+    case CommandFailure::AccessCellUnavailable:
+        return "building access cell is outside the grid or would be blocked by a footprint";
+    case CommandFailure::RoadOnBuilding:
+        return "building footprint would cover an existing road";
+    default:
+        return "invalid building placement";
+    }
 }
 std::vector<Cell> Path(const State &s, Cell start, Cell goal) {
     if (start == goal)
@@ -389,8 +479,13 @@ void Apply(State &s, const Pending &p) {
             reject(CommandFailure::UnknownBuildingType, "unknown building type");
             return;
         }
-        if (!Fits(s, *t, p.a)) {
-            reject(CommandFailure::BuildingCollision, "building footprint or access cell unavailable");
+        const auto placementFailure = PlacementFailure(s, *t, p.a);
+        if (placementFailure != CommandFailure::None) {
+            reject(placementFailure, PlacementMessage(placementFailure));
+            return;
+        }
+        if (s.nextBuilding == UINT32_MAX) {
+            reject(CommandFailure::InvalidCommand, "building ID space exhausted");
             return;
         }
         Building b;
@@ -437,6 +532,10 @@ void Apply(State &s, const Pending &p) {
             std::swap(a, b);
         if (RoadBetween(s, a, b, false)) {
             reject(CommandFailure::DuplicateRoad, "road already exists");
+            return;
+        }
+        if (s.nextRoad == UINT32_MAX) {
+            reject(CommandFailure::InvalidCommand, "road ID space exhausted");
             return;
         }
         s.roads.push_back({s.nextRoad++, a, b, true});
@@ -490,6 +589,10 @@ void Apply(State &s, const Pending &p) {
                 reject(CommandFailure::DuplicateOrder, "duplicate haul order");
                 return;
             }
+        if (s.nextOrder == UINT32_MAX || s.nextVehicle == UINT32_MAX) {
+            reject(CommandFailure::InvalidCommand, "order or vehicle ID space exhausted");
+            return;
+        }
         Order o{o.id = s.nextOrder++, p.source, p.destination, p.resource, p.vehicleType, 0};
         o.vehicle = s.nextVehicle++;
         s.orders.push_back(o);
@@ -506,6 +609,40 @@ void Apply(State &s, const Pending &p) {
         Result(s, p, true, CommandFailure::None, "haul order created", 0, 0, o.id);
         return;
     }
+    if (p.kind == Kind::Retarget) {
+        auto *o = FindOrder(s, p.order);
+        if (!o) {
+            reject(CommandFailure::UnknownOrder, "unknown haul order");
+            return;
+        }
+        const auto *dst = Find(s, p.destination);
+        if (!dst || p.destination == o->source) {
+            reject(CommandFailure::InvalidOrderEndpoint, "destination must exist and differ from source");
+            return;
+        }
+        const auto *dt = s.catalog->BuildingType(dst->type);
+        if (Slot(*dt, o->resource) >= dt->storage.size()) {
+            reject(CommandFailure::InvalidOrderEndpoint, "resource is not stored at destination");
+            return;
+        }
+        for (const auto &other : s.orders)
+            if (other.id != o->id && other.source == o->source &&
+                other.destination == p.destination && other.resource == o->resource) {
+                reject(CommandFailure::DuplicateOrder, "duplicate haul order");
+                return;
+            }
+        if (o->destination != p.destination) {
+            auto *v = FindVehicle(s, o->vehicle);
+            o->destination = p.destination;
+            v->toDestination = v->cargo > 0;
+            v->state = v->toDestination ? HaulState::ToDestination : HaulState::ToSource;
+            v->failure = HaulFailure::None;
+            v->route.clear();
+            v->cursor = 0;
+        }
+        Result(s, p, true, CommandFailure::None, "haul destination updated", 0, 0, o->id);
+        return;
+    }
     if (p.kind == Kind::Cancel) {
         auto *o = FindOrder(s, p.order);
         if (!o) {
@@ -513,6 +650,11 @@ void Apply(State &s, const Pending &p) {
             return;
         }
         auto v = o->vehicle;
+        if (FindVehicle(s, v)->cargo > 0) {
+            reject(CommandFailure::CargoInTransit,
+                   "loaded haul cannot be cancelled; deliver cargo or retarget the destination first");
+            return;
+        }
         s.orders.erase(
             std::remove_if(s.orders.begin(), s.orders.end(), [&](const Order &x) { return x.id == p.order; }),
             s.orders.end());
@@ -566,7 +708,7 @@ void Haul(State &s, Order &o) {
     auto si = Slot(*st, o.resource);
     auto di = Slot(*dt, o.resource);
     if (v->state == HaulState::Idle || v->state == HaulState::Waiting || v->state == HaulState::NoRoute) {
-        if (v->cargo == 0 && (!v->toDestination || v->state != HaulState::NoRoute)) {
+        if (v->cargo == 0 && v->cell == src->access) {
             if (src->inventory[si] == 0) {
                 v->state = HaulState::Waiting;
                 v->failure = HaulFailure::SourceEmpty;
@@ -591,8 +733,12 @@ void Haul(State &s, Order &o) {
                 v->failure = HaulFailure::NoRoute;
                 return;
             }
-        } else if (v->state == HaulState::NoRoute || v->state == HaulState::Waiting)
+        } else {
+            // An empty truck must reach its source before it can take inventory.
+            // In particular, recovery from a blocked return leg must not load remotely.
+            v->toDestination = v->cargo > 0;
             v->state = v->toDestination ? HaulState::ToDestination : HaulState::ToSource;
+        }
     }
     if (v->state == HaulState::ToDestination && Move(s, *v, dst->access)) {
         auto room = dt->storage[di].capacity - dst->inventory[di];
@@ -691,6 +837,10 @@ std::uint64_t Hash(const State &s) {
     HashU(h, s.nextOrder);
     HashU(h, s.nextVehicle);
     HashU(h, s.nextCommand);
+    if (s.firstRetainedCommand > 1) {
+        HashS(h, "openrepublic.command-history.first-retained.v1");
+        HashU(h, s.firstRetainedCommand);
+    }
     for (const auto &b : s.buildings) {
         HashU(h, b.id);
         HashU(h, b.type);
@@ -1219,7 +1369,10 @@ Catalog MakeSyntheticCatalog() {
 struct World::Impl {
     State state;
 };
-World::World(const Catalog &c, std::uint32_t w, std::uint32_t d) : impl_(new Impl) {
+World::World(const Catalog &c, std::uint32_t w, std::uint32_t d) {
+    if (!w || !d || w > MaxWorldGridSize || d > MaxWorldGridSize)
+        throw std::invalid_argument("world dimensions must be 1..MaxWorldGridSize");
+    impl_ = new Impl;
     impl_->state.catalog = &c;
     impl_->state.width = w;
     impl_->state.depth = d;
@@ -1242,6 +1395,13 @@ const Catalog &World::GetCatalog() const noexcept {
     return *impl_->state.catalog;
 }
 bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
+    const auto &state = impl_->state;
+    const auto remainingRevision = UINT64_MAX - state.revision;
+    if (!remainingRevision || (!state.pending.empty() &&
+        (state.tick == UINT64_MAX || state.pending.size() >= remainingRevision - 1))) {
+        error = "world revision exhausted or reserved for queued commands";
+        return false;
+    }
     const Catalog &old = *impl_->state.catalog;
     const auto &or_ = old.Resources(), &nr = next.Resources();
     const auto &ob = old.BuildingTypes(), &nb = next.BuildingTypes();
@@ -1259,6 +1419,10 @@ bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
         for (std::size_t j = 0; same && j < ob[i].recipes.size(); ++j) {
             const auto &a = ob[i].recipes[j], &b = nb[i].recipes[j];
             same = a.name == b.name && a.inputs.size() == b.inputs.size() && a.outputs.size() == b.outputs.size();
+            for (std::size_t k = 0; same && k < a.inputs.size(); ++k)
+                same = a.inputs[k].resource == b.inputs[k].resource;
+            for (std::size_t k = 0; same && k < a.outputs.size(); ++k)
+                same = a.outputs[k].resource == b.outputs[k].resource;
         }
     }
     if (!same) {
@@ -1271,6 +1435,11 @@ bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
                 error = "a stored amount exceeds the reduced capacity of its building type";
                 return false;
             }
+    for (const auto &v : impl_->state.vehicles)
+        if (v.cargo > nv[v.type].capacity) {
+            error = "onboard cargo exceeds the reduced capacity of its vehicle type";
+            return false;
+        }
     impl_->state.catalog = &next;
     for (auto &b : impl_->state.buildings)
         for (std::size_t i = 0; i < b.remaining.size(); ++i)
@@ -1288,6 +1457,10 @@ std::uint64_t World::Revision() const noexcept {
     return impl_->state.revision;
 }
 CommandId Queue(State &s, Pending p) {
+    const auto remainingRevision = UINT64_MAX - s.revision;
+    if (s.nextCommand == UINT64_MAX || s.tick == UINT64_MAX || remainingRevision < 2 ||
+        s.pending.size() > remainingRevision - 2)
+        return 0;
     p.id = s.nextCommand++;
     s.pending.push_back(p);
     CommandResult r;
@@ -1372,15 +1545,60 @@ CommandId World::CancelHaulOrder(OrderId o) {
     p.order = o;
     return Queue(impl_->state, p);
 }
+CommandId World::RetargetHaulOrder(OrderId o, BuildingId destination) {
+    Pending p;
+    p.kind = Kind::Retarget;
+    p.order = o;
+    p.destination = destination;
+    return Queue(impl_->state, p);
+}
 CommandResult World::GetCommandResult(CommandId id) const {
     auto i = impl_->state.results.find(id);
     if (i != impl_->state.results.end())
         return i->second;
+    if (id != 0 && id < impl_->state.firstRetainedCommand)
+        return {id, CommandState::Expired, CommandFailure::None, "command result expired", 0, 0, 0};
     return {id, CommandState::Unknown, CommandFailure::InvalidCommand, "unknown command", 0, 0, 0};
+}
+CommandHistorySnapshot World::CommandHistory() const noexcept {
+    const auto &s = impl_->state;
+    return {s.firstRetainedCommand, s.nextCommand,
+            static_cast<std::uint64_t>(s.results.size() - s.pending.size()),
+            static_cast<std::uint64_t>(s.pending.size())};
+}
+CommandHistoryCompactionResult World::CompactCommandHistory(std::uint32_t keepRecent) {
+    auto &s = impl_->state;
+    if (keepRecent > MaxCommandHistoryRetention)
+        return {CommandHistoryError::InvalidRetention, 0, CommandHistory()};
+
+    const auto terminalCount = static_cast<std::uint64_t>(s.results.size() - s.pending.size());
+    const auto retainedTerminal = std::min<std::uint64_t>(keepRecent, terminalCount);
+    const auto firstPending = s.nextCommand - static_cast<CommandId>(s.pending.size());
+    const auto newFloor = firstPending - retainedTerminal;
+    const auto removed = terminalCount - retainedTerminal;
+    if (!removed)
+        return {CommandHistoryError::None, 0, CommandHistory()};
+
+    const auto remainingRevision = UINT64_MAX - s.revision;
+    const auto requiredRevision = s.pending.empty() ? std::uint64_t{1}
+                                                    : static_cast<std::uint64_t>(s.pending.size()) + 2;
+    if (remainingRevision < requiredRevision)
+        return {CommandHistoryError::RevisionExhausted, 0, CommandHistory()};
+
+    auto result = s.results.begin();
+    while (result != s.results.end() && result->first < newFloor)
+        result = s.results.erase(result);
+    s.firstRetainedCommand = newFloor;
+    ++s.revision;
+    return {CommandHistoryError::None, removed, CommandHistory()};
 }
 StepResult World::Step(std::uint32_t n) {
     if (n > MaxStep)
         return {false, CommandFailure::StepLimitExceeded, "step exceeds 100000 ticks"};
+    const auto &s = impl_->state;
+    if (n && (n > UINT64_MAX - s.tick || n > UINT64_MAX - s.revision ||
+              s.pending.size() > UINT64_MAX - s.revision - n))
+        return {false, CommandFailure::StepLimitExceeded, "tick or revision counter exhausted"};
     for (std::uint32_t i = 0; i < n; ++i)
         AdvanceTick(impl_->state);
     return {true, CommandFailure::None, {}};
@@ -1399,6 +1617,7 @@ WorldSnapshot World::Snapshot() const {
     o.tick = s.tick;
     o.revision = s.revision;
     o.stateHash = Hash(s);
+    o.commandHistory = CommandHistory();
     for (const auto &b : s.buildings) {
         BuildingSnapshot x;
         x.id = b.id;
@@ -1429,11 +1648,17 @@ WorldSnapshot World::Snapshot() const {
 
 std::string SaveWorld(const World &w) {
     const auto &s = w.impl_->state;
-    std::string o = "OPENREPUBLIC_ECONOMY_WORLD 1\n";
+    std::string o = std::string("OPENREPUBLIC_ECONOMY_WORLD ") +
+                    (s.firstRetainedCommand == 1 ? "2\n" : "3\n");
     o += "GRID " + Num(s.width) + " " + Num(s.depth) + "\nTICK " + Num(s.tick) + "\nREVISION " +
          Num(s.revision) + "\nNEXT " + Num(s.nextBuilding) + " " + Num(s.nextRoad) + " " + Num(s.nextOrder) +
-         " " + Num(s.nextVehicle) + " " + Num(s.nextCommand) + "\nBUILDINGS " + Num(s.buildings.size()) +
-         "\n";
+         " " + Num(s.nextVehicle) + " " + Num(s.nextCommand) + "\n";
+    if (s.firstRetainedCommand > 1) {
+        // v3 records only the explicit retained-history boundary. v1/v2 bytes
+        // remain unchanged while the entire command history is retained.
+        o += "HISTORY " + Num(s.firstRetainedCommand) + "\n";
+    }
+    o += "BUILDINGS " + Num(s.buildings.size()) + "\n";
     for (const auto &b : s.buildings) {
         o += "B " + Num(b.id) + " " + Num(b.type) + " " + std::to_string(b.origin.x) + " " +
              std::to_string(b.origin.z) + " " + Num(b.enabled) + "\nI " + Num(b.id) + " " +
@@ -1446,11 +1671,16 @@ std::string SaveWorld(const World &w) {
         for (auto x : b.completed)
             o += " " + Num(x);
         o += "\n";
+        if (o.size() > MaxWorldSaveBytes)
+            return {};
     }
     o += "ROADS " + Num(s.roads.size()) + "\n";
-    for (const auto &r : s.roads)
+    for (const auto &r : s.roads) {
         o += "R " + Num(r.id) + " " + std::to_string(r.a.x) + " " + std::to_string(r.a.z) + " " +
              std::to_string(r.b.x) + " " + std::to_string(r.b.z) + " " + Num(r.enabled) + "\n";
+        if (o.size() > MaxWorldSaveBytes)
+            return {};
+    }
     o += "ORDERS " + Num(s.orders.size()) + "\n";
     for (const auto &q : s.orders) {
         auto *v = FindVehicle(s, q.vehicle);
@@ -1462,40 +1692,56 @@ std::string SaveWorld(const World &w) {
             Num(v ? static_cast<std::uint8_t>(v->failure) : static_cast<std::uint8_t>(HaulFailure::NoRoute)) +
             " " + Num(v ? v->cargo : 0) + " " + std::to_string(v ? v->cell.x : 0) + " " +
             std::to_string(v ? v->cell.z : 0) + " " + Num(v ? v->toDestination : 1) + "\n";
+        if (o.size() > MaxWorldSaveBytes)
+            return {};
     }
     o += "PENDING " + Num(s.pending.size()) + "\n";
-    for (const auto &p : s.pending)
+    for (const auto &p : s.pending) {
         o += "Q " + Num(p.id) + " " + Num(static_cast<std::uint8_t>(p.kind)) + " " + Num(p.type) + " " +
              Num(p.building) + " " + std::to_string(p.a.x) + " " + std::to_string(p.a.z) + " " +
              std::to_string(p.b.x) + " " + std::to_string(p.b.z) + " " + Num(p.road) + " " + Num(p.enabled) +
              " " + Num(p.source) + " " + Num(p.destination) + " " + Num(p.resource) + " " +
              Num(p.vehicleType) + " " + Num(p.order) + "\n";
+        if (o.size() > MaxWorldSaveBytes)
+            return {};
+    }
     o += "RESULTS " + Num(s.results.size()) + "\n";
-    for (const auto &r : s.results)
+    for (const auto &r : s.results) {
         o += "C " + Num(r.first) + " " + Num(static_cast<std::uint8_t>(r.second.state)) + " " +
              Num(static_cast<std::uint8_t>(r.second.failure)) + " " + Num(r.second.building) + " " +
              Num(r.second.road) + " " + Num(r.second.order) + "\n";
+        if (o.size() > MaxWorldSaveBytes)
+            return {};
+    }
     o += "END\n";
+    if (o.size() > MaxWorldSaveBytes)
+        return {};
     return o;
 }
 
 bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseError &e) {
     e = {};
-    if (text.empty() || text.size() > MaxText) {
+    if (text.empty() || text.size() > MaxWorldSaveBytes) {
         ParseErr(e, ParseErrorCode::LimitExceeded, 0, "invalid world save size");
         return false;
     }
-    std::istringstream in{std::string(text)};
+    WorldSaveInput in(text);
     std::string tag, version;
-    if (!(in >> tag >> version) || tag != "OPENREPUBLIC_ECONOMY_WORLD" || version != "1") {
+    if (!(in >> tag >> version) || tag != "OPENREPUBLIC_ECONOMY_WORLD" ||
+        (version != "1" && version != "2" && version != "3")) {
         ParseErr(e, ParseErrorCode::InvalidHeader, 1, "invalid world header");
         return false;
     }
     std::uint32_t w{}, d{};
-    std::uint64_t tick{}, rev{}, nb{}, nr{}, no{}, nv{}, nc{}, count{};
+    BuildingId nb{};
+    RoadId nr{};
+    OrderId no{};
+    VehicleId nv{};
+    std::uint64_t tick{}, rev{}, nc{}, count{};
     if (!(in >> tag >> w >> d) || tag != "GRID" || !(in >> tag >> tick) || tag != "TICK" ||
         !(in >> tag >> rev) || tag != "REVISION" || !(in >> tag >> nb >> nr >> no >> nv >> nc) ||
-        tag != "NEXT") {
+        tag != "NEXT" || !w || !d || w > MaxWorldGridSize || d > MaxWorldGridSize ||
+        !nb || !nr || !no || !nv || !nc || rev < tick) {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid world preamble");
         return false;
     }
@@ -1503,25 +1749,39 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     State &s = temp.impl_->state;
     s.tick = tick;
     s.revision = rev;
-    s.nextBuilding = static_cast<BuildingId>(nb);
-    s.nextRoad = static_cast<RoadId>(nr);
-    s.nextOrder = static_cast<OrderId>(no);
-    s.nextVehicle = static_cast<VehicleId>(nv);
+    s.nextBuilding = nb;
+    s.nextRoad = nr;
+    s.nextOrder = no;
+    s.nextVehicle = nv;
     s.nextCommand = nc;
-    if (!(in >> tag >> count) || tag != "BUILDINGS" || count > MaxDefinitions) {
+    if (version == "3") {
+        if (!(in >> tag >> s.firstRetainedCommand) || tag != "HISTORY" ||
+            !s.firstRetainedCommand || s.firstRetainedCommand > nc) {
+            ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid command history boundary");
+            return false;
+        }
+    }
+    if (!(in >> tag >> count) || tag != "BUILDINGS" || count > text.size()) {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid building count");
         return false;
     }
+    CommandId expectedResultId = s.firstRetainedCommand;
     for (std::uint64_t n = 0; n < count; ++n) {
         Building b;
         std::uint32_t enabled{};
         if (!(in >> tag >> b.id >> b.type >> b.origin.x >> b.origin.z >> enabled) || tag != "B" ||
-            !s.catalog->BuildingType(b.type) || !Fits(s, *s.catalog->BuildingType(b.type), b.origin)) {
+            !s.catalog->BuildingType(b.type) || enabled > 1 || !b.id || b.id >= nb ||
+            (!s.buildings.empty() && b.id <= s.buildings.back().id)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid building");
             return false;
         }
         b.enabled = enabled != 0;
         auto *t = s.catalog->BuildingType(b.type);
+        const auto placementFailure = PlacementFailure(s, *t, b.origin);
+        if (placementFailure != CommandFailure::None) {
+            ParseErr(e, ParseErrorCode::CatalogInvalid, 0, PlacementMessage(placementFailure));
+            return false;
+        }
         b.access = {b.origin.x + static_cast<std::int32_t>((t->width - 1) / 2), b.origin.z - 1};
         std::uint64_t recordId{}, size{};
         if (!(in >> tag >> recordId >> size) || tag != "I" || recordId != b.id || size != t->storage.size()) {
@@ -1546,7 +1806,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
             }
         b.completed.resize(static_cast<std::size_t>(size));
         for (auto &x : b.completed)
-            if (!(in >> x)) {
+            if (!(in >> x) || x > tick) {
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid completion");
                 return false;
             }
@@ -1567,7 +1827,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         b.stall = {b.id, b.enabled ? StallReason::Running : StallReason::Disabled, InvalidResourceId, 0};
         s.buildings.push_back(std::move(b));
     }
-    if (!(in >> tag >> count) || tag != "ROADS" || count > MaxDefinitions) {
+    if (!(in >> tag >> count) || tag != "ROADS" || count > text.size()) {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid road count");
         return false;
     }
@@ -1575,19 +1835,24 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         Road r;
         std::uint32_t en{};
         if (!(in >> tag >> r.id >> r.a.x >> r.a.z >> r.b.x >> r.b.z >> en) || tag != "R" ||
-            !InGrid(r.a, w, d) || !InGrid(r.b, w, d) || !Adjacent(r.a, r.b) || Occupied(s, r.a) ||
-            Occupied(s, r.b) || RoadBetween(s, r.a, r.b, false)) {
+            !InGrid(r.a, w, d) || !InGrid(r.b, w, d) || !Adjacent(r.a, r.b) ||
+            RoadBetween(s, r.a, r.b, false) || en > 1 || r.id >= nr ||
+            (!s.roads.empty() && r.id <= s.roads.back().id)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid road");
             return false;
         }
         r.enabled = en != 0;
+        if (Occupied(s, r.a) || Occupied(s, r.b)) {
+            ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "road endpoint overlaps a building footprint");
+            return false;
+        }
         if (!r.id || Less(r.b, r.a) || FindRoad(s, r.id)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid or duplicate road ID");
             return false;
         }
         s.roads.push_back(r);
     }
-    if (!(in >> tag >> count) || tag != "ORDERS" || count > MaxDefinitions) {
+    if (!(in >> tag >> count) || tag != "ORDERS" || count > text.size()) {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid order count");
         return false;
     }
@@ -1601,12 +1866,17 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
               st >> fail >> cargo >> cell.x >> cell.z >> to) ||
             tag != "O" || !Find(s, q.source) || !Find(s, q.destination) || !s.catalog->Resource(q.resource) ||
             !s.catalog->VehicleType(q.vehicleType) || st > static_cast<std::uint32_t>(HaulState::NoRoute) ||
-            fail > static_cast<std::uint32_t>(HaulFailure::RoadDisabled)) {
+            fail > static_cast<std::uint32_t>(HaulFailure::RoadDisabled) || to > 1 ||
+            !InGrid(cell, w, d) || cargo > s.catalog->VehicleType(q.vehicleType)->capacity ||
+            (cargo > 0 && (to == 0 || st == static_cast<std::uint32_t>(HaulState::Idle) ||
+                          st == static_cast<std::uint32_t>(HaulState::ToSource)))) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid order");
             return false;
         }
         q.vehicle = vehicle;
-        if (!q.id || FindOrder(s, q.id) || !vehicle || FindVehicle(s, vehicle)) {
+        if (!q.id || q.id >= no || !vehicle || vehicle >= nv ||
+            (!s.orders.empty() && q.id <= s.orders.back().id) ||
+            (!s.vehicles.empty() && vehicle <= s.vehicles.back().id)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "duplicate or zero order or vehicle ID");
             return false;
         }
@@ -1617,6 +1887,11 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "order resource is not stored at an endpoint");
             return false;
         }
+        for (const auto &o : s.orders)
+            if (o.source == q.source && o.destination == q.destination && o.resource == q.resource) {
+                ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "duplicate haul endpoints and resource");
+                return false;
+            }
         s.orders.push_back(q);
         s.vehicles.push_back({vehicle,
                               q.id,
@@ -1629,7 +1904,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
                               {},
                               0});
     }
-    if (!(in >> tag >> count) || tag != "PENDING" || count > MaxDefinitions) {
+    if (!(in >> tag >> count) || tag != "PENDING" || count > text.size()) {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid pending count");
         return false;
     }
@@ -1638,14 +1913,15 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         std::uint32_t kind{};
         if (!(in >> tag >> p.id >> kind >> p.type >> p.building >> p.a.x >> p.a.z >> p.b.x >> p.b.z >>
               p.road >> p.enabled >> p.source >> p.destination >> p.resource >> p.vehicleType >> p.order) ||
-            tag != "Q" || kind < 1 || kind > 7) {
+            tag != "Q" || kind < 1 || kind > (version == "1" ? 7u : 8u) || !p.id || p.id >= nc ||
+            (!s.pending.empty() && p.id <= s.pending.back().id)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending command");
             return false;
         }
         p.kind = static_cast<Kind>(kind);
         s.pending.push_back(p);
     }
-    if (!(in >> tag >> count) || tag != "RESULTS" || count > MaxDefinitions) {
+    if (!(in >> tag >> count) || tag != "RESULTS" || count > text.size()) {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid result count");
         return false;
     }
@@ -1653,18 +1929,25 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         CommandResult r;
         std::uint32_t st{}, fail{};
         if (!(in >> tag >> r.commandId >> st >> fail >> r.building >> r.road >> r.order) || tag != "C" ||
-            st > 3 || fail > static_cast<std::uint32_t>(CommandFailure::ParseInvalid)) {
+            st < 1 || st > 3 || fail > static_cast<std::uint32_t>(version == "1" ? CommandFailure::ParseInvalid
+                                                                      : CommandFailure::CargoInTransit)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid command result");
             return false;
         }
         r.state = static_cast<CommandState>(st);
         r.failure = static_cast<CommandFailure>(fail);
-        if (!r.commandId || s.results.find(r.commandId) != s.results.end()) {
-            ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "duplicate or zero command result ID");
+        const auto outputIds = (r.building != 0) + (r.road != 0) + (r.order != 0);
+        if (r.commandId != expectedResultId || r.commandId >= nc || r.building >= nb ||
+            r.road >= nr || r.order >= no ||
+            (r.state == CommandState::Accepted ? (fail != 0 || outputIds != 1)
+                                               : (outputIds != 0 ||
+                                                  (r.state == CommandState::Queued ? fail != 0 : fail == 0)))) {
+            ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "inconsistent command result or ID history");
             return false;
         }
         r.message = r.state == CommandState::Queued ? "queued" : "restored result";
         s.results[r.commandId] = r;
+        ++expectedResultId;
     }
     if (!(in >> tag) || tag != "END") {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "missing END");
@@ -1672,6 +1955,36 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     }
     if (in >> tag) {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "trailing world data");
+        return false;
+    }
+    if (s.firstRetainedCommand > nc || s.results.size() != nc - s.firstRetainedCommand ||
+        s.pending.size() > s.results.size()) {
+        ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "incomplete command history");
+        return false;
+    }
+    CommandId queuedId = nc - s.pending.size();
+    for (const auto &p : s.pending)
+        if (p.id != queuedId++ || s.results.at(p.id).state != CommandState::Queued) {
+            ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "pending commands do not match queued results");
+            return false;
+        }
+    const CommandId firstPending = nc - s.pending.size();
+    if (s.firstRetainedCommand > firstPending) {
+        ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "pending commands fall below retained history");
+        return false;
+    }
+    for (const auto &r : s.results)
+        if ((r.second.state == CommandState::Queued) != (r.first >= firstPending)) {
+            ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "orphan or nonterminal command result");
+            return false;
+        }
+    const auto lifetimeAppliedCommands = nc - 1 - s.pending.size();
+    if (lifetimeAppliedCommands > rev - tick) {
+        ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "revision precedes applied command history");
+        return false;
+    }
+    if (!s.pending.empty() && (tick == UINT64_MAX || s.pending.size() >= UINT64_MAX - rev)) {
+        ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "queued commands cannot advance without counter overflow");
         return false;
     }
     for (auto &b : s.buildings)

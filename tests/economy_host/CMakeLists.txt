@@ -4,10 +4,52 @@ target_compile_features(OpenRepublicEconomyHostTests PRIVATE cxx_std_17)
 target_include_directories(OpenRepublicEconomyHostTests PRIVATE "${OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR}")
 add_test(NAME OpenRepublicEconomyHostTests COMMAND OpenRepublicEconomyHostTests)
 
+add_executable(OpenRepublicHaulRetargetProtocolTests haul_retarget_protocol_tests.cpp)
+target_link_libraries(OpenRepublicHaulRetargetProtocolTests PRIVATE OpenRepublicEconomyProtocol)
+target_include_directories(OpenRepublicHaulRetargetProtocolTests PRIVATE "${OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR}")
+add_test(NAME EconomyHaulRetargetProtocol COMMAND OpenRepublicHaulRetargetProtocolTests)
+
+add_executable(OpenRepublicHaulAdviserTests haul_adviser_tests.cpp)
+target_link_libraries(OpenRepublicHaulAdviserTests PRIVATE OpenRepublicEconomyProtocol)
+target_include_directories(OpenRepublicHaulAdviserTests PRIVATE "${OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR}")
+add_test(NAME EconomyHaulAdviser COMMAND OpenRepublicHaulAdviserTests)
+
+add_executable(OpenRepublicCheckpointProtocolTests checkpoint_protocol_tests.cpp)
+target_link_libraries(OpenRepublicCheckpointProtocolTests PRIVATE OpenRepublicEconomyProtocol)
+target_include_directories(OpenRepublicCheckpointProtocolTests PRIVATE "${OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR}")
+add_test(NAME EconomyCheckpointProtocol COMMAND OpenRepublicCheckpointProtocolTests)
+
+add_executable(OpenRepublicCommandHistoryProtocolTests command_history_protocol_tests.cpp)
+target_link_libraries(OpenRepublicCommandHistoryProtocolTests PRIVATE OpenRepublicEconomyProtocol)
+target_include_directories(OpenRepublicCommandHistoryProtocolTests PRIVATE "${OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR}")
+add_test(NAME EconomyCommandHistoryProtocol COMMAND OpenRepublicCommandHistoryProtocolTests)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME OpenRepublicEconomyHostExternalController
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/economy_controller.py"
             "$<TARGET_FILE:OpenRepublicEconomyHost>")
     set_tests_properties(OpenRepublicEconomyHostExternalController PROPERTIES TIMEOUT 30)
+    add_test(NAME OpenRepublicAutopilotTests
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/test_republic_autopilot.py")
+    add_test(NAME OpenRepublicReplanningExternalController
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/replanning_controller.py"
+            "$<TARGET_FILE:OpenRepublicEconomyHost>")
+    set_tests_properties(OpenRepublicReplanningExternalController PROPERTIES TIMEOUT 30)
+    add_test(NAME EconomyCheckpointClient
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/test_economy_checkpoint.py")
+    add_test(NAME EconomyCheckpointExternalController
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_controller.py"
+            "$<TARGET_FILE:OpenRepublicEconomyHost>")
+    set_tests_properties(EconomyCheckpointExternalController PROPERTIES TIMEOUT 30)
+    add_test(NAME EconomyCommandHistoryExternalController
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/command_history_controller.py"
+            "$<TARGET_FILE:OpenRepublicEconomyHost>")
+    set_tests_properties(EconomyCommandHistoryExternalController PROPERTIES TIMEOUT 90)
+    if(TARGET OpenRepublic)
+        add_test(NAME EconomyDesktopCheckpointArguments
+            COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/desktop_checkpoint_arguments.py"
+                "$<TARGET_FILE:OpenRepublic>")
+        set_tests_properties(EconomyDesktopCheckpointArguments PROPERTIES TIMEOUT 60)
+    endif()
 endif()

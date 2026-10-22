@@ -1,11 +1,13 @@
 #pragma once
 
 #include "openrepublic/economy_api/economy_api.h"
+#include "openrepublic/economy/checkpoint.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -15,6 +17,8 @@ constexpr std::uint32_t ProtocolVersion = 0;
 constexpr std::size_t MaxRequestLineBytes = 64 * 1024;
 constexpr std::size_t MaxJsonNesting = 16;
 constexpr std::size_t MaxJsonNodes = 4096;
+constexpr std::size_t MaxCheckpointBytes = economy::MaxCheckpointBytes;
+constexpr std::size_t MaxCheckpointChunkBytes = 16 * 1024;
 // The economy host is long-lived behind the local HTTP bridge. Keep a finite
 // lifetime bound while allowing multi-day interactive sessions at UI poll rates.
 constexpr std::size_t MaxRequestsPerProcess = 10'000'000;
@@ -52,6 +56,13 @@ private:
   RulesBuilder rulesBuilder_;
   std::vector<std::unique_ptr<economy::Catalog>> retiredCatalogs_;
   std::vector<std::pair<std::uint64_t, std::string>> rulesHistory_;
+  struct CheckpointCache {
+    std::string id;
+    std::string text;
+    std::uint64_t revision{}, tick{};
+  };
+  std::optional<CheckpointCache> checkpointCache_;
+  std::uint64_t nextCheckpointCounter_{1};
 };
 
 } // namespace openrepublic::economy_host

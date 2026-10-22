@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <limits>
 #include <random>
+#include <queue>
 #include <set>
 #include <unordered_set>
 #include <vector>
@@ -240,6 +241,14 @@ std::string Error(economy_api::ErrorCode e) {
     return "step_limit_exceeded";
   case E::CommandHandleExhausted:
     return "command_handle_exhausted";
+  case E::PersistenceFailed:
+    return "persistence_failed";
+  case E::CommandQueueExhausted:
+    return "command_queue_exhausted";
+  case E::CommandExpired:
+    return "command_expired";
+  case E::RevisionExhausted:
+    return "revision_exhausted";
   }
   return "unknown_api_error";
 }
@@ -294,6 +303,8 @@ std::string Failure(economy::CommandFailure e) {
     return "save_invalid";
   case F::ParseInvalid:
     return "parse_invalid";
+  case F::CargoInTransit:
+    return "cargo_in_transit";
   }
   return "unknown_failure";
 }
@@ -305,6 +316,8 @@ std::string State(economy::CommandState s) {
     return "accepted";
   case economy::CommandState::Rejected:
     return "rejected";
+  case economy::CommandState::Expired:
+    return "expired";
   default:
     return "unknown";
   }
@@ -397,6 +410,12 @@ std::string Action(economy_api::Action action) {
     return "create_haul_order";
   case A::CancelHaulOrder:
     return "cancel_haul_order";
+  case A::RetargetHaulOrder:
+    return "retarget_haul_order";
+  case A::ExportCheckpoint:
+    return "export_checkpoint";
+  case A::CompactCommandHistory:
+    return "compact_command_history";
   case A::PollCommand:
     return "poll_command";
   case A::ReadEvents:
@@ -404,8 +423,38 @@ std::string Action(economy_api::Action action) {
   }
   return "unknown";
 }
+bool CanQuery(const economy_api::EconomyApi &api) {
+  const auto actions = api.DiscoverCapabilities().actions;
+  return std::find(actions.begin(), actions.end(), economy_api::Action::QueryWorld) != actions.end();
+}
+std::string Base64(std::string_view bytes) {
+  static constexpr char alphabet[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string encoded;
+  encoded.reserve(((bytes.size() + 2) / 3) * 4);
+  for (std::size_t i = 0; i < bytes.size(); i += 3) {
+    const auto first = static_cast<unsigned char>(bytes[i]);
+    const auto second = i + 1 < bytes.size() ? static_cast<unsigned char>(bytes[i + 1]) : 0;
+    const auto third = i + 2 < bytes.size() ? static_cast<unsigned char>(bytes[i + 2]) : 0;
+    const std::uint32_t block = (static_cast<std::uint32_t>(first) << 16) |
+                                (static_cast<std::uint32_t>(second) << 8) |
+                                static_cast<std::uint32_t>(third);
+    encoded.push_back(alphabet[(block >> 18) & 0x3f]);
+    encoded.push_back(alphabet[(block >> 12) & 0x3f]);
+    encoded.push_back(i + 1 < bytes.size() ? alphabet[(block >> 6) & 0x3f] : '=');
+    encoded.push_back(i + 2 < bytes.size() ? alphabet[block & 0x3f] : '=');
+  }
+  return encoded;
+}
 Json Cell(economy::Cell c) {
   return Json{{"x", c.x}, {"z", c.z}};
+}
+Json CommandHistory(const economy::CommandHistorySnapshot &history) {
+  return Json{{"version", 1},
+              {"firstRetainedCommandId", std::to_string(history.firstRetainedCommandId)},
+              {"nextCommandId", std::to_string(history.nextCommandId)},
+              {"retainedTerminalResults", std::to_string(history.retainedTerminalResults)},
+              {"pendingCommands", std::to_string(history.pendingCommands)}};
 }
 Json Catalog(const economy_api::CatalogView &c) {
   Json resources = Json::array(), buildings = Json::array(), vehicles = Json::array();
@@ -481,7 +530,8 @@ Json World(const economy_api::WorldView &w) {
   return Json{{"apiVersion", w.apiVersion},     {"revision", std::to_string(w.revision)},
               {"tick", std::to_string(w.tick)}, {"stateHash", std::to_string(w.stateHash)},
               {"buildings", buildings},         {"roads", roads},
-              {"vehicles", vehicles},           {"orders", orders}};
+              {"vehicles", vehicles},           {"orders", orders},
+              {"commandHistory", CommandHistory(w.commandHistory)}};
 }
 Json Result(const Json &id, Json value) {
   return Json{{"id", id}, {"protocolVersion", ProtocolVersion}, {"ok", true}, {"result", value}};
@@ -570,9 +620,9 @@ std::string Dispatcher::HandleLine(std::string_view line) {
       return invalid(message);
     const Json roles = Json::array({"observer", "controller"}), control = Json::array({"controller"});
     Json methods = Json::array();
-    for (const char *name : {"hello", "capabilities", "catalog", "world", "explain", "advise", "rules_history", "poll", "events"})
+    for (const char *name : {"hello", "capabilities", "catalog", "world", "explain", "advise", "rules_history", "poll", "events", "begin_checkpoint", "read_checkpoint"})
       methods.push_back(Json{{"name", name}, {"roles", roles}});
-    for (const char *name : {"submit", "step"})
+    for (const char *name : {"submit", "step", "compact_history"})
       methods.push_back(Json{{"name", name}, {"roles", control}});
     if (allowShutdown_)
       methods.push_back(Json{{"name", "shutdown"}, {"roles", control}});
@@ -590,7 +640,12 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                                {"maxJsonNodes", MaxJsonNodes},
                                {"maxStepTicks", economy_api::MaxStepTicks},
                                {"maxEntityPageSize", economy_api::MaxEntityPageSize},
-                               {"maxEventPageSize", economy_api::MaxEventPageSize}}},
+                               {"maxEventPageSize", economy_api::MaxEventPageSize},
+                               {"maxCheckpointBytes", MaxCheckpointBytes},
+                               {"maxCheckpointChunkBytes", MaxCheckpointChunkBytes},
+                               {"maxCommandHistoryRetention", economy::MaxCommandHistoryRetention}}},
+               {"commandHistoryVersion", 1},
+               {"commandHistoryPolicy", "explicit"},
                {"uint64Encoding", "decimal_string"}};
     if (!regionDescription_.empty())
       out["region"] = regionDescription_;
@@ -697,7 +752,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     std::set<std::tuple<economy::BuildingId, economy::BuildingId, std::string>> served;
     for (const auto &o : q.world.orders)
       served.insert({o.source, o.destination, o.resource});
-    Json needs = Json::array(), surplus = Json::array();
+    Json needs = Json::array(), surplus = Json::array(), retargets = Json::array();
     for (const auto &consumer : q.world.buildings) {
       const auto found = types.find(consumer.type);
       if (found == types.end() || found->second->recipes.empty())
@@ -775,11 +830,231 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                                  {"note", "output_full and nothing here consumes it"}});
       }
     }
+    bool retargetsTruncated = false;
+    if (q.error == economy_api::ErrorCode::None && catalog.error == economy_api::ErrorCode::None) {
+      using CellKey = std::pair<std::int32_t, std::int32_t>;
+      using ReservationKey = std::pair<economy::BuildingId, std::string>;
+      auto key = [](economy::Cell cell) { return CellKey{cell.x, cell.z}; };
+      std::map<CellKey, std::vector<CellKey>> roadGraph;
+      for (const auto &road : q.world.roads) {
+        if (!road.enabled)
+          continue;
+        const auto dx = std::llabs(static_cast<long long>(road.a.x) - road.b.x);
+        const auto dz = std::llabs(static_cast<long long>(road.a.z) - road.b.z);
+        if (dx + dz != 1)
+          continue;
+        roadGraph[key(road.a)].push_back(key(road.b));
+        roadGraph[key(road.b)].push_back(key(road.a));
+      }
+      for (auto &entry : roadGraph) {
+        auto &neighbors = entry.second;
+        std::sort(neighbors.begin(), neighbors.end());
+        neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
+      }
+      auto reachableDistances = [&](economy::Cell start) {
+        std::map<CellKey, std::uint64_t> distances;
+        std::queue<CellKey> pending;
+        const auto startKey = key(start);
+        distances.emplace(startKey, 0);
+        pending.push(startKey);
+        while (!pending.empty()) {
+          const auto at = pending.front();
+          pending.pop();
+          const auto neighbors = roadGraph.find(at);
+          if (neighbors == roadGraph.end())
+            continue;
+          for (const auto &next : neighbors->second) {
+            if (distances.emplace(next, distances.at(at) + 1).second)
+              pending.push(next);
+          }
+        }
+        return distances;
+      };
+      auto addSaturated = [](std::uint64_t left, std::uint64_t right) {
+        return right > std::numeric_limits<std::uint64_t>::max() - left
+                   ? std::numeric_limits<std::uint64_t>::max()
+                   : left + right;
+      };
+
+      // Loaded cargo is already committed to its current destination. Reserve it before
+      // planning alternatives, then reserve each selected suggestion for later orders.
+      std::map<ReservationKey, std::uint64_t> inboundReservations, suggestedReservations;
+      std::map<ReservationKey, std::vector<const economy_api::OrderView *>> inboundOrders;
+      for (const auto &order : q.world.orders) {
+        if (order.cargo == 0)
+          continue;
+        auto &reserved = inboundReservations[{order.destination, order.resource}];
+        reserved = addSaturated(reserved, order.cargo);
+        inboundOrders[{order.destination, order.resource}].push_back(&order);
+      }
+      auto claimedPairs = served;
+      std::vector<const economy_api::OrderView *> stalledOrders;
+      for (const auto &order : q.world.orders) {
+        if (order.state != economy::HaulState::Waiting || order.cargo == 0 ||
+            order.failure != economy::HaulFailure::DestinationFull)
+          continue;
+        const auto currentDestination = std::find_if(q.world.buildings.begin(), q.world.buildings.end(),
+            [&](const auto &building) { return building.id == order.destination; });
+        if (currentDestination != q.world.buildings.end()) {
+          const auto storage = std::find_if(currentDestination->inventory.begin(), currentDestination->inventory.end(),
+              [&](const auto &item) { return item.resource == order.resource; });
+          if (storage != currentDestination->inventory.end() && storage->amount <= storage->capacity) {
+            const auto key = ReservationKey{order.destination, order.resource};
+            std::uint64_t otherInbound = 0;
+            for (const auto *inbound : inboundOrders[key])
+              if (inbound->id != order.id)
+                otherInbound = addSaturated(otherInbound, inbound->cargo);
+            const auto freeCapacity = storage->capacity - storage->amount;
+            if (otherInbound <= freeCapacity && order.cargo <= freeCapacity - otherInbound)
+              continue; // A rule reload or inventory change made the reported stall stale.
+          }
+        }
+        stalledOrders.push_back(&order);
+      }
+      std::sort(stalledOrders.begin(), stalledOrders.end(),
+                [](const auto *left, const auto *right) { return left->id < right->id; });
+
+      std::map<CellKey, std::map<CellKey, std::uint64_t>> distanceCache;
+      auto distancesFrom = [&](economy::Cell start) -> const std::map<CellKey, std::uint64_t> & {
+        const auto startKey = key(start);
+        auto found = distanceCache.find(startKey);
+        if (found == distanceCache.end())
+          found = distanceCache.emplace(startKey, reachableDistances(start)).first;
+        return found->second;
+      };
+      constexpr std::size_t MaxRetargetAdviceSuggestions = 32;
+      for (const auto *order : stalledOrders) {
+        if (retargets.size() == MaxRetargetAdviceSuggestions) {
+          // The flag reports qualifying stalled orders left unplanned; it does not promise
+          // that each unexamined order has a safe reachable destination.
+          retargetsTruncated = true;
+          break;
+        }
+        const auto &distances = distancesFrom(order->vehicleCell);
+        std::vector<std::pair<std::uint64_t, const economy_api::BuildingView *>> candidates;
+        for (const auto &destination : q.world.buildings) {
+          if (destination.id == order->source || destination.id == order->destination)
+            continue;
+          const auto destinationType = types.find(destination.type);
+          if (destinationType == types.end())
+            continue;
+          const auto storage = std::find_if(destination.inventory.begin(), destination.inventory.end(),
+              [&](const auto &item) { return item.resource == order->resource; });
+          if (storage == destination.inventory.end() || storage->amount > storage->capacity)
+            continue;
+          const auto accessX = destination.cell.x +
+              static_cast<std::int32_t>((destinationType->second->width - 1) / 2);
+          const auto accessZ = destination.cell.z - 1;
+          const auto distance = distances.find({accessX, accessZ});
+          if (distance == distances.end())
+            continue;
+          const auto reservationKey = ReservationKey{destination.id, order->resource};
+          auto reserved = inboundReservations[reservationKey];
+          reserved = addSaturated(reserved, suggestedReservations[reservationKey]);
+          const auto freeCapacity = storage->capacity - storage->amount;
+          if (reserved > freeCapacity || order->cargo > freeCapacity - reserved)
+            continue;
+          const auto triple = std::make_tuple(order->source, destination.id, order->resource);
+          if (claimedPairs.count(triple))
+            continue;
+          candidates.push_back({distance->second, &destination});
+        }
+        std::sort(candidates.begin(), candidates.end(), [](const auto &left, const auto &right) {
+          if (left.first != right.first)
+            return left.first < right.first;
+          return left.second->id < right.second->id;
+        });
+        if (candidates.empty())
+          continue;
+        const auto *destination = candidates.front().second;
+        const auto triple = std::make_tuple(order->source, destination->id, order->resource);
+        claimedPairs.insert(triple);
+        auto &reserved = suggestedReservations[{destination->id, order->resource}];
+        reserved = addSaturated(reserved, order->cargo);
+        retargets.push_back(Json{{"orderId", order->id},
+                                {"vehicleId", order->vehicle},
+                                {"resource", order->resource},
+                                {"cargo", std::to_string(order->cargo)},
+                                {"destination", destination->id},
+                                {"distanceCells", candidates.front().first},
+                                {"command", Json{{"kind", "retarget_haul_order"},
+                                                  {"orderId", order->id},
+                                                  {"destination", destination->id}}}});
+      }
+    }
     out = Json{{"errorCode", Error(q.error)},
                {"revision", std::to_string(q.world.revision)},
                {"tick", std::to_string(q.world.tick)},
                {"unservedInputs", needs},
-               {"unconsumedSurplus", surplus}};
+               {"unconsumedSurplus", surplus},
+               {"retargets", retargets},
+               {"retargetsTruncated", retargetsTruncated}};
+  } else if (method == "begin_checkpoint") {
+    if (!Fields(req, {"revision"}, message))
+      return invalid(message);
+    std::uint64_t revision{};
+    if (!U64(req, "revision", revision, message))
+      return invalid(message);
+    if (nextCheckpointCounter_ == 0) {
+      out = Json{{"errorCode", "persistence_failed"}};
+    } else {
+      const auto checkpoint = api_->ExportCheckpoint(revision);
+      if (checkpoint.error != economy_api::ErrorCode::None) {
+        out = Json{{"errorCode", Error(checkpoint.error)}};
+        if (!checkpoint.message.empty())
+          out["message"] = checkpoint.message;
+      } else if (checkpoint.text.empty() || checkpoint.text.size() > MaxCheckpointBytes) {
+        out = Json{{"errorCode", "persistence_failed"}};
+      } else {
+        const auto checkpointId = sessionId_ + "-checkpoint-" + std::to_string(nextCheckpointCounter_);
+        // Replace the one-entry cache only after every export and bound check succeeds.
+        checkpointCache_ = CheckpointCache{checkpointId, checkpoint.text,
+                                           checkpoint.revision, checkpoint.tick};
+        if (nextCheckpointCounter_ == std::numeric_limits<std::uint64_t>::max())
+          nextCheckpointCounter_ = 0;
+        else
+          ++nextCheckpointCounter_;
+        out = Json{{"errorCode", "none"},
+                   {"checkpointId", checkpointId},
+                   {"totalBytes", checkpoint.text.size()},
+                   {"revision", std::to_string(checkpoint.revision)},
+                   {"tick", std::to_string(checkpoint.tick)},
+                   {"maxChunkBytes", MaxCheckpointChunkBytes}};
+      }
+    }
+  } else if (method == "read_checkpoint") {
+    if (!Fields(req, {"checkpointId", "offset", "limit"}, message))
+      return invalid(message);
+    std::string checkpointId;
+    std::uint64_t offset{}, limit{};
+    if (!String(req, "checkpointId", checkpointId, message) ||
+        !Unsigned(req, "offset", MaxCheckpointBytes, offset, message) ||
+        !Unsigned(req, "limit", MaxCheckpointChunkBytes, limit, message))
+      return invalid(message);
+    if (checkpointId.empty())
+      return invalid("checkpointId must be a non-empty string");
+    if (limit == 0)
+      return invalid("limit must be at least 1");
+    if (!CanQuery(*api_)) {
+      out = Json{{"errorCode", "permission_denied"}};
+    } else if (!checkpointCache_.has_value() || checkpointCache_->id != checkpointId) {
+      out = Json{{"errorCode", "invalid_argument"}};
+    } else if (offset > checkpointCache_->text.size()) {
+      return invalid("offset exceeds checkpoint size");
+    } else {
+      const auto count = std::min<std::uint64_t>(limit, checkpointCache_->text.size() - offset);
+      const auto nextOffset = offset + count;
+      out = Json{{"errorCode", "none"},
+                 {"checkpointId", checkpointId},
+                 {"offset", offset},
+                 {"nextOffset", nextOffset},
+                 {"totalBytes", checkpointCache_->text.size()},
+                 {"hasMore", nextOffset < checkpointCache_->text.size()},
+                 {"dataBase64", Base64(std::string_view(checkpointCache_->text).substr(
+                     static_cast<std::size_t>(offset), static_cast<std::size_t>(count)))},
+                 {"revision", std::to_string(checkpointCache_->revision)},
+                 {"tick", std::to_string(checkpointCache_->tick)}};
+    }
   } else if (method == "rules_history") {
     // Every accepted `reload_rules` text with the tick it took effect at, so a replay can resend them.
     if (!Fields(req, {}, message))
@@ -799,6 +1074,19 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                {"state", State(p.result.state)}, {"failure", Failure(p.result.failure)},
                {"message", p.result.message},    {"buildingId", p.result.building},
                {"roadId", p.result.road},        {"orderId", p.result.order}};
+  } else if (method == "compact_history") {
+    if (!Fields(req, {"revision", "keepRecent"}, message))
+      return invalid(message);
+    std::uint64_t revision{}, keepRecent{};
+    if (!U64(req, "revision", revision, message) ||
+        !Unsigned(req, "keepRecent", economy::MaxCommandHistoryRetention, keepRecent, message))
+      return invalid(message);
+    const auto compacted = api_->CompactCommandHistory(revision, static_cast<std::uint32_t>(keepRecent));
+    out = Json{{"errorCode", Error(compacted.error)},
+               {"removedResults", std::to_string(compacted.removedResults)},
+               {"expiredHandles", std::to_string(compacted.expiredHandles)},
+               {"revision", std::to_string(compacted.revision)},
+               {"commandHistory", CommandHistory(compacted.history)}};
   } else if (method == "step") {
     if (!Fields(req, {"ticks"}, message))
       return invalid(message);
@@ -894,6 +1182,14 @@ std::string Dispatcher::HandleLine(std::string_view line) {
       if (!Unsigned(c, "orderId", UINT32_MAX, id1, message))
         return invalid(message);
       s = api_->CancelHaulOrder(revision, static_cast<economy::OrderId>(id1));
+    } else if (kind == "retarget_haul_order") {
+      if (!NestedFields(c, {"kind", "orderId", "destination"}, message))
+        return invalid(message);
+      if (!Unsigned(c, "orderId", UINT32_MAX, id1, message) ||
+          !Unsigned(c, "destination", UINT32_MAX, id2, message))
+        return invalid(message);
+      s = api_->RetargetHaulOrder(revision, static_cast<economy::OrderId>(id1),
+                                 static_cast<economy::BuildingId>(id2));
     } else
       return invalid("unknown command kind");
     out =

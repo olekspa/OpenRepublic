@@ -15,6 +15,8 @@ namespace openrepublic::compat {
 struct RegionImportOptions {
     double cellSizeMeters = 4.0;
     double radiusMeters = 400.0;
+    // Caps diagnostic text retained in RegionImportReport. Counters remain exact.
+    std::size_t maxDiagnosticNotes = 32;
 };
 
 // Plain map position data; this adapter does not depend on a map file format.
@@ -38,6 +40,7 @@ struct RegionImportReport {
     std::size_t placed{};
     std::size_t skippedUnknownType{};
     std::size_t skippedOverlap{};
+    std::size_t skippedAccessConflict{};
     std::size_t skippedOutOfBounds{};
     double originX{};
     double originZ{};

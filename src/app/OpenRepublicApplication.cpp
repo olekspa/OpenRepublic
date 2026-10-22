@@ -24,6 +24,8 @@
 #endif
 
 #include <windows.h>
+#include <commdlg.h>
+#include "openrepublic/runtime/checkpoint_file.h"
 
 #include <algorithm>
 #include <array>
@@ -402,6 +404,14 @@ namespace openrepublic
 		mapRegionPreview = true;
 	}
 
+	void OpenRepublicApplication::SetEconomyCheckpoint(economy::RestoredCheckpoint checkpoint, bool freshWorld)
+	{
+		nativeEconomyCheckpoint = std::move(checkpoint);
+		nativeEconomyFreshWorld = freshWorld;
+		nativeEconomyCheckpointMode = nativeEconomyCheckpoint.catalog && nativeEconomyCheckpoint.world;
+		mapRegionPreview = nativeEconomyCheckpointMode;
+	}
+
 	void OpenRepublicApplication::SetMapShowcaseCapture(std::filesystem::path outputPath, bool enhancedLook,
 		float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale)
 	{
@@ -651,7 +661,39 @@ namespace openrepublic
 
 		// Synthetic OpenRepublic-authored content only. The view follows snapshots;
 		// no Wicked Engine scene object owns or changes simulation state.
-		if (syntheticRegionFixtureMode)
+		if (nativeEconomyCheckpointMode)
+		{
+			std::string error;
+			const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
+			if (nativeEconomyScene.Initialize(previewWorld, snapshot, *nativeEconomyCheckpoint.catalog,
+				regionInstances, error))
+			{
+				nativeEconomyPresentationValid = true;
+				nmfPreviewCameraTarget = nativeEconomyScene.CameraTarget();
+				nmfPreviewCameraDistance = nativeEconomyScene.CameraDistance();
+				nmfPreviewLoaded = true;
+				regionEconomyApi = std::make_unique<economy_api::EconomyApi>(
+					*nativeEconomyCheckpoint.world, economy_api::Permissions{ true, true });
+				regionEconomyDescription = nativeEconomyFreshWorld
+					? "Native economy sandbox — authored catalog, 64 x 64 cells"
+					: "Native economy checkpoint — grid view";
+				uiNotice = nativeEconomyFreshWorld
+					? "Choose a building and Place building, then click a ground cell. Commands apply when you step."
+					: "Restored native economy; pending commands apply on the next step. Display scale: 4 units per cell.";
+				RefreshRegionEconomy();
+				UpdateRegionEconomyPresentation();
+				StartLocalEconomyEndpoint();
+				wilog("[OpenRepublic] Native economy: tick %llu, revision %llu, %zu buildings, %zu roads.",
+					static_cast<unsigned long long>(snapshot.tick), static_cast<unsigned long long>(snapshot.revision),
+					snapshot.buildings.size(), snapshot.roads.size());
+			}
+			else
+			{
+				uiNotice = "Native checkpoint scene could not be created: " + error;
+				wilog("[OpenRepublic] %s", uiNotice.c_str());
+			}
+		}
+		else if (syntheticRegionFixtureMode)
 		{
 			std::string error;
 			if (preview::CreateSyntheticRegionFixture(previewWorld, syntheticRegionData, error))
@@ -1457,6 +1499,11 @@ namespace openrepublic
 				renderPath->camera->zNearP = 0.5f;
 				renderPath->camera->zFarP = 40000.0f;
 			}
+			if (nativeEconomyCheckpointMode)
+			{
+				renderPath->camera->zNearP = std::max(0.01f, nmfPreviewCameraDistance / 100000.0f);
+				renderPath->camera->zFarP = std::max(1000.0f, nmfPreviewCameraDistance * 4.0f);
+			}
 			renderPath->camera->UpdateCamera();
 		}
 
@@ -1477,19 +1524,27 @@ namespace openrepublic
 			}
 			if (economyOverlay || regionEconomyApi)
 			{
+				regionStepOneButton.Create("RegionEconomyStepOneTickButton");
+				regionStepOneButton.SetText("Step 1 tick");
+				StyleButton(regionStepOneButton);
+				regionStepOneButton.SetSize(XMFLOAT2(132, 28));
+				regionStepOneButton.SetPos(XMFLOAT2(18, 18));
+				regionStepOneButton.OnClick([this](const wi::gui::EventArgs&) { if (nativeEconomyCheckpointMode) { nativeEconomyRunning = false; nativeEconomyRunClock.Reset(); nativeRunPauseButton.SetText("Run"); } QueueRegionStep(1); });
+				gui.AddWidget(&regionStepOneButton);
+
 				regionStepButton.Create("RegionEconomyStepButton");
 				regionStepButton.SetText("Step 24 ticks");
 				StyleButton(regionStepButton);
 				regionStepButton.SetSize(XMFLOAT2(132, 28));
-				regionStepButton.SetPos(XMFLOAT2(18, 18));
-				regionStepButton.OnClick([this](const wi::gui::EventArgs&) { QueueRegionStep(); });
+				regionStepButton.SetPos(XMFLOAT2(156, 18));
+				regionStepButton.OnClick([this](const wi::gui::EventArgs&) { if (nativeEconomyCheckpointMode) { nativeEconomyRunning = false; nativeEconomyRunClock.Reset(); nativeRunPauseButton.SetText("Run"); } QueueRegionStep(24); });
 				gui.AddWidget(&regionStepButton);
 
 				regionToggleButton.Create("RegionEconomyToggleBuildingButton");
 				regionToggleButton.SetText("Toggle selected");
 				StyleButton(regionToggleButton);
 				regionToggleButton.SetSize(XMFLOAT2(132, 28));
-				regionToggleButton.SetPos(XMFLOAT2(156, 18));
+				regionToggleButton.SetPos(XMFLOAT2(294, 18));
 				regionToggleButton.OnClick([this](const wi::gui::EventArgs&) { QueueRegionBuildingToggle(); });
 				gui.AddWidget(&regionToggleButton);
 
@@ -1497,7 +1552,7 @@ namespace openrepublic
 				regionHaulSourceButton.SetText("Set haul source");
 				StyleButton(regionHaulSourceButton);
 				regionHaulSourceButton.SetSize(XMFLOAT2(132, 28));
-				regionHaulSourceButton.SetPos(XMFLOAT2(294, 18));
+				regionHaulSourceButton.SetPos(XMFLOAT2(432, 18));
 				regionHaulSourceButton.OnClick([this](const wi::gui::EventArgs&) { SetRegionHaulSource(); });
 				gui.AddWidget(&regionHaulSourceButton);
 
@@ -1505,12 +1560,84 @@ namespace openrepublic
 				regionHaulButton.SetText("Haul to selected");
 				StyleButton(regionHaulButton);
 				regionHaulButton.SetSize(XMFLOAT2(132, 28));
-				regionHaulButton.SetPos(XMFLOAT2(432, 18));
+				regionHaulButton.SetPos(XMFLOAT2(570, 18));
 				regionHaulButton.OnClick([this](const wi::gui::EventArgs&) { QueueRegionHaul(); });
 				gui.AddWidget(&regionHaulButton);
+				if (nativeEconomyCheckpointMode)
+				{
+					nativeFrameButton.Create("NativeEconomyFrameWorldButton");
+					nativeFrameButton.SetText("Frame world");
+					StyleButton(nativeFrameButton);
+					nativeFrameButton.SetSize(XMFLOAT2(132, 28));
+					nativeFrameButton.SetPos(XMFLOAT2(708, 18));
+					nativeFrameButton.OnClick([this](const wi::gui::EventArgs&) { FrameNativeEconomyWorld(); });
+					gui.AddWidget(&nativeFrameButton);
+					nativeStepManyButton.Create("NativeEconomyStepManyButton");
+					nativeStepManyButton.SetText("Step 240 ticks");
+					StyleButton(nativeStepManyButton);
+					nativeStepManyButton.SetSize(XMFLOAT2(132, 28));
+					nativeStepManyButton.OnClick([this](const wi::gui::EventArgs&) { nativeEconomyRunning = false; nativeEconomyRunClock.Reset(); nativeRunPauseButton.SetText("Run"); QueueRegionStep(240); });
+					gui.AddWidget(&nativeStepManyButton);
+					nativeRunPauseButton.Create("NativeEconomyRunPauseButton");
+					nativeRunPauseButton.SetText("Run");
+					StyleButton(nativeRunPauseButton);
+					nativeRunPauseButton.SetSize(XMFLOAT2(132, 28));
+					nativeRunPauseButton.OnClick([this](const wi::gui::EventArgs&) { ToggleNativeRunPause(); });
+					gui.AddWidget(&nativeRunPauseButton);
+					nativeDetailsButton.Create("NativeEconomyDetailsButton");
+					nativeDetailsButton.SetText("Details");
+					StyleButton(nativeDetailsButton);
+					nativeDetailsButton.SetSize(XMFLOAT2(132, 28));
+					nativeDetailsButton.OnClick([this](const wi::gui::EventArgs&) {
+						nativeDetailsExpanded = !nativeDetailsExpanded;
+						nativeDetailsButton.SetText(nativeDetailsExpanded ? "Compact" : "Details");
+						UpdateRegionStatus();
+					});
+					gui.AddWidget(&nativeDetailsButton);
+					nativeSaveButton.Create("NativeEconomySaveCheckpointButton");
+					nativeSaveButton.SetText("Save checkpoint");
+					StyleButton(nativeSaveButton);
+					nativeSaveButton.SetSize(XMFLOAT2(132, 28));
+					nativeSaveButton.SetTooltip("Pause and save a native checkpoint to a new file. Existing files are never overwritten.");
+					nativeSaveButton.OnClick([this](const wi::gui::EventArgs&) { SaveNativeCheckpoint(); });
+					gui.AddWidget(&nativeSaveButton);
+				}
+				if (nativeEconomyCheckpointMode)
+				{
+					nativeEconomyTools.Create(gui, nativeEconomyCheckpoint.world->GetCatalog(), {
+						[this] { BeginNativeBuildingPlacement(); },
+						[this] { BeginNativeRoadPlacement(); },
+						[this] { CancelNativeConstruction(); },
+						[this] { QueueNativeRemoval(); },
+						[this] { QueueNativeOrderChange(true); },
+						[this] { QueueNativeOrderChange(false); },
+						[this] { QueueNativeRoadToggle(); } });
+					nativeToolsReady = true;
+					RefreshNativeHaulChoices();
+				}
+				else if (regionEconomyWorld && regionEconomyApi)
+				{
+					nativeDetailsButton.Create("RegionEconomyDetailsButton");
+					nativeDetailsButton.SetText("Details");
+					StyleButton(nativeDetailsButton);
+					nativeDetailsButton.SetSize(XMFLOAT2(132, 28));
+					nativeDetailsButton.OnClick([this](const wi::gui::EventArgs&) {
+						nativeDetailsExpanded = !nativeDetailsExpanded;
+						nativeDetailsButton.SetText(nativeDetailsExpanded ? "Compact" : "Details");
+						UpdateRegionStatus();
+					});
+					gui.AddWidget(&nativeDetailsButton);
+					nativeEconomyTools.Create(gui, regionEconomyWorld->GetCatalog(), {
+						{}, {}, {}, {},
+						[this] { QueueNativeOrderChange(true); },
+						[this] { QueueNativeOrderChange(false); }, {} }, false);
+					nativeToolsReady = true;
+					RefreshNativeHaulChoices();
+				}
 			}
 			simulationStatus.SetPos(XMFLOAT2(18, 54));
-			simulationStatus.SetSize(XMFLOAT2(1100, 96));
+			simulationStatus.scrollbar.SetEnabled(true);
+			simulationStatus.SetSize(XMFLOAT2(864, 96));
 			regionWorldStatus = economyOverlay
 				? "Economy bridge connected; waiting for the first world snapshot..."
 				: (regionEconomyApi ? regionWorldStatus : uiNotice);
@@ -1527,6 +1654,10 @@ namespace openrepublic
 
 	void OpenRepublicApplication::Update(float dt)
 	{
+		// Capture pre-update input ownership: a popup dismissal must not also click
+		// through to construction or consume Escape in the world below it.
+		const bool nativeInputWasActive = nativeToolsReady &&
+			(nativeEconomyTools.HasActiveInput() || (renderPath && renderPath->GetGUI().IsTyping()));
 		wi::Application::Update(dt);
 		if (nmfCaptureMode || mapShowcaseCaptureMode)
 		{
@@ -1562,6 +1693,28 @@ namespace openrepublic
 			}
 		}
 		PumpLocalEconomyRequests();
+		if (nativeEconomyCheckpointMode && nativeEconomyRunning)
+		{
+			if (!nativeEconomyPresentationValid || !regionEconomyApi)
+			{
+				nativeEconomyRunning = false;
+				nativeEconomyRunClock.Reset();
+				nativeRunPauseButton.SetText("Run");
+				uiNotice = "Run paused because the native scene or EconomyApi is unavailable; Frame world before continuing.";
+			}
+			else if (nativeEconomyRunClock.Advance(static_cast<double>(dt)) != 0)
+			{
+				const bool stepSucceeded = QueueRegionStep(1, true);
+				if (!stepSucceeded || !nativeEconomyPresentationValid)
+				{
+					nativeEconomyRunning = false;
+					nativeEconomyRunClock.Reset();
+					nativeRunPauseButton.SetText("Run");
+					if (!nativeEconomyPresentationValid) uiNotice = "Run paused because the native scene is stale; Frame world before continuing.";
+					UpdateRegionStatus();
+				}
+			}
+		}
 		if (economyOverlay && mapPlacement)
 		{
 			const double effectiveMapRadius = mapRadiusMeters > 0.0 ? mapRadiusMeters : 400.0;
@@ -1578,7 +1731,7 @@ namespace openrepublic
 			}
 			UpdateRegionStatus();
 		}
-		else if (regionEconomyApi && (mapPlacement || syntheticRegionFixtureMode))
+		else if (regionEconomyApi && (mapPlacement || syntheticRegionFixtureMode || nativeEconomyCheckpointMode))
 		{
 			UpdateRegionEconomyPresentation();
 			if (selectedRegionBuildingEntity != wi::ecs::INVALID_ENTITY &&
@@ -1627,14 +1780,28 @@ namespace openrepublic
 		const wi::primitive::Hitbox2D pointerHitbox(XMFLOAT2(pointer.x, pointer.y), XMFLOAT2(1, 1));
 		// GUI::HasFocus() includes passive labels. The status panel spans a large part
 		// of the viewport, so let world input pass through it while preserving the
-		// normal input guard for the actual buttons above it.
+		// normal input guard for buttons and an interactive overflow scrollbar.
 		const bool pointerOnStatusLabel = simulationStatus.IsVisible() &&
 			pointerHitbox.intersects(simulationStatus.hitBox);
-		const bool guiHasFocus = renderPath->GetGUI().HasFocus() && !pointerOnStatusLabel;
+		const bool statusScrollActive = simulationStatus.IsVisible() &&
+			simulationStatus.scrollbar.IsEnabled() && simulationStatus.scrollbar.IsScrollbarRequired() &&
+			(pointerOnStatusLabel || simulationStatus.scrollbar.scrollbar_state ==
+				wi::gui::ScrollBar::SCROLLBAR_GRABBED);
+		const bool nativeControlsHaveFocus = nativeToolsReady && (nativeInputWasActive ||
+			nativeEconomyTools.HasActiveInput() || renderPath->GetGUI().IsTyping() ||
+			nativeEconomyTools.PointerOnControls(XMFLOAT2(pointer.x, pointer.y)));
+		const bool guiHasFocus = nativeControlsHaveFocus || statusScrollActive ||
+			(renderPath->GetGUI().HasFocus() && !pointerOnStatusLabel);
+		if (nativeEconomyCheckpointMode) UpdateNativeConstructionPreview(!guiHasFocus);
 		if (!guiHasFocus && wi::input::Press(wi::input::KEYBOARD_BUTTON_ESCAPE))
 		{
 			if (mapRegionPreview)
 			{
+				if (nativeConstructionMode != NativeConstructionMode::None)
+				{
+					CancelNativeConstruction();
+					return;
+				}
 				selectedRegionBuildingEntity = wi::ecs::INVALID_ENTITY;
 				selectedRegionBuildingId.reset();
 				regionHaulSourceId.reset();
@@ -1712,6 +1879,7 @@ namespace openrepublic
 			return;
 		}
 
+		bool dispatched = false;
 		constexpr std::size_t MaxRequestsPerUpdate = 8;
 		for (std::size_t handled = 0; handled < MaxRequestsPerUpdate; ++handled)
 		{
@@ -1723,6 +1891,7 @@ namespace openrepublic
 
 			try
 			{
+				dispatched = true;
 				std::string response = localEconomyDispatcher->HandleLine(request.line);
 				if (!localEconomyPipeEndpoint->Complete(request.token, std::move(response)))
 				{
@@ -1737,6 +1906,37 @@ namespace openrepublic
 				wilog("[OpenRepublic] Local economy pipe request dispatch failed unexpectedly.");
 			}
 		}
+		if (dispatched && regionEconomyApi)
+		{
+			const auto latest = regionEconomyApi->QueryWorld();
+			if (latest.error == economy_api::ErrorCode::None &&
+				(!regionEconomySnapshot || latest.world.revision != regionEconomySnapshot->revision))
+			{
+				RefreshRegionEconomy();
+			}
+		}
+	}
+
+	void OpenRepublicApplication::StartLocalEconomyEndpoint()
+	{
+		if (localEconomyPipeName.empty() || !regionEconomyApi || localEconomyPipeEndpoint)
+			return;
+		localEconomyDispatcher = std::make_unique<economy_host::Dispatcher>(
+			economy_host::Role::Controller, *regionEconomyApi, true, false);
+		localEconomyDispatcher->SetRegionDescription(regionEconomyDescription);
+		auto endpoint = std::make_unique<economy_host::LocalEconomyPipeEndpoint>(localEconomyPipeName);
+		std::string error;
+		if (!endpoint->Start(error))
+		{
+			uiNotice = "Trusted-local controller endpoint could not start: " + error;
+			localEconomyDispatcher.reset();
+		}
+		else
+		{
+			localEconomyPipeEndpoint = std::move(endpoint);
+			uiNotice = "Native economy ready; trusted-local controller endpoint is listening. Choose a building to place, or select haul endpoints.";
+		}
+		wilog("[OpenRepublic] %s", uiNotice.c_str());
 	}
 
 	std::string OpenRepublicApplication::GetOpenRepublicId(wi::ecs::Entity entity) const
@@ -1807,23 +2007,66 @@ namespace openrepublic
 			return;
 		}
 		std::ostringstream text;
+		if (nativeToolsReady)
+		{
+			LayoutNativeControls();
+			RefreshNativeHaulChoices();
+		}
 		text << regionWorldStatus;
+		if (nativeEconomyCheckpointMode)
+		{
+			text << (nativeEconomyPresentationValid ? "\nNative buildings shown: " : "\nScene is stale; selection disabled. Frame world can rebase. Buildings shown: ")
+				<< regionInstances.size();
+			if (nativeConstructionMode == NativeConstructionMode::Building)
+			{
+				const auto* type = nativeEconomyCheckpoint.world->GetCatalog().BuildingType(nativePlacementType);
+				text << "\nPlace " << (type ? type->name : "building") << ": click its minimum X/Z footprint cell; Esc cancels.";
+			}
+			else if (nativeConstructionMode == NativeConstructionMode::Road)
+			{
+				text << "\nRoad: choose two cells on one row or column (up to 64 segments); step to apply. Esc cancels.";
+				if (nativeRoadStart) text << " Start: (" << nativeRoadStart->x << ", " << nativeRoadStart->z << ").";
+			}
+			const auto orders = nativeEconomyCheckpoint.world->Snapshot().orders;
+			const auto chosen = nativeEconomyTools.SelectedOrder();
+			const auto order = std::find_if(orders.begin(), orders.end(),
+				[chosen](const auto& value) { return value.id == chosen; });
+			if (order != orders.end())
+			{
+				const char* issue = "none";
+				switch (order->failure) {
+				case economy::HaulFailure::NoRoute: issue = "no route"; break;
+				case economy::HaulFailure::SourceEmpty: issue = "source empty"; break;
+				case economy::HaulFailure::DestinationFull: issue = "destination full"; break;
+				case economy::HaulFailure::RoadDisabled: issue = "road disabled"; break;
+				default: break;
+				}
+				text << "\nHaul #" << order->id << ": OR-" << order->source << " -> OR-" << order->destination
+					<< "; truck #" << order->vehicle << "; cargo " << order->cargo << "; issue: " << issue
+					<< "\nTruck cell: (" << order->vehicleCell.x << ", " << order->vehicleCell.z << "). Select a building to retarget.";
+			}
+			if (nativeHoverCell) text << "\nGround cell: (" << nativeHoverCell->x << ", " << nativeHoverCell->z << "). Preview is a draft; placement validates on step.";
+		}
 		if (selectedRegionBuildingEntity != wi::ecs::INVALID_ENTITY)
 		{
 			const auto selected = GetRegionBuildingForInstance(selectedRegionBuildingEntity);
 			if (selected.has_value())
 			{
 				selectedRegionBuildingId = selected->id;
-				text << "\nSelected OR-" << selected->id << " " << selected->type
-					<< " | " << (selected->enabled ? "enabled" : "disabled");
-				text << " | " << selected->stallReason;
-				if (!selected->stallExplanation.empty()) text << ": " << selected->stallExplanation;
+				text << "\nSelected: OR-" << selected->id << " " << selected->type
+					<< " (" << (selected->enabled ? "enabled" : "disabled") << ")";
+				text << "\nStatus: " << selected->stallReason;
+				if (!selected->stallExplanation.empty()) text << " — " << selected->stallExplanation;
 				if (!selected->inventory.empty())
 				{
-					const auto formatUnits = [](std::uint64_t microUnits)
+					const auto formatUnits = [this](std::uint64_t amount)
 					{
-						std::string formatted = std::to_string(microUnits / 1000000);
-						const std::uint64_t fraction = microUnits % 1000000;
+						if (syntheticRegionFixtureMode || nativeEconomyCheckpointMode)
+						{
+							return std::to_string(amount);
+						}
+						std::string formatted = std::to_string(amount / 1000000);
+						const std::uint64_t fraction = amount % 1000000;
 						if (fraction != 0)
 						{
 							std::string decimal = std::to_string(fraction + 1000000).substr(1);
@@ -1832,12 +2075,24 @@ namespace openrepublic
 						}
 						return formatted;
 					};
-					text << " | inventory (units) ";
+					text << (nativeEconomyCheckpointMode ? "\nInventory (native amounts):" : "\nInventory (units):");
 					for (std::size_t i = 0; i < selected->inventory.size(); ++i)
 					{
-						if (i != 0) text << ", ";
-						text << selected->inventory[i].resource << " " << formatUnits(selected->inventory[i].amount)
+						text << "\n  " << selected->inventory[i].resource << " " << formatUnits(selected->inventory[i].amount)
 							<< "/" << formatUnits(selected->inventory[i].capacity);
+					}
+				}
+				if (nativeEconomyCheckpointMode)
+				{
+					const auto native = nativeEconomyCheckpoint.world->Snapshot();
+					const auto found = std::find_if(native.buildings.begin(), native.buildings.end(),
+						[&](const auto& b) { return b.id == selected->id; });
+					if (found != native.buildings.end())
+					{
+						const auto* type = nativeEconomyCheckpoint.world->GetCatalog().BuildingType(found->type);
+						for (std::size_t i = 0; type && i < found->recipes.size() && i < type->recipes.size(); ++i)
+							text << "\n" << type->recipes[i].name << ": " << found->recipes[i].completedCycles
+								<< " cycles, " << found->recipes[i].remainingTicks << " ticks remaining";
 					}
 				}
 			}
@@ -1850,13 +2105,48 @@ namespace openrepublic
 		{
 			text << "\nHaul source: OR-" << *regionHaulSourceId << " (select a destination and choose Haul to selected).";
 		}
-		if (!uiNotice.empty()) text << "\n" << uiNotice;
+		if (!uiNotice.empty() && !(nativeToolsReady && !nativeDetailsExpanded)) text << "\n" << uiNotice;
 		if (economyOverlay)
 		{
 			const std::string action = economyOverlay->GetActionStatus();
 			if (!action.empty()) text << "\n" << action;
 		}
-		simulationStatus.SetText(text.str());
+		std::string statusText = text.str();
+		if (nativeToolsReady && !nativeDetailsExpanded && ActiveOwnedEconomyWorld())
+		{
+			const auto snapshot = ActiveOwnedEconomyWorld()->Snapshot();
+			std::ostringstream compact;
+			if (!uiNotice.empty()) compact << uiNotice << "\n";
+			compact << "Tick " << snapshot.tick << " | " << snapshot.buildings.size() << " buildings | "
+				<< snapshot.roads.size() << " roads | " << snapshot.orders.size() << " hauls";
+			if (nativeEconomyCheckpointMode) compact << (nativeEconomyRunning ? " | running" : " | paused");
+			if (selectedRegionBuildingEntity != wi::ecs::INVALID_ENTITY)
+			{
+				const auto selected = GetRegionBuildingForInstance(selectedRegionBuildingEntity);
+				if (selected) compact << "\nSelected OR-" << selected->id << " " << selected->type << ": " << selected->stallReason;
+			}
+			statusText = compact.str();
+		}
+		simulationStatus.SetText(statusText);
+		if (renderPath)
+		{
+			const float viewportWidth = static_cast<float>(renderPath->GetLogicalWidth());
+			const float viewportHeight = static_cast<float>(renderPath->GetLogicalHeight());
+			const float statusWidth = std::max(240.0f, std::min(900.0f, viewportWidth - 36.0f));
+			const bool ownedStatus = nativeToolsReady && ActiveOwnedEconomyWorld();
+			const float statusHeightCap = ownedStatus ? (nativeDetailsExpanded ? 230.0f : 80.0f) : 420.0f;
+			const float availableHeight = std::max(60.0f, viewportHeight - (nativeToolsReady ? nativeStatusTop : 54.0f) - 24.0f);
+			const float targetStatusHeight = ownedStatus
+				? std::min(statusHeightCap, std::max(60.0f, viewportHeight - 36.0f))
+				: std::min(statusHeightCap, availableHeight);
+			const float statusTop = ownedStatus ? std::max(18.0f, viewportHeight - targetStatusHeight - 18.0f) : (nativeToolsReady ? nativeStatusTop : 54.0f);
+			simulationStatus.SetPos(XMFLOAT2(18, statusTop));
+			simulationStatus.font.params.h_wrap = statusWidth - simulationStatus.margin_left - simulationStatus.margin_right;
+			const float measuredTextHeight = wi::font::TextHeight(statusText, simulationStatus.font.params);
+			const float desiredHeight = measuredTextHeight + 4.0f + simulationStatus.margin_top + simulationStatus.margin_bottom;
+			const float statusHeight = std::max(60.0f, std::min(statusHeightCap, desiredHeight));
+			simulationStatus.SetSize(XMFLOAT2(statusWidth, statusHeight));
+		}
 	}
 
 	std::optional<openrepublic::preview::EconomyBuildingStatus>
@@ -1870,23 +2160,31 @@ namespace openrepublic
 		{
 			return std::nullopt;
 		}
+		if (nativeEconomyCheckpointMode && !nativeEconomyPresentationValid) return std::nullopt;
 		const auto rendered = std::find_if(regionInstances.begin(), regionInstances.end(),
 			[&](const auto& candidate) { return candidate.object == instance; });
 		if (rendered == regionInstances.end())
 		{
 			return std::nullopt;
 		}
-		const auto identity = std::find_if(regionEconomyImport.placedSourceBuildings.begin(),
+		std::optional<economy::BuildingId> exactId;
+		if (nativeEconomyCheckpointMode)
+		{
+			exactId = nativeEconomyScene.BuildingForEntity(instance);
+		}
+		else
+		{
+			const auto identity = std::find_if(regionEconomyImport.placedSourceBuildings.begin(),
 			regionEconomyImport.placedSourceBuildings.end(), [&](const auto& candidate) {
 				return candidate.sourcePlacementKey == rendered->sourcePlacementIndex;
 			});
-		if (identity == regionEconomyImport.placedSourceBuildings.end())
-		{
-			return std::nullopt;
+			if (identity != regionEconomyImport.placedSourceBuildings.end())
+				exactId = identity->buildingId;
 		}
+		if (!exactId) return std::nullopt;
 		const auto building = std::find_if(regionEconomySnapshot->buildings.begin(),
 			regionEconomySnapshot->buildings.end(), [&](const auto& candidate) {
-				return candidate.id == identity->buildingId;
+				return candidate.id == *exactId;
 			});
 		if (building == regionEconomySnapshot->buildings.end())
 		{
@@ -1926,13 +2224,16 @@ namespace openrepublic
 		}
 		regionEconomySnapshot = queried.world;
 		lastPresentedRegionRevision.reset();
+		std::size_t applied = 0, rejected = 0, unavailable = 0;
+		std::string lastFailure;
 
 		for (auto it = regionPendingCommandHandles.begin(); it != regionPendingCommandHandles.end();)
 		{
 			const auto polled = regionEconomyApi->PollCommand(*it);
 			if (polled.error != openrepublic::economy_api::ErrorCode::None)
 			{
-				uiNotice = "Economy command poll failed with API error " +
+				++unavailable;
+				lastFailure = "Economy command poll failed with API error " +
 					std::to_string(static_cast<unsigned>(polled.error)) + ".";
 				it = regionPendingCommandHandles.erase(it);
 				continue;
@@ -1944,13 +2245,21 @@ namespace openrepublic
 			}
 			if (polled.result.state == economy::CommandState::Accepted)
 			{
-				uiNotice = "Economy command applied at tick " + std::to_string(regionEconomySnapshot->tick) + ".";
+				++applied;
 			}
 			else
 			{
-				uiNotice = "Economy command rejected: " + polled.result.message;
+				++rejected;
+				lastFailure = polled.result.message;
 			}
 			it = regionPendingCommandHandles.erase(it);
+		}
+		if (applied || rejected || unavailable)
+		{
+			uiNotice = "Commands at tick " + std::to_string(regionEconomySnapshot->tick) + ": " +
+				std::to_string(applied) + " applied, " + std::to_string(rejected) + " rejected, " +
+				std::to_string(unavailable) + " unavailable.";
+			if (!lastFailure.empty()) uiNotice += " Last issue: " + lastFailure;
 		}
 
 		const auto running = std::count_if(regionEconomySnapshot->buildings.begin(),
@@ -1961,20 +2270,33 @@ namespace openrepublic
 		status << regionEconomyDescription << "\nApp-owned economy: tick "
 			<< regionEconomySnapshot->tick << ", " << running << "/"
 			<< regionEconomySnapshot->buildings.size() << " buildings running, "
-			<< regionEconomySnapshot->vehicles.size() << " trucks, "
-			<< regionEconomyImport.placedSourceBuildings.size() << " exact placement bindings";
+			<< regionEconomySnapshot->vehicles.size() << " trucks";
+		if (!nativeEconomyCheckpointMode)
+			status << ", " << regionEconomyImport.placedSourceBuildings.size() << " exact placement bindings";
 		regionWorldStatus = status.str();
 	}
 
 	void OpenRepublicApplication::UpdateRegionEconomyPresentation()
 	{
-		if ((!mapPlacement && !syntheticRegionFixtureMode) || !regionEconomySnapshot.has_value() ||
+		if ((!mapPlacement && !syntheticRegionFixtureMode && !nativeEconomyCheckpointMode) || !regionEconomySnapshot.has_value() ||
 			(lastPresentedRegionRevision.has_value() &&
 				*lastPresentedRegionRevision == regionEconomySnapshot->revision))
 		{
 			return;
 		}
 		lastPresentedRegionRevision = regionEconomySnapshot->revision;
+		if (nativeEconomyCheckpointMode)
+		{
+			std::string error;
+			if (!nativeEconomyScene.Sync(previewWorld, nativeEconomyCheckpoint.world->Snapshot(),
+				*nativeEconomyCheckpoint.catalog, regionInstances, error))
+			{
+				uiNotice = "Native economy scene update failed: " + error;
+				nativeEconomyPresentationValid = false;
+				return;
+			}
+			nativeEconomyPresentationValid = true;
+		}
 
 		std::unordered_map<std::uint64_t, openrepublic::economy::BuildingId> buildingBySource;
 		buildingBySource.reserve(regionEconomyImport.placedSourceBuildings.size());
@@ -1997,12 +2319,15 @@ namespace openrepublic
 				continue;
 			}
 			object->color = XMFLOAT4(1, 1, 1, 1);
-			const auto source = buildingBySource.find(instance.sourcePlacementIndex);
-			if (source == buildingBySource.end())
+			std::optional<economy::BuildingId> id;
+			if (nativeEconomyCheckpointMode) id = nativeEconomyScene.BuildingForEntity(instance.object);
+			else
 			{
-				continue;
+				const auto source = buildingBySource.find(instance.sourcePlacementIndex);
+				if (source != buildingBySource.end()) id = source->second;
 			}
-			const auto state = stateByBuilding.find(source->second);
+			if (!id) continue;
+			const auto state = stateByBuilding.find(*id);
 			if (state == stateByBuilding.end())
 			{
 				continue;
@@ -2054,8 +2379,28 @@ namespace openrepublic
 				continue;
 			}
 			const auto& vehicle = regionEconomySnapshot->vehicles[i];
-			const double worldX = regionEconomyImport.originX + (vehicle.cell.x + 0.5) * 4.0;
-			const double worldZ = regionEconomyImport.originZ + (vehicle.cell.z + 0.5) * 4.0;
+			if (nativeEconomyCheckpointMode)
+			{
+				const auto position = nativeEconomyScene.CellPosition(vehicle.cell);
+				marker->ClearTransform();
+				marker->Scale(XMFLOAT3(0.65f, 0.45f, 0.9f));
+				marker->Translate(XMFLOAT3(position.x, position.y + 0.45f, position.z));
+				marker->UpdateTransform();
+				continue;
+			}
+			const auto cellCenter = [](double origin, std::int32_t cell)
+			{
+				constexpr double cellSizeMeters = 4.0;
+				return origin + (static_cast<double>(cell) + 0.5) * cellSizeMeters;
+			};
+			const double worldX = cellCenter(regionEconomyImport.originX, vehicle.cell.x);
+			// The synthetic fixture road is centered at Z=-4 m. Its vehicles use
+			// road-grid cells whose generic half-cell anchor falls beside the surface;
+			// keep that fixture marker on the authored road while preserving the
+			// existing cell-center policy for imported map regions.
+			const double worldZ = syntheticRegionFixtureMode
+				? -4.0
+				: cellCenter(regionEconomyImport.originZ, vehicle.cell.z);
 			double height = 0.0;
 			if (mapPlacement)
 			{
@@ -2064,37 +2409,486 @@ namespace openrepublic
 					std::min(std::max(worldZ, terrainTransform.originZ), terrainTransform.originZ + terrainTransform.sizeZ), height, nullptr);
 			}
 			marker->ClearTransform();
-			marker->Scale(XMFLOAT3(3.0f, 3.0f, 3.0f));
+			constexpr float truckHalfHeight = 0.45f;
+			marker->Scale(XMFLOAT3(0.65f, truckHalfHeight, 0.9f));
 			marker->Translate(XMFLOAT3(static_cast<float>(worldX - centerX),
-				static_cast<float>(height) + 3.0f, static_cast<float>(worldZ - centerZ)));
+				static_cast<float>(height) + truckHalfHeight + (syntheticRegionFixtureMode ? 0.1f : 0.0f),
+				static_cast<float>(worldZ - centerZ)));
 			marker->UpdateTransform();
 		}
 	}
 
-	void OpenRepublicApplication::QueueRegionStep()
+	void OpenRepublicApplication::LayoutNativeControls()
 	{
+		if (!nativeToolsReady || !renderPath) return;
+		const float width = static_cast<float>(renderPath->GetLogicalWidth());
+		float x = 18.0f, y = 18.0f;
+		for (auto* button : { &regionStepOneButton, &regionStepButton, &regionToggleButton,
+			&regionHaulSourceButton, &regionHaulButton, &nativeFrameButton, &nativeStepManyButton, &nativeRunPauseButton,
+			&nativeDetailsButton, &nativeSaveButton })
+		{
+			if (!nativeEconomyCheckpointMode && (button == &nativeFrameButton || button == &nativeStepManyButton ||
+				button == &nativeRunPauseButton || button == &nativeSaveButton)) continue;
+			if (x > 18.0f && x + 132.0f > width - 18.0f) { x = 18.0f; y += 34.0f; }
+			button->SetPos(XMFLOAT2(x, y));
+			x += 138.0f;
+		}
+		nativeStatusTop = nativeEconomyTools.Layout(width, y + 36.0f);
+	}
+
+	openrepublic::economy::World* OpenRepublicApplication::ActiveOwnedEconomyWorld() noexcept
+	{
+		if (nativeEconomyCheckpointMode) return nativeEconomyCheckpoint.world.get();
+		if (regionEconomyApi && (mapPlacement || syntheticRegionFixtureMode)) return regionEconomyWorld.get();
+		return nullptr;
+	}
+
+	const openrepublic::economy::World* OpenRepublicApplication::ActiveOwnedEconomyWorld() const noexcept
+	{
+		if (nativeEconomyCheckpointMode) return nativeEconomyCheckpoint.world.get();
+		if (regionEconomyApi && (mapPlacement || syntheticRegionFixtureMode)) return regionEconomyWorld.get();
+		return nullptr;
+	}
+
+	void OpenRepublicApplication::ToggleNativeRunPause()
+	{
+		if (!nativeEconomyCheckpointMode) return;
+		if (nativeEconomyRunning)
+		{
+			nativeEconomyRunning = false;
+			nativeEconomyRunClock.Reset();
+			nativeRunPauseButton.SetText("Run");
+			uiNotice = "Native economy paused.";
+		}
+		else if (!nativeEconomyPresentationValid || !regionEconomyApi)
+		{
+			nativeEconomyRunning = false;
+			nativeEconomyRunClock.Reset();
+			nativeRunPauseButton.SetText("Run");
+			uiNotice = "Cannot run while the native scene or EconomyApi is unavailable; Frame world first.";
+		}
+		else
+		{
+			nativeEconomyRunning = true;
+			nativeEconomyRunClock.Reset();
+			nativeRunPauseButton.SetText("Pause");
+			uiNotice = "Native economy running at four ticks per second.";
+		}
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::RefreshNativeHaulChoices()
+	{
+		auto* world = ActiveOwnedEconomyWorld();
+		if (!nativeToolsReady || !world) return;
+		const auto snapshot = world->Snapshot();
+		nativeEconomyTools.RefreshOrders(snapshot, world->GetCatalog());
+		nativeEconomyTools.RefreshRoads(snapshot);
+		if (regionHaulSourceId && std::none_of(snapshot.buildings.begin(), snapshot.buildings.end(),
+			[&](const auto& b) { return b.id == *regionHaulSourceId; })) regionHaulSourceId.reset();
+		nativeEconomyTools.RefreshHaulChoices(snapshot, world->GetCatalog(),
+			regionHaulSourceId ? std::optional<economy::BuildingId>(static_cast<economy::BuildingId>(*regionHaulSourceId)) : std::nullopt,
+			selectedRegionBuildingId ? std::optional<economy::BuildingId>(static_cast<economy::BuildingId>(*selectedRegionBuildingId)) : std::nullopt);
+	}
+
+	void OpenRepublicApplication::SaveNativeCheckpoint()
+	{
+		if (!nativeEconomyCheckpointMode || !regionEconomyApi) return;
+		// Pause before opening the modal dialog; a cancelled save stays paused.
+		nativeEconomyRunning = false;
+		nativeEconomyRunClock.Reset();
+		nativeRunPauseButton.SetText("Run");
+		const auto current = regionEconomyApi->QueryWorld();
+		if (current.error != economy_api::ErrorCode::None)
+		{
+			uiNotice = "Cannot query the native world for saving.";
+			UpdateRegionStatus();
+			return;
+		}
+		const auto checkpoint = regionEconomyApi->ExportCheckpoint(current.world.revision);
+		if (checkpoint.error != economy_api::ErrorCode::None)
+		{
+			uiNotice = "Checkpoint export failed: " + checkpoint.message;
+			UpdateRegionStatus();
+			return;
+		}
+		std::array<wchar_t, 32768> path{};
+		const std::wstring initial = L"republic-" + std::to_wstring(checkpoint.tick) + L".checkpoint";
+		std::copy(initial.begin(), initial.end(), path.begin());
+		OPENFILENAMEW dialog{};
+		dialog.lStructSize = sizeof(dialog);
+		dialog.hwndOwner = window;
+		dialog.lpstrFilter = L"OpenRepublic checkpoint\0*.checkpoint\0All files\0*.*\0\0";
+		dialog.lpstrFile = path.data();
+		dialog.nMaxFile = static_cast<DWORD>(path.size());
+		dialog.lpstrDefExt = L"checkpoint";
+		dialog.lpstrTitle = L"Save native checkpoint to a new file";
+		dialog.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST;
+		if (!GetSaveFileNameW(&dialog))
+		{
+			const auto error = CommDlgExtendedError();
+			uiNotice = error == 0 ? "Checkpoint save cancelled; native economy remains paused."
+				: "Checkpoint dialog failed with code " + std::to_string(error) + ".";
+		}
+		else
+		{
+			std::string error;
+			if (runtime::WriteCheckpointFileExclusive(std::filesystem::path(path.data()), checkpoint.text, error))
+			{
+				std::string displayPath;
+				wi::helper::StringConvert(std::wstring(path.data()), displayPath);
+				uiNotice = "Saved native checkpoint at tick " + std::to_string(checkpoint.tick) + " to " + displayPath;
+			}
+			else uiNotice = "Checkpoint file was not saved: " + error;
+		}
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::QueueNativeRoadToggle()
+	{
+		if (!nativeEconomyCheckpointMode || !CanQueueNativeCommand()) return;
+		const auto id = nativeEconomyTools.SelectedRoad();
+		const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
+		const auto road = std::find_if(snapshot.roads.begin(), snapshot.roads.end(),
+			[id](const auto& candidate) { return candidate.id == id; });
+		if (id == 0 || road == snapshot.roads.end())
+		{
+			uiNotice = "Choose a current native road first.";
+			RefreshNativeHaulChoices();
+			UpdateRegionStatus();
+			return;
+		}
+		TrackNativeSubmission(regionEconomyApi->SetRoadEnabled(snapshot.revision, id, !road->enabled),
+			std::string(road->enabled ? "disable road #" : "enable road #") + std::to_string(id));
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::QueueNativeOrderChange(bool retarget)
+	{
+		auto* world = ActiveOwnedEconomyWorld();
+		if (!world || !CanQueueNativeCommand()) return;
+		const auto id = nativeEconomyTools.SelectedOrder();
+		const auto snapshot = world->Snapshot();
+		const auto order = std::find_if(snapshot.orders.begin(), snapshot.orders.end(),
+			[id](const auto& candidate) { return candidate.id == id; });
+		if (id == 0 || order == snapshot.orders.end())
+		{
+			uiNotice = "Choose a current native haul order first.";
+			RefreshNativeHaulChoices();
+			UpdateRegionStatus();
+			return;
+		}
+		if (retarget && (!selectedRegionBuildingId || std::none_of(snapshot.buildings.begin(), snapshot.buildings.end(),
+			[this](const auto& building) { return building.id == *selectedRegionBuildingId; })))
+		{
+			uiNotice = "Select the new destination building in the world before retargeting.";
+			UpdateRegionStatus();
+			return;
+		}
+		// Core validation on stepping preserves cargo and rejects unsafe cancellation.
+		// Use the exact chosen order ID, never a dropdown index or rendered vehicle ID.
+		const auto submitted = retarget
+			? regionEconomyApi->RetargetHaulOrder(snapshot.revision, id,
+				static_cast<economy::BuildingId>(*selectedRegionBuildingId))
+			: regionEconomyApi->CancelHaulOrder(snapshot.revision, id);
+		TrackNativeSubmission(submitted, std::string(retarget ? "retarget of haul " : "cancellation of haul ") + std::to_string(id));
+		UpdateRegionStatus();
+	}
+
+	bool OpenRepublicApplication::CanQueueNativeCommand()
+	{
+		if (!nativeToolsReady || !regionEconomyApi || (nativeEconomyCheckpointMode && !nativeEconomyPresentationValid))
+		{
+			uiNotice = nativeEconomyCheckpointMode
+				? "Native controls need a current scene. Frame world before continuing."
+				: "Imported-region logistics controls are unavailable.";
+			UpdateRegionStatus();
+			return false;
+		}
+		if (regionPendingCommandHandles.size() >= kMaxPendingRegionCommands)
+		{
+			uiNotice = "Pending command limit reached. Step the world before queuing more.";
+			UpdateRegionStatus();
+			return false;
+		}
+		return true;
+	}
+
+	bool OpenRepublicApplication::TrackNativeSubmission(const economy_api::Submission& submitted, const std::string& action)
+	{
+		if (submitted.error != economy_api::ErrorCode::None)
+		{
+			uiNotice = "Could not queue " + action + " (API error " + std::to_string(static_cast<unsigned>(submitted.error)) + ").";
+			return false;
+		}
+		regionPendingCommandHandles.push_back(submitted.handle);
+		uiNotice = "Queued " + action + "; step the world to validate and apply it.";
+		return true;
+	}
+
+	void OpenRepublicApplication::BeginNativeBuildingPlacement()
+	{
+		if (!CanQueueNativeCommand()) return;
+		const auto type = nativeEconomyTools.SelectedBuildingType();
+		if (!nativeEconomyCheckpoint.world->GetCatalog().BuildingType(type)) return;
+		ClearNativeConstructionPreview();
+		nativePlacementType = type;
+		nativeConstructionMode = NativeConstructionMode::Building;
+		nativeRoadStart.reset();
+		uiNotice = "Choose a ground cell for the building footprint. Placement is queued and validated on the next step.";
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::BeginNativeRoadPlacement()
+	{
+		if (!CanQueueNativeCommand()) return;
+		ClearNativeConstructionPreview();
+		nativeConstructionMode = NativeConstructionMode::Road;
+		nativeRoadStart.reset();
+		uiNotice = "Click the first road cell, then another on the same row or column. Maximum 64 unit segments.";
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::CancelNativeConstruction()
+	{
+		nativeConstructionMode = NativeConstructionMode::None;
+		nativePlacementType = economy::InvalidBuildingTypeId;
+		nativeRoadStart.reset();
+		ClearNativeConstructionPreview();
+		uiNotice = "Construction cancelled; click a building to inspect it.";
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::QueueNativeRemoval()
+	{
+		if (!CanQueueNativeCommand()) return;
+		if (!selectedRegionBuildingId || !GetRegionBuildingForInstance(selectedRegionBuildingEntity))
+		{
+			uiNotice = "Select a native building before removing it.";
+			UpdateRegionStatus();
+			return;
+		}
+		CancelNativeConstruction();
+		RefreshRegionEconomy();
+		TrackNativeSubmission(regionEconomyApi->RemoveBuilding(regionEconomySnapshot->revision,
+			static_cast<economy::BuildingId>(*selectedRegionBuildingId)), "removal of OR-" + std::to_string(*selectedRegionBuildingId) + " and its inventory");
+		UpdateRegionStatus();
+	}
+
+	std::optional<economy::Cell> OpenRepublicApplication::NativeCellAtPointer() const
+	{
+		if (!nativeEconomyCheckpointMode || !nativeEconomyPresentationValid || !renderPath || !renderPath->camera) return std::nullopt;
+		const auto pointer = wi::input::GetPointer();
+		if (pointer.x < 0 || pointer.y < 0 || pointer.x >= renderPath->GetLogicalWidth() || pointer.y >= renderPath->GetLogicalHeight()) return std::nullopt;
+		const auto ray = wi::renderer::GetPickRay(static_cast<long>(pointer.x), static_cast<long>(pointer.y), *renderPath, *renderPath->camera);
+		if (!std::isfinite(ray.origin.y) || !std::isfinite(ray.direction.y) || std::abs(ray.direction.y) < 1e-6f) return std::nullopt;
+		const double distance = -static_cast<double>(ray.origin.y) / ray.direction.y;
+		if (!std::isfinite(distance) || distance < ray.TMin || distance > ray.TMax) return std::nullopt;
+		const double worldX = ray.origin.x + static_cast<double>(ray.direction.x) * distance;
+		const double worldZ = ray.origin.z + static_cast<double>(ray.direction.z) * distance;
+		economy::Cell cell;
+		const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
+		if (!nativeEconomyScene.CellFromGroundPoint(worldX, worldZ, snapshot.gridWidth, snapshot.gridDepth, cell)) return std::nullopt;
+		return cell;
+	}
+
+	void OpenRepublicApplication::QueueNativeConstruction(economy::Cell cell)
+	{
+		if (!CanQueueNativeCommand()) return;
+		RefreshRegionEconomy();
+		if (nativeConstructionMode == NativeConstructionMode::Building)
+		{
+			const auto* type = nativeEconomyCheckpoint.world->GetCatalog().BuildingType(nativePlacementType);
+			if (!type) return;
+			if (TrackNativeSubmission(regionEconomyApi->PlaceBuilding(regionEconomySnapshot->revision, type->name, cell),
+				type->name + " at (" + std::to_string(cell.x) + ", " + std::to_string(cell.z) + ")"))
+			{
+				nativeConstructionMode = NativeConstructionMode::None;
+				ClearNativeConstructionPreview();
+			}
+		}
+		else if (nativeConstructionMode == NativeConstructionMode::Road)
+		{
+			if (!nativeRoadStart)
+			{
+				nativeRoadStart = cell;
+				uiNotice = "Road start set; choose an endpoint on the same row or column.";
+			}
+			else
+			{
+				const auto start = *nativeRoadStart;
+				const auto dx = static_cast<std::int64_t>(cell.x) - start.x;
+				const auto dz = static_cast<std::int64_t>(cell.z) - start.z;
+				const auto length = std::abs(dx) + std::abs(dz);
+				if ((dx != 0 && dz != 0) || length == 0 || length > 64)
+				{
+					uiNotice = "Choose a distinct endpoint on the same row or column, at most 64 cells away.";
+				}
+				else if (static_cast<std::size_t>(length) > kMaxPendingRegionCommands - regionPendingCommandHandles.size())
+				{
+					uiNotice = "This road exceeds the remaining pending-command budget. Step first or choose a shorter road.";
+				}
+				else
+				{
+					economy::Cell a = start;
+					std::size_t queued = 0;
+					std::string submissionIssue;
+					for (std::int64_t i = 0; i < length; ++i)
+					{
+						const economy::Cell b{ a.x + (dx > 0 ? 1 : dx < 0 ? -1 : 0), a.z + (dz > 0 ? 1 : dz < 0 ? -1 : 0) };
+						if (!TrackNativeSubmission(regionEconomyApi->BuildRoad(regionEconomySnapshot->revision, a, b), "road segment"))
+						{
+							submissionIssue = uiNotice;
+							break;
+						}
+						++queued;
+						a = b;
+					}
+					uiNotice = "Queued " + std::to_string(queued) + "/" + std::to_string(length) +
+						" road segments; each validates independently on step.";
+					if (!submissionIssue.empty())
+					{
+						nativeRoadStart = a;
+						uiNotice += " " + submissionIssue + " Remaining draft starts at (" +
+							std::to_string(a.x) + ", " + std::to_string(a.z) + ").";
+					}
+					if (queued == static_cast<std::size_t>(length))
+					{
+						nativeConstructionMode = NativeConstructionMode::None;
+						nativeRoadStart.reset();
+						ClearNativeConstructionPreview();
+					}
+				}
+			}
+		}
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::ClearNativeConstructionPreview()
+	{
+		if (nativeConstructionPreview != wi::ecs::INVALID_ENTITY) previewWorld.Entity_Remove(nativeConstructionPreview);
+		nativeConstructionPreview = wi::ecs::INVALID_ENTITY;
+		nativeHoverCell.reset();
+	}
+
+	void OpenRepublicApplication::UpdateNativeConstructionPreview(bool pointerAvailable)
+	{
+		if (!pointerAvailable || nativeConstructionMode == NativeConstructionMode::None)
+		{
+			ClearNativeConstructionPreview();
+			return;
+		}
+		const auto cell = NativeCellAtPointer();
+		if (!cell) { ClearNativeConstructionPreview(); return; }
+		nativeHoverCell = cell;
+		float width = 4.0f, depth = 4.0f;
+		const auto center = nativeEconomyScene.CellPosition(*cell);
+		float x = center.x, z = center.z;
+		if (nativeConstructionMode == NativeConstructionMode::Building)
+		{
+			const auto* type = nativeEconomyCheckpoint.world->GetCatalog().BuildingType(nativePlacementType);
+			if (!type) { ClearNativeConstructionPreview(); return; }
+			width *= type->width; depth *= type->depth;
+			x += (width - 4.0f) * 0.5f; z += (depth - 4.0f) * 0.5f;
+		}
+		if (nativeConstructionPreview == wi::ecs::INVALID_ENTITY)
+		{
+			nativeConstructionPreview = previewWorld.Entity_CreateCube("Native construction draft");
+			if (auto* material = previewWorld.materials.GetComponent(nativeConstructionPreview))
+			{
+				material->SetBaseColor(XMFLOAT4(0.95f, 0.72f, 0.20f, 0.65f));
+				material->CreateRenderData(true);
+			}
+		}
+		if (auto* transform = previewWorld.transforms.GetComponent(nativeConstructionPreview))
+		{
+			transform->scale_local = XMFLOAT3(width * 0.5f, 0.08f, depth * 0.5f);
+			transform->translation_local = XMFLOAT3(x, 0.12f, z);
+			transform->UpdateTransform();
+		}
+	}
+
+	void OpenRepublicApplication::FrameNativeEconomyWorld()
+	{
+		ClearNativeConstructionPreview();
+		if (!nativeEconomyCheckpointMode || !regionEconomyApi || !renderPath) return;
+		const auto selectedId = selectedRegionBuildingId;
+		RefreshRegionEconomy();
+		std::string error;
+		if (!nativeEconomyScene.Rebase(previewWorld, nativeEconomyCheckpoint.world->Snapshot(),
+			*nativeEconomyCheckpoint.catalog, regionInstances, error))
+		{
+			nativeEconomyPresentationValid = false;
+			uiNotice = "Could not frame native world: " + error;
+			UpdateRegionStatus();
+			return;
+		}
+		nativeEconomyPresentationValid = true;
+		lastPresentedRegionRevision.reset();
+		UpdateRegionEconomyPresentation();
+		selectedRegionBuildingEntity = wi::ecs::INVALID_ENTITY;
+		selectedRegionBuildingId.reset();
+		for (const auto& instance : regionInstances)
+		{
+			if (selectedId && nativeEconomyScene.BuildingForEntity(instance.object) == selectedId)
+			{
+				selectedRegionBuildingEntity = instance.object;
+				selectedRegionBuildingId = selectedId;
+				break;
+			}
+		}
+		const auto target = nativeEconomyScene.CameraTarget();
+		const float distance = nativeEconomyScene.CameraDistance();
+		wi::scene::TransformComponent cameraTransform;
+		cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 0.55f, target.z - distance * 0.85f));
+		cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.6f, 0, 0));
+		cameraTransform.UpdateTransform();
+		renderPath->camera->TransformCamera(cameraTransform);
+		renderPath->camera->zNearP = std::max(0.01f, distance / 100000.0f);
+		renderPath->camera->zFarP = std::max(1000.0f, distance * 4.0f);
+		renderPath->camera->UpdateCamera();
+		cameraSpeedScale = std::max(1.0f, distance / 15.0f);
+		uiNotice = "Framed the current native world without advancing the simulation.";
+		UpdateRegionStatus();
+	}
+
+	bool OpenRepublicApplication::QueueRegionStep(std::uint32_t ticks, bool automatic)
+	{
+		const std::string tickLabel = std::to_string(ticks) + (ticks == 1 ? " tick" : " ticks");
 		if (economyOverlay)
 		{
-			uiNotice = economyOverlay->QueueStep(24)
-				? "Queued a 24-tick advance for the shared economy world."
+			const bool queued = economyOverlay->QueueStep(ticks);
+			uiNotice = queued
+				? "Queued a " + tickLabel + " advance for the shared economy world."
 				: "Could not queue the economy step; check the bridge connection and controller role.";
+			UpdateRegionStatus();
+			return queued;
 		}
 		else if (regionEconomyApi)
 		{
-			const auto error = regionEconomyApi->Step(24);
+			const bool hadPending = !regionPendingCommandHandles.empty();
+			const auto error = regionEconomyApi->Step(ticks);
 			if (error == openrepublic::economy_api::ErrorCode::None)
 			{
 				RefreshRegionEconomy();
 				UpdateRegionEconomyPresentation();
-				uiNotice = "Advanced the app-owned economy by 24 ticks.";
+				// Automatic ticks retain outcome feedback until the next human action.
+				if (!automatic)
+					uiNotice = "Advanced the app-owned economy by " + tickLabel + "." +
+						(hadPending ? " " + uiNotice : "");
+				UpdateRegionStatus();
+				return true;
 			}
 			else
 			{
-				uiNotice = "App-owned EconomyApi rejected the 24-tick step with error " +
+				uiNotice = "App-owned EconomyApi rejected the " + tickLabel + " step with error " +
 					std::to_string(static_cast<unsigned>(error)) + ".";
+				UpdateRegionStatus();
+				return false;
 			}
 		}
 		UpdateRegionStatus();
+		return false;
 	}
 
 	void OpenRepublicApplication::QueueRegionBuildingToggle()
@@ -2152,6 +2946,28 @@ namespace openrepublic
 
 	void OpenRepublicApplication::QueueRegionHaul()
 	{
+		if (nativeToolsReady && ActiveOwnedEconomyWorld())
+		{
+			RefreshNativeHaulChoices();
+			auto* world = ActiveOwnedEconomyWorld();
+			const auto& catalog = world->GetCatalog();
+			const auto* resource = catalog.Resource(nativeEconomyTools.SelectedResource());
+			const auto* vehicle = catalog.VehicleType(nativeEconomyTools.SelectedVehicleType());
+			if (!regionHaulSourceId || !selectedRegionBuildingId || !resource || !vehicle)
+			{
+				uiNotice = "Set a source, select a different destination, then choose a shared resource and vehicle.";
+				UpdateRegionStatus();
+				return;
+			}
+			if (!CanQueueNativeCommand()) return;
+			RefreshRegionEconomy();
+			TrackNativeSubmission(regionEconomyApi->CreateHaulOrder(regionEconomySnapshot->revision,
+				static_cast<economy::BuildingId>(*regionHaulSourceId),
+				static_cast<economy::BuildingId>(*selectedRegionBuildingId), resource->name, vehicle->name),
+				resource->name + " haul using " + vehicle->name);
+			UpdateRegionStatus();
+			return;
+		}
 		if ((!economyOverlay && !regionEconomyApi) || !regionHaulSourceId.has_value() ||
 			!selectedRegionBuildingId.has_value())
 		{
@@ -2502,6 +3318,13 @@ namespace openrepublic
 
 		const wi::primitive::Ray ray = wi::renderer::GetPickRay(
 			static_cast<long>(pointer.x), static_cast<long>(pointer.y), *renderPath, *renderPath->camera);
+		if (nativeEconomyCheckpointMode && nativeConstructionMode != NativeConstructionMode::None)
+		{
+			const auto cell = NativeCellAtPointer();
+			if (cell) QueueNativeConstruction(*cell);
+			else { uiNotice = "No displayable native ground cell at this pointer. Adjust the camera or Frame world."; UpdateRegionStatus(); }
+			return;
+		}
 		if (activeRoadPlacement)
 		{
 			if (!std::isfinite(ray.origin.y) || !std::isfinite(ray.direction.y) || std::abs(ray.direction.y) < 1e-6f)
@@ -2661,7 +3484,8 @@ namespace openrepublic
 				? std::optional<std::uint64_t>(selected->id) : std::nullopt;
 			if (selected.has_value())
 			{
-				uiNotice = "Selected imported building OR-" + std::to_string(selected->id) + " " + selected->type + ".";
+				uiNotice = std::string(nativeEconomyCheckpointMode ? "Selected native building OR-" : "Selected imported building OR-") +
+					std::to_string(selected->id) + " " + selected->type + ".";
 			}
 			else
 			{
