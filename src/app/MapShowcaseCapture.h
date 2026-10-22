@@ -4,6 +4,7 @@
 
 #include <Windows.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -33,7 +34,20 @@ namespace openrepublic
 		{
 			if (warmupFramesRemaining > 0)
 			{
+				// Cold starts (runtime shader compilation, texture streaming) can hitch for seconds;
+				// the frame budget alone ended the warm-up too early and captured a half-initialised
+				// ocean. Also require 12 s of wall time.
+				if (!warmupStarted)
+				{
+					warmupStarted = true;
+					warmupStart = std::chrono::steady_clock::now();
+				}
 				--warmupFramesRemaining;
+				if (warmupFramesRemaining == 0 &&
+					std::chrono::steady_clock::now() - warmupStart < std::chrono::seconds(12))
+				{
+					warmupFramesRemaining = 1;
+				}
 				if (warmupFramesRemaining == 0)
 				{
 					SetCamera();
@@ -203,5 +217,7 @@ namespace openrepublic
 		std::uint32_t warmupFramesRemaining = 120;
 		std::uint32_t settleFramesRemaining = 0;
 		bool captureFinished = false;
+		bool warmupStarted = false;
+		std::chrono::steady_clock::time_point warmupStart;
 	};
 }

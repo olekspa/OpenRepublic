@@ -1712,6 +1712,7 @@ namespace openrepublic::preview
 			}
 			// Authentic ground and trees from the local install when present (never committed).
 			RealTreeSet realTrees;
+			openrepublic::content::TreePlacements realPlacements;
 			{
 				const auto loadResource = [&](const std::filesystem::path& path)
 				{
@@ -1801,11 +1802,27 @@ namespace openrepublic::preview
 						}
 					}
 					into.push_back(meshEntity);
+					realTrees.byName[stem] = meshEntity;
 				};
 				for (const char* stem : { "pine1", "pine2", "pine3", "pine4", "oldpine1", "oldpine2", "oldpine3" }) loadTree(stem, realTrees.conifers);
 				for (const char* stem : { "strom", "afghan_leaved1a", "afghan_leaved2a" }) loadTree(stem, realTrees.broadleaf);
 				for (const char* stem : { "topol" }) loadTree(stem, realTrees.poplars);
 				for (const char* stem : { "broadbush1", "broadbush2", "broadbush3", "kriak", "kriak2", "kriak3" }) loadTree(stem, realTrees.shrubs);
+				// The package's own tree species (trees.bin) and positions.
+				if (LoadTreePlacements(request.mapDirectory, realPlacements, nullptr))
+				{
+					realTrees.placements = &realPlacements;
+					for (const auto& group : realPlacements.species)
+					{
+						if (realTrees.byName.find(group.modelName) == realTrees.byName.end())
+						{
+							std::vector<wi::ecs::Entity> unused;
+							loadTree(group.modelName.c_str(), unused);
+						}
+					}
+					wilog("[OpenRepublic] Showcase uses %zu real tree placements from trees.bin (%zu species)",
+						realPlacements.placements.size(), realPlacements.species.size());
+				}
 				wilog("[OpenRepublic] Showcase real tree meshes: %zu conifers, %zu broadleaf, %zu poplars, %zu shrubs",
 					realTrees.conifers.size(), realTrees.broadleaf.size(), realTrees.poplars.size(), realTrees.shrubs.size());
 			}

@@ -4,8 +4,10 @@
 #include "WickedEngine.h"
 #include "openrepublic/content/map_placement.h"
 #include "openrepublic/content/terrain_preview.h"
+#include "openrepublic/content/tree_placements.h"
 
 #include <cstddef>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -46,6 +48,10 @@ namespace openrepublic::preview
 		std::vector<wi::ecs::Entity> broadleaf;
 		std::vector<wi::ecs::Entity> poplars;
 		std::vector<wi::ecs::Entity> shrubs;
+		// Exact meshes by the species model name used in the package's trees.bin (for example "pine1").
+		std::map<std::string, wi::ecs::Entity> byName;
+		// Decoded real placements (positions are INFERRED to be map metres); null when unavailable.
+		const openrepublic::content::TreePlacements* placements = nullptr;
 		bool Any() const { return !conifers.empty() || !broadleaf.empty() || !poplars.empty() || !shrubs.empty(); }
 	};
 

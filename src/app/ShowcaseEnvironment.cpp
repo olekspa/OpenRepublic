@@ -810,13 +810,15 @@ namespace openrepublic::preview
 			return static_cast<float>(std::hypot(sx, sz));
 		};
 
-		constexpr std::size_t kNearCap = 16000;
+		constexpr std::size_t kNearCap = 40000;
 		constexpr std::size_t kFarCap = 18000;
 		struct Candidate
 		{
 			double x, z;
 			bool farRing;
+			int typeIndex = -1; // species index in the real placements, or -1 for procedural
 		};
+		const bool realPlacements = useReal && realTrees->placements != nullptr && !realTrees->placements->placements.empty();
 		std::vector<Candidate> candidates;
 		const auto scan = [&](double radiusMin, double radiusMax, double spacing, bool farRing)
 		{
@@ -854,7 +856,10 @@ namespace openrepublic::preview
 				}
 			}
 		};
-		scan(0.0, 1400.0, 8.5, false);
+		if (!realPlacements)
+		{
+			scan(0.0, 1400.0, 8.5, false);
+		}
 		// Undergrowth: dense small shrubs around the town and along the nearest forest edges.
 		struct ShrubSpot { double x, z; };
 		std::vector<ShrubSpot> shrubSpots;
@@ -879,7 +884,33 @@ namespace openrepublic::preview
 				}
 			}
 		}
-		scan(1400.0, 4200.0, 22.0, true);
+		if (!realPlacements)
+		{
+			scan(1400.0, 4200.0, 22.0, true);
+		}
+		else
+		{
+			// Parks and yards: the saved town has few trees, so add procedural greening inside it
+			// (presentation only; the real placements below stay untouched).
+			scan(0.0, regionRadius * 1.25, 11.0, false);
+			// The package's own tree positions: every tree near the town, a thin sample of the rest.
+			const double nearRadius = 1200.0;
+			const double farRadius = 4200.0;
+			for (const auto& placement : realTrees->placements->placements)
+			{
+				const double dist = std::hypot(placement.x - center.X(), placement.z - center.Z());
+				if (dist >= farRadius || mask.Blocked(placement.x, placement.z))
+				{
+					continue;
+				}
+				const bool farRing = dist >= nearRadius;
+				if (farRing && Hash01(static_cast<int>(placement.x * 3.1), static_cast<int>(placement.z * 3.1), 131) > 0.12f)
+				{
+					continue;
+				}
+				candidates.push_back({ placement.x, placement.z, farRing, static_cast<int>(placement.typeIndex) });
+			}
+		}
 
 		std::size_t nearCount = 0;
 		std::size_t farCount = 0;
@@ -942,7 +973,21 @@ namespace openrepublic::preview
 			const float forest = ForestAmount(terrain, candidate.x, candidate.z);
 			const double dist = std::hypot(candidate.x - center.X(), candidate.z - center.Z());
 			Species* species = nullptr;
-			if (candidate.farRing)
+			std::string realName;
+			int realCategory = 0; // 0 broadleaf, 1 conifer, 2 poplar, 3 shrub
+			if (candidate.typeIndex >= 0 && static_cast<std::size_t>(candidate.typeIndex) < realTrees->placements->species.size())
+			{
+				realName = realTrees->placements->species[candidate.typeIndex].modelName;
+				if (realName.find("pine") != std::string::npos) realCategory = 1;
+				else if (realName.find("topol") != std::string::npos) realCategory = 2;
+				else if (realName.find("kriak") != std::string::npos || realName.find("bush") != std::string::npos) realCategory = 3;
+			}
+			if (!realName.empty())
+			{
+				species = candidate.farRing ? (realCategory == 1 ? &spruceFar : &broadFar)
+					: (realCategory == 1 ? &spruce : (realCategory == 2 ? &poplar : (realCategory == 3 ? &shrub : &oak)));
+			}
+			else if (candidate.farRing)
 			{
 				species = (pick < 0.28f + 0.5f * elevation) ? &spruceFar : &broadFar;
 			}
@@ -966,7 +1011,18 @@ namespace openrepublic::preview
 			const float yaw = 2.0f * kPi * Hash01(hx, hz, 71);
 			wi::ecs::Entity meshToUse = species->mesh;
 			bool usedReal = false;
-			if (useReal)
+			if (!realName.empty() && !candidate.farRing)
+			{
+				// Exact species mesh from the install; its own scale is kept (the meshes are in metres).
+				const auto exact = realTrees->byName.find(realName);
+				if (exact != realTrees->byName.end() && exact->second != wi::ecs::INVALID_ENTITY)
+				{
+					meshToUse = exact->second;
+					scale = 0.85f + 0.4f * Hash01(hx, hz, 67);
+					usedReal = true;
+				}
+			}
+			if (useReal && !usedReal && realName.empty())
 			{
 				const bool conifer = species == &spruce || species == &pine || species == &spruceFar;
 				const bool poplarKind = species == &poplar;
