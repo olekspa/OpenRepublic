@@ -507,15 +507,81 @@ namespace openrepublic::preview
 			return placed;
 		};
 		{
+			// Decoded segment point paths (INFERRED to be the line route, ledger: electro candidates):
+			// supports every `spacing` metres along each path, wires between consecutive supports.
+			const auto routePowerLine = [&](const openrepublic::content::LinearNetwork& network, wi::ecs::Entity supportMesh,
+				double spacing, double supportHeight, double wireSpacing, int wires, float sag, std::size_t cap)
+			{
+				std::vector<openrepublic::content::PowerLinePolylineCandidate> paths;
+				std::string candidateError;
+				if (!openrepublic::content::ExtractPowerLinePolylineCandidates(network, paths, &candidateError))
+				{
+					wilog("[OpenRepublic] Power-line candidates unavailable: %s", candidateError.c_str());
+					return std::size_t(0);
+				}
+				wilog("[OpenRepublic] Power-line candidates: %zu paths", paths.size());
+				if (!paths.empty() && !paths.front().points.empty())
+				{
+					const auto& q = paths.front().points.front();
+					wilog("[OpenRepublic] first power path point (%.1f, %.1f, %.1f) with %zu points; town centre (%.1f, %.1f)", q.x, q.y, q.z, paths.front().points.size(), cx, cz);
+				}
+				std::size_t placed = 0;
+				for (const auto& path : paths)
+				{
+					std::vector<std::pair<double, double>> xz;
+					for (const auto& point : path.points)
+					{
+						xz.emplace_back(point.x, point.z);
+					}
+					const auto samples = RoadPathIndex::Resample(xz, spacing);
+					bool havePrev = false;
+					double px = 0, pz = 0, py = 0;
+					for (const auto& sample : samples)
+					{
+						if (placed >= cap)
+						{
+							break;
+						}
+						if (!inRange(sample.x, sample.z))
+						{
+							havePrev = false;
+							continue;
+						}
+						const double h = heightAt(sample.x, sample.z);
+						if (terrain.hasWater && h < terrain.waterLevel + 1.0)
+						{
+							havePrev = false;
+							continue;
+						}
+						Placement support;
+						support.x = sample.x; support.z = sample.z; support.y = h - 0.3;
+						support.yaw = std::atan2(sample.dx, sample.dz); support.pitch = 0.0;
+						AddObject(scene, supportMesh, support, request, cx, cz, 1.0f, true);
+						++placed;
+						if (havePrev)
+						{
+							const double nx = -sample.dz, nz = sample.dx;
+							for (int w = 0; w < wires; ++w)
+							{
+								const double lateral = (w - (wires - 1) * 0.5) * wireSpacing;
+								addWire(px + nx * lateral, py + supportHeight - (w % 2) * 1.2, pz + nz * lateral,
+									sample.x + nx * lateral, h + supportHeight - (w % 2) * 1.2, sample.z + nz * lateral, sag, 0.08f);
+							}
+						}
+						px = sample.x; pz = sample.z; py = h; havePrev = true;
+					}
+				}
+				return placed;
+			};
 			openrepublic::content::LinearNetwork high;
 			if (pylonMesh != wi::ecs::INVALID_ENTITY && loadNetwork("electro_high.bin", high))
 			{
-				realPylons += stringPowerLine(high, pylonMesh, static_cast<double>(pylonHi.y) * 0.85, 4.2, 6, 6.0f, 400);
+				realPylons += routePowerLine(high, pylonMesh, 220.0, static_cast<double>(pylonHi.y) * 0.85, 4.2, 6, 6.0f, 400);
 			}
 			openrepublic::content::LinearNetwork low;
 			if (loadNetwork("electro_low.bin", low))
 			{
-				realPylons += stringPowerLine(low, poleMesh, 9.0, 0.9, 3, 1.2f, 600);
+				realPylons += routePowerLine(low, poleMesh, 40.0, 9.0, 0.9, 3, 1.2f, 800);
 			}
 			// Disabled: the links between rail nodes cross the town's buildings in the sample save, so the
 			// neighbour interpretation (links[0]) or the straight-span assumption is not validated yet.
@@ -743,7 +809,7 @@ namespace openrepublic::preview
 		info.railPieces = railPieces;
 		std::ostringstream summary;
 		summary << "Showcase props (OpenRepublic procedural meshes" << (info.realVehicleTypes > 0 ? std::string(" plus ") + std::to_string(info.realVehicleTypes) + " local-install vehicle types" : std::string()) << "): " << vehicles << " vehicles on roads, " << poles
-			<< " utility poles with wires, " << lamps << " street lamps, " << pylons << " pylons, " << railPieces
+			<< " utility poles with wires, " << lamps << " street lamps, " << (pylons + realPylons) << " pylons/poles on real power routes, " << railPieces
 			<< " railway pieces, industrial skyline.";
 		info.summary = summary.str();
 		return true;

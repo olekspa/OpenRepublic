@@ -137,3 +137,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-22 ~06:10 EDT** Worker ELECTRO started (luna/electro): establish the meaning of electro_high/low point sequences (pole/pylon positions, cable spans) for real power lines in the showcase.
 
 - **2026-10-22 ~06:25 EDT** Added warm point lights at the first 24 street lamps (dusk scenes); a sun-at-3-degrees capture shows a believable red-sky dusk with the lamp glow visible but weak (lamp light range 28 m, intensity 40); facades keep their faint emissive lift so they read light in the dark (a stand-in for lit windows). Not tuned further.
+
+- **2026-10-22 ~06:50 EDT** Merged ELECTRO (power-line polyline candidates: VERIFIED storage of an ordered point array per segment, INFERRED as the line route; low-voltage points ~2.5 m apart, median 175 per segment). Showcase now routes real power lines: low-voltage poles every 40 m with 3 wires, high-voltage pylons every 220 m with 6 wires along the decoded paths (466 supports on the N22 save). Hero view still renders correctly; the lines are thin and hard to see at hero distance.
