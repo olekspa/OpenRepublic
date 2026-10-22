@@ -1406,6 +1406,17 @@ namespace openrepublic
 			static double accumulated = 0.0;
 			static std::uint32_t frames = 0;
 			static float worst = 0.0f;
+			// Cold starts (shader compilation, texture streaming) can leave the ocean half-initialised and
+			// flood the town; keep it off for the first seconds of the interactive view.
+			static std::uint32_t totalFrames = 0;
+			++totalFrames;
+			if (!mapShowcaseCaptureMode && showcaseEnvironment.hasWater && (totalFrames == 2 || totalFrames == 300))
+			{
+				for (std::size_t i = 0; i < previewWorld.weathers.GetCount(); ++i)
+				{
+					previewWorld.weathers[i].SetOceanEnabled(totalFrames == 300);
+				}
+			}
 			accumulated += dt;
 			++frames;
 			worst = std::max(worst, dt);
