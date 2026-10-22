@@ -5,6 +5,11 @@ target_link_libraries(OpenRepublicTerrainReaderTests PRIVATE OpenRepublicContent
 target_compile_features(OpenRepublicTerrainReaderTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicTerrainReaderTests COMMAND OpenRepublicTerrainReaderTests)
 
+add_executable(OpenRepublicTerrainBlendTests terrain_blend_tests.cpp)
+target_link_libraries(OpenRepublicTerrainBlendTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicTerrainBlendTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicTerrainBlendTests COMMAND OpenRepublicTerrainBlendTests)
+
 add_executable(OpenRepublicMtlSyntaxTests
     mtl_syntax_tests.cpp
 )

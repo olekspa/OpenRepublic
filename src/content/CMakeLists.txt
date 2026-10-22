@@ -14,6 +14,7 @@ add_library(OpenRepublicContent STATIC
     linear_network.cpp
     road_network.cpp
     terrain_dds.cpp
+    terrain_blend.cpp
     terrain_preview.cpp
     tree_placements.cpp
     text_table.cpp
