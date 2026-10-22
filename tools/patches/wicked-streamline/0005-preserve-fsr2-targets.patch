@@ -1,0 +1,24 @@
+From 74c5089044cf169b925b33f0f77c71667b820049 Mon Sep 17 00:00:00 2001
+From: OpenRepublic Patch Builder <patch-builder@openrepublic.invalid>
+Date: Thu, 22 Oct 2026 10:06:00 -0400
+Subject: [PATCH] Preserve shared FSR render targets when DLSS is disabled
+
+---
+ WickedEngine/wiRenderPath3D.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
+index 46848517ae1a5cdd3fe95433795b8e5f8b5cf66c..47856923b2fbeb48a3c7a9d8c44d17083cc707f0 100644
+--- a/WickedEngine/wiRenderPath3D.cpp
++++ b/WickedEngine/wiRenderPath3D.cpp
+@@ -3205,7 +3205,7 @@ namespace wi
+ 		{
+ 			dlssRequested = false;
+ 			dlssEnabled = false;
+-			if (!getFSREnabled()) { rtFSR[0] = {}; rtFSR[1] = {}; }
++			if (!getFSREnabled() && !getFSR2Enabled()) { rtFSR[0] = {}; rtFSR[1] = {}; }
+ 			return;
+ 		}
+ 		dlssRequested = true;
+-- 
+2.47.1.windows.2
