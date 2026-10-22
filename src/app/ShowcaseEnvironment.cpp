@@ -456,6 +456,11 @@ namespace openrepublic::preview
 		return height;
 	}
 
+	namespace
+	{
+		bool RealGroundAlbedoValid();
+	}
+
 	XMFLOAT3 ShadeShowcaseTerrain(const ShowcaseTerrainData& data, double worldX, double worldZ,
 		float height, float slope)
 	{
@@ -482,7 +487,8 @@ namespace openrepublic::preview
 		{
 			color = Mix(color, sand, 1.0f - SmoothStep(data.waterLevel + 0.3f, data.waterLevel + 2.6f, height));
 		}
-		const float detail = (0.9f + fine * 0.2f) * 1.45f;
+		// The real WRSR ground tile is much darker on average than the procedural one.
+		const float detail = (0.9f + fine * 0.2f) * (RealGroundAlbedoValid() ? 3.2f : 1.45f);
 		return XMFLOAT3(color.x * detail, color.y * detail, color.z * detail);
 	}
 
@@ -554,20 +560,40 @@ namespace openrepublic::preview
 		return resource;
 	}
 
+	namespace
+	{
+		wi::Resource& RealGroundAlbedo() { static wi::Resource r; return r; }
+		bool RealGroundAlbedoValid() { return RealGroundAlbedo().IsValid(); }
+		wi::Resource& RealGroundNormal() { static wi::Resource r; return r; }
+	}
+
+	void SetShowcaseRealGroundTexture(const wi::Resource& albedo, const wi::Resource& normal)
+	{
+		RealGroundAlbedo() = albedo;
+		RealGroundNormal() = normal;
+	}
+
 	void ApplyShowcaseGrass(wi::scene::MaterialComponent& material)
 	{
-		material.textures[wi::scene::MaterialComponent::BASECOLORMAP].resource = ShowcaseGrassTexture();
+		const bool real = RealGroundAlbedo().IsValid();
+		material.textures[wi::scene::MaterialComponent::BASECOLORMAP].resource = real ? RealGroundAlbedo() : ShowcaseGrassTexture();
 		material.textures[wi::scene::MaterialComponent::BASECOLORMAP].uvset = 0;
+		if (real && RealGroundNormal().IsValid())
+		{
+			material.textures[wi::scene::MaterialComponent::NORMALMAP].resource = RealGroundNormal();
+			material.textures[wi::scene::MaterialComponent::NORMALMAP].uvset = 0;
+		}
 	}
 
 	bool BuildShowcaseWorld(wi::scene::Scene& scene, const MapPlacementRequest& request,
 		const ShowcaseTerrainData& terrain, double regionRadius, const std::vector<RegionInstance>& instances,
-		ShowcaseEnvironmentInfo& info, std::string& error)
+		const RealTreeSet* realTrees, ShowcaseEnvironmentInfo& info, std::string& error)
 	{
 		const TerrainTransform transform = MakeMapTerrainTransform(request.metadata);
 		const PlacedBuilding& center = request.placement;
 		const TerrainPreviewGrid& grid = terrain.grid;
 		const std::uint32_t samples = kFarSamples;
+		const bool useReal = realTrees != nullptr && realTrees->Any();
 
 		// ---- Far landscape: the real heightmap out to several kilometres.
 		const double nearHalf = terrain.nearHalfExtent;
@@ -692,6 +718,29 @@ namespace openrepublic::preview
 		AddBlob(shrubHigh, XMFLOAT3(0.7f, 0.45f, 0.3f), XMFLOAT3(0.7f, 0.5f, 0.7f), 4, 7, XMFLOAT3(0.06f, 0.11f, 0.03f), XMFLOAT3(0.22f, 0.30f, 0.08f), 33);
 		Species shrub{ CreatePartEntity(scene, "showcase shrub", shrubHigh, 0.95f), 0.7f, 1.6f };
 		Species broadFar{ CreatePartEntity(scene, "showcase broadleaf far", broadLow, 0.95f), 0.9f, 1.4f };
+
+		struct RealPick
+		{
+			wi::ecs::Entity mesh = wi::ecs::INVALID_ENTITY;
+			float unit = 1.0f;
+		};
+		const auto realMesh = [&](const std::vector<wi::ecs::Entity>& list, std::uint32_t hash, float targetHeight)
+		{
+			RealPick pick;
+			if (list.empty())
+			{
+				return pick;
+			}
+			pick.mesh = list[hash % list.size()];
+			const wi::scene::MeshComponent* mesh = scene.meshes.GetComponent(pick.mesh);
+			const float height = mesh != nullptr ? mesh->aabb.getHalfWidth().y * 2.0f : 0.0f;
+			if (height < 0.05f)
+			{
+				return RealPick{};
+			}
+			pick.unit = targetHeight / height;
+			return pick;
+		};
 
 		Mask mask;
 		const double maskHalf = regionRadius * 1.5;
@@ -824,7 +873,17 @@ namespace openrepublic::preview
 			component->SetCastShadow(false);
 			const float tint = 0.8f + 0.5f * Hash01(hx, hz, 101);
 			component->color = XMFLOAT4(tint, tint, tint * 0.9f, 1.0f);
-			const float scale = shrub.minScale + (shrub.maxScale - shrub.minScale) * Hash01(hx, hz, 103);
+			float scale = shrub.minScale + (shrub.maxScale - shrub.minScale) * Hash01(hx, hz, 103);
+			if (useReal)
+			{
+				const RealPick real = realMesh(realTrees->shrubs, HashInts(hx, hz, 109), 1.7f);
+				if (real.mesh != wi::ecs::INVALID_ENTITY)
+				{
+					component->meshID = real.mesh;
+					component->color = XMFLOAT4(1, 1, 1, 1);
+					scale = real.unit * (0.8f + 0.7f * Hash01(hx, hz, 103));
+				}
+			}
 			XMFLOAT4X4 matrix;
 			XMStoreFloat4x4(&matrix, XMMatrixScaling(scale, scale, scale) * XMMatrixRotationY(6.28f * Hash01(hx, hz, 107)) *
 				XMMatrixTranslation(static_cast<float>(spot.x - center.X()), static_cast<float>(h) - 0.1f, static_cast<float>(spot.z - center.Z())));
@@ -877,18 +936,35 @@ namespace openrepublic::preview
 			{
 				continue;
 			}
-			const float scale = species->minScale + (species->maxScale - species->minScale) * Hash01(hx, hz, 67);
+			float scale = species->minScale + (species->maxScale - species->minScale) * Hash01(hx, hz, 67);
 			const float yaw = 2.0f * kPi * Hash01(hx, hz, 71);
+			wi::ecs::Entity meshToUse = species->mesh;
+			bool usedReal = false;
+			if (useReal)
+			{
+				const bool conifer = species == &spruce || species == &pine || species == &spruceFar;
+				const bool poplarKind = species == &poplar;
+				const RealPick real = poplarKind
+					? realMesh(realTrees->poplars, HashInts(hx, hz, 113), 22.0f)
+					: (conifer ? realMesh(realTrees->conifers, HashInts(hx, hz, 113), 15.0f)
+						: realMesh(realTrees->broadleaf, HashInts(hx, hz, 113), 13.0f));
+				if (real.mesh != wi::ecs::INVALID_ENTITY)
+				{
+					meshToUse = real.mesh;
+					scale = real.unit * (0.75f + 0.55f * Hash01(hx, hz, 67));
+					usedReal = true;
+				}
+			}
 			const wi::ecs::Entity object = scene.Entity_CreateObject("");
 			wi::scene::ObjectComponent* component = scene.objects.GetComponent(object);
-			component->meshID = species->mesh;
+			component->meshID = meshToUse;
 			if (candidate.farRing)
 			{
 				component->SetCastShadow(false);
 			}
-			const float tint = 0.82f + 0.36f * Hash01(hx, hz, 73);
+			const float tint = usedReal ? 1.0f : 0.82f + 0.36f * Hash01(hx, hz, 73);
 			component->color = XMFLOAT4(tint, tint * (0.95f + 0.1f * Hash01(hx, hz, 79)), tint * 0.92f, 1.0f);
-			const XMMATRIX matrix = XMMatrixScaling(scale, scale * (0.9f + 0.2f * Hash01(hx, hz, 83)), scale) *
+			const XMMATRIX matrix = XMMatrixScaling(scale, scale * (usedReal ? 1.0f : 0.9f + 0.2f * Hash01(hx, hz, 83)), scale) *
 				XMMatrixRotationY(yaw) *
 				XMMatrixTranslation(static_cast<float>(candidate.x - center.X()), static_cast<float>(h) - 0.25f,
 					static_cast<float>(candidate.z - center.Z()));

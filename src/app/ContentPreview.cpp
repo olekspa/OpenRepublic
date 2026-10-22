@@ -1366,6 +1366,22 @@ namespace openrepublic::preview
 		{
 			return false;
 		}
+		if (enhancedLook)
+		{
+			// Authentic ground tile from the local install when present (never committed).
+			const auto loadGround = [&](const char* name)
+			{
+				std::error_code fileError;
+				const std::filesystem::path path = contentRoot / "tiles_normal" / name;
+				return std::filesystem::is_regular_file(path, fileError) ? wi::resourcemanager::Load(path.generic_string()) : wi::Resource();
+			};
+			const wi::Resource ground = loadGround("grassrock1.dds");
+			if (ground.IsValid())
+			{
+				SetShowcaseRealGroundTexture(ground, loadGround("grass1bump.dds"));
+				wilog("[OpenRepublic] Showcase ground uses the local install's grassrock1 tile (local-only presentation).");
+			}
+		}
 		std::vector<XMFLOAT3> positions;
 		positions.reserve(static_cast<std::size_t>(kSamples) * kSamples);
 		for (std::uint32_t z = 0; z < kSamples; ++z)
@@ -1686,6 +1702,105 @@ namespace openrepublic::preview
 					}
 				}
 			}
+			// Authentic ground and trees from the local install when present (never committed).
+			RealTreeSet realTrees;
+			{
+				const auto loadResource = [&](const std::filesystem::path& path)
+				{
+					std::error_code fileError;
+					if (!std::filesystem::is_regular_file(path, fileError))
+					{
+						return wi::Resource();
+					}
+					return wi::resourcemanager::Load(path.generic_string());
+				};
+				const auto loadTree = [&](const char* stem, std::vector<wi::ecs::Entity>& into)
+				{
+					const std::filesystem::path model = contentRoot / "trees" / (std::string(stem) + ".nmf");
+					std::string materialStem = stem;
+					std::filesystem::path material = contentRoot / "trees" / (materialStem + ".mtl");
+					std::error_code fileError;
+					while (!std::filesystem::is_regular_file(material, fileError) && !materialStem.empty() && std::isdigit(static_cast<unsigned char>(materialStem.back())))
+					{
+						materialStem.pop_back();
+						material = contentRoot / "trees" / (materialStem + ".mtl");
+					}
+					if (!std::filesystem::is_regular_file(model, fileError) || !std::filesystem::is_regular_file(material, fileError))
+					{
+						return;
+					}
+					wi::ecs::Entity meshEntity = wi::ecs::INVALID_ENTITY;
+					XMFLOAT3 ignoredTarget;
+					float ignoredDistance = 0.0f;
+					std::string d, a, e;
+					if (!CreateNmfStaticPreview(scene, model, meshEntity, ignoredTarget, ignoredDistance, false, false,
+						{ contentRoot }, material, d, a, e, nullptr, true, false))
+					{
+						wilog("[OpenRepublic] Showcase tree '%s' skipped: %s", stem, e.c_str());
+						return;
+					}
+					wilog("[OpenRepublic] Showcase tree '%s': %s", stem, d.c_str());
+					if (wi::scene::ObjectComponent* own = scene.objects.GetComponent(meshEntity))
+					{
+						own->SetRenderable(false);
+					}
+					// The shared preview loader rejects these MTLs (blank-line/spacing profile), so read the
+					// slot-0 texture line directly: `$TEXTURE 0 <path relative to the content root>`.
+					wi::Resource leafTexture;
+					{
+						std::ifstream mtlStream(material, std::ios::binary);
+						std::string line;
+						while (std::getline(mtlStream, line))
+						{
+							if (line.rfind("$TEXTURE 0 ", 0) == 0)
+							{
+								std::string relative = line.substr(11);
+								while (!relative.empty() && (relative.back() == '' || relative.back() == ' ')) relative.pop_back();
+								const std::filesystem::path texturePath = contentRoot / relative;
+								if (std::filesystem::is_regular_file(texturePath, fileError))
+								{
+									leafTexture = wi::resourcemanager::Load(texturePath.generic_string());
+								}
+								break;
+							}
+						}
+					}
+					if (const wi::scene::MeshComponent* mesh = scene.meshes.GetComponent(meshEntity))
+					{
+						for (const auto& subset : mesh->subsets)
+						{
+							if (wi::scene::MaterialComponent* m = scene.materials.GetComponent(subset.materialID))
+							{
+								if (leafTexture.IsValid())
+								{
+									m->SetBaseColor(XMFLOAT4(1, 1, 1, 1));
+									m->textures[wi::scene::MaterialComponent::BASECOLORMAP].resource = leafTexture;
+									m->textures[wi::scene::MaterialComponent::BASECOLORMAP].uvset = 0;
+									m->SetTextureStreamingDisabled(true);
+								}
+								m->SetAlphaRef(0.8f);
+								if (leafTexture.IsValid())
+								{
+									// Stand-in for bounced sky light: faint self-illumination from the leaf texture.
+									m->textures[wi::scene::MaterialComponent::EMISSIVEMAP] = m->textures[wi::scene::MaterialComponent::BASECOLORMAP];
+									m->SetEmissiveColor(XMFLOAT4(1.0f, 1.0f, 0.9f, 0.35f));
+								}
+								m->SetDoubleSided(true);
+								m->SetRoughness(0.9f);
+								m->SetReflectance(0.02f);
+								m->CreateRenderData(true);
+							}
+						}
+					}
+					into.push_back(meshEntity);
+				};
+				for (const char* stem : { "pine1", "pine2", "pine3", "pine4", "oldpine1", "oldpine2", "oldpine3" }) loadTree(stem, realTrees.conifers);
+				for (const char* stem : { "strom", "afghan_leaved1a", "afghan_leaved2a" }) loadTree(stem, realTrees.broadleaf);
+				for (const char* stem : { "topol" }) loadTree(stem, realTrees.poplars);
+				for (const char* stem : { "broadbush1", "broadbush2", "broadbush3", "kriak", "kriak2", "kriak3" }) loadTree(stem, realTrees.shrubs);
+				wilog("[OpenRepublic] Showcase real tree meshes: %zu conifers, %zu broadleaf, %zu poplars, %zu shrubs",
+					realTrees.conifers.size(), realTrees.broadleaf.size(), realTrees.poplars.size(), realTrees.shrubs.size());
+			}
 			ShowcaseEnvironmentInfo localInfo;
 			ShowcaseEnvironmentInfo& info = environmentInfo != nullptr ? *environmentInfo : localInfo;
 			std::string environmentError;
@@ -1695,7 +1810,7 @@ namespace openrepublic::preview
 				const PlacedBuilding& placed = request.allPlacements[index];
 				localInstances.push_back({ wi::ecs::INVALID_ENTITY, placed.typeName, placed.X(), placed.Z(), index });
 			}
-			if (BuildShowcaseWorld(scene, request, showcaseTerrain, regionRadius, localInstances, info, environmentError))
+			if (BuildShowcaseWorld(scene, request, showcaseTerrain, regionRadius, localInstances, &realTrees, info, environmentError))
 			{
 				environmentSummary = info.summary;
 				wilog("[OpenRepublic] %s", info.summary.c_str());

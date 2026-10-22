@@ -38,6 +38,17 @@ namespace openrepublic::preview
 		bool hasWater = false;
 	};
 
+	// Optional authentic tree meshes loaded from a local WRSR install (never committed or published).
+	// Each entry is a hidden mesh entity; the scatter instances them with a height-normalising scale.
+	struct RealTreeSet
+	{
+		std::vector<wi::ecs::Entity> conifers;
+		std::vector<wi::ecs::Entity> broadleaf;
+		std::vector<wi::ecs::Entity> poplars;
+		std::vector<wi::ecs::Entity> shrubs;
+		bool Any() const { return !conifers.empty() || !broadleaf.empty() || !poplars.empty() || !shrubs.empty(); }
+	};
+
 	bool PrepareShowcaseTerrain(const openrepublic::content::MapPlacementRequest& request,
 		double nearHalfExtent, ShowcaseTerrainData& data, std::string& error);
 
@@ -53,13 +64,15 @@ namespace openrepublic::preview
 	const wi::Resource& ShowcaseGrassTexture();
 	const wi::Resource& ShowcaseAsphaltTexture();
 
-	// Gives a terrain material the grass detail texture (UV 0 = world metres / 12).
+	// Gives a terrain material the grass detail texture (UV 0 = world metres / 12). When `realGround`
+	// is valid (a texture decoded from a local WRSR install) it replaces the procedural one.
 	void ApplyShowcaseGrass(wi::scene::MaterialComponent& material);
+	void SetShowcaseRealGroundTexture(const wi::Resource& albedo, const wi::Resource& normal);
 
 	// Builds the far landscape mesh, the lake level and the trees. `instances` are the placed
 	// buildings (centre-relative positions are derived from the region centre).
 	bool BuildShowcaseWorld(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request, const ShowcaseTerrainData& terrain,
-		double regionRadius, const std::vector<RegionInstance>& instances,
+		double regionRadius, const std::vector<RegionInstance>& instances, const RealTreeSet* realTrees,
 		ShowcaseEnvironmentInfo& info, std::string& error);
 }

@@ -925,8 +925,8 @@ namespace openrepublic
 						{
 							weather.SetOceanEnabled(true);
 							weather.oceanParameters.waterHeight = showcaseEnvironment.waterLevel;
-							weather.oceanParameters.wave_amplitude = 90.0f;
-							weather.oceanParameters.wind_speed = 160.0f;
+							weather.oceanParameters.wave_amplitude = 2.0f;
+							weather.oceanParameters.wind_speed = 60.0f;
 							weather.oceanParameters.patch_length = 140.0f;
 							weather.oceanParameters.choppy_scale = 0.8f;
 							weather.oceanParameters.waterColor = XMFLOAT4(0.02f, 0.10f, 0.12f, 0.85f);
