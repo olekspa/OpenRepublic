@@ -301,8 +301,8 @@ namespace openrepublic::preview
 			}
 		}
 
-		// ---- Real power lines and railway from the package (nodes decoded by content::ExtractLinearNetwork;
-		// links between nodes are drawn as straight spans, segment curve data is not decoded for these files).
+		// ---- Real power supports and railway from the package. Rail uses the
+		// candidate ordered XYZ segment points when present, with node chords as fallback.
 		std::size_t realPylons = 0;
 		std::size_t realRail = 0;
 		const double realRange = 3600.0;
@@ -399,39 +399,69 @@ namespace openrepublic::preview
 				{
 					continue;
 				}
-				for (std::size_t i = 0; i < rail.nodes.size() && realRail < 6000; ++i)
+				for (const auto& segment : rail.segments)
 				{
-					const auto& a = rail.nodes[i];
-					for (const std::uint32_t j : a.links[0])
+					if (realRail >= 6000 || segment.nodeA >= rail.nodes.size() || segment.nodeB >= rail.nodes.size())
 					{
-						if (j <= i || j >= rail.nodes.size())
+						break;
+					}
+					const auto chordFallback = [&]()
+					{
+						const auto& a = rail.nodes[segment.nodeA];
+						const auto& b = rail.nodes[segment.nodeB];
+						const double dx = b.x - a.x, dz = b.z - a.z;
+						const double length = std::hypot(dx, dz);
+						if (length < 1.0 || length > 3000.0 || (!inRange(a.x, a.z) && !inRange(b.x, b.z))) return;
+						const double yaw = std::atan2(dx, dz);
+						for (double t = 6.0; t < length && realRail < 6000; t += 12.0)
 						{
-							continue;
-						}
-						const auto& b = rail.nodes[j];
-						if (!inRange(a.x, a.z) && !inRange(b.x, b.z))
-						{
-							continue;
-						}
-						const double dxw = b.x - a.x, dzw = b.z - a.z;
-						const double len = std::hypot(dxw, dzw);
-						if (len < 1.0 || len > 3000.0)
-						{
-							continue;
-						}
-						const double yaw = std::atan2(dxw, dzw);
-						for (double t = 6.0; t < len && realRail < 6000; t += 12.0)
-						{
-							const double x = a.x + dxw * t / len;
-							const double z = a.z + dzw * t / len;
+							const double x = a.x + dx * t / length;
+							const double z = a.z + dz * t / length;
 							const double h = heightAt(x, z);
-							if (terrain.hasWater && h < terrain.waterLevel + 0.8)
-							{
-								continue;
-							}
+							if (terrain.hasWater && h < terrain.waterLevel + 0.8) continue;
 							AddObject(scene, railMesh, pose(x, z, yaw, 12.0, 0.15), request, cx, cz, 1.0f, false);
 							++realRail;
 						}
+					};
+					if (segment.points.size() < 2)
+					{
+						chordFallback();
+						continue;
+					}
+					double pathLength = 0.0;
+					for (std::size_t p = 1; p < segment.points.size(); ++p)
+					{
+						const auto& a = segment.points[p - 1];
+						const auto& b = segment.points[p];
+						pathLength += std::sqrt(std::pow(static_cast<double>(b.x) - a.x, 2.0) +
+							std::pow(static_cast<double>(b.y) - a.y, 2.0) +
+							std::pow(static_cast<double>(b.z) - a.z, 2.0));
+					}
+					if (!(pathLength > 1.0) || pathLength > 10000.0 ||
+						std::none_of(segment.points.begin(), segment.points.end(), [&](const auto& p) { return inRange(p.x, p.z); }))
+					{
+						continue;
+					}
+					const std::size_t sampleCount = std::max<std::size_t>(2, static_cast<std::size_t>(std::ceil(pathLength / 12.0)) + 1);
+					const auto samples = SampleRoadPolyline(segment.points, sampleCount);
+					for (std::size_t p = 1; p < samples.size() && realRail < 6000; ++p)
+					{
+						const auto& a = samples[p - 1];
+						const auto& b = samples[p];
+						const double dx = static_cast<double>(b.x) - a.x;
+						const double dz = static_cast<double>(b.z) - a.z;
+						const double horizontalLength = std::hypot(dx, dz);
+						if (horizontalLength < 0.1 || !inRange((a.x + b.x) * 0.5, (a.z + b.z) * 0.5)) continue;
+						const double x = (a.x + b.x) * 0.5;
+						const double z = (a.z + b.z) * 0.5;
+						const double y = (a.y + b.y) * 0.5 + 0.15;
+						if (terrain.hasWater && heightAt(x, z) < terrain.waterLevel + 0.8) continue;
+						Placement placement;
+						placement.x = x; placement.y = y; placement.z = z;
+						placement.yaw = std::atan2(dx, dz);
+						placement.pitch = std::atan2(static_cast<double>(b.y) - a.y, horizontalLength);
+						AddObject(scene, railMesh, placement, request, cx, cz, 1.0f, false);
+						++realRail;
 					}
 				}
 			}

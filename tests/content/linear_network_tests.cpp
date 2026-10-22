@@ -1,6 +1,9 @@
-﻿#include "openrepublic/content/linear_network.h"
+#include "openrepublic/content/linear_network.h"
 
+#include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -16,41 +19,146 @@ void U32(std::string& out, std::uint32_t value) {
 void F32(std::string& out, float value) {
     out.append(reinterpret_cast<const char*>(&value), sizeof(value));
 }
+void AppendNode(std::string& bytes, float x, std::uint32_t neighbor) {
+    const std::size_t start = bytes.size();
+    F32(bytes, x); F32(bytes, 2.0f); F32(bytes, -3.0f);
+    U32(bytes, 1); U32(bytes, 1); U32(bytes, 1); U32(bytes, 1); U32(bytes, 0);
+    bytes.resize(start + 0x48, '\0');
+    U32(bytes, neighbor); U32(bytes, 0); U32(bytes, 5); U32(bytes, 0);
+}
 std::string EmptyFile() { return std::string(12, '\0'); }
-std::string OneNodeFile() {
+std::string NodeFile() {
     std::string bytes;
-    U32(bytes, 1); U32(bytes, 2); U32(bytes, 3);
+    U32(bytes, 1); U32(bytes, 0); U32(bytes, 3);
     F32(bytes, 100.0f); F32(bytes, 4.5f); F32(bytes, -25.0f);
     U32(bytes, 1); U32(bytes, 1); U32(bytes, 1); U32(bytes, 1); U32(bytes, 0);
     bytes.resize(12 + 0x48, '\0');
-    U32(bytes, 8); U32(bytes, 9); U32(bytes, 10); U32(bytes, 11);
+    U32(bytes, 0); U32(bytes, 0); U32(bytes, 5); U32(bytes, 11);
     return bytes;
 }
+std::string PolylineFile() {
+    std::string bytes;
+    U32(bytes, 2); U32(bytes, 1); U32(bytes, 0);
+    AppendNode(bytes, 0.0f, 1);
+    AppendNode(bytes, 10.0f, 0);
+    const auto header = bytes.size();
+    bytes.resize(header + 0x88, '\0');
+    const std::uint32_t pointCount = 2, nodeA = 0, nodeB = 1;
+    std::memcpy(bytes.data() + header, &pointCount, 4);
+    std::memcpy(bytes.data() + header + 4, &nodeA, 4);
+    std::memcpy(bytes.data() + header + 8, &nodeB, 4);
+    const std::uint8_t supportedConditionalTail = 1;
+    std::memcpy(bytes.data() + header + 0x84, &supportedConditionalTail, 1);
+    for (float x : {0.5f, 9.5f}) {
+        F32(bytes, x); F32(bytes, 2.0f); F32(bytes, -3.0f);
+        bytes.resize(bytes.size() + 12, '\0');
+    }
+    for (int i = 0; i < 6; ++i) U32(bytes, 0);
+    return bytes;
 }
-int main() {
+bool ValidatePackageFile(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) { std::cerr << "FAIL: cannot read " << path.filename().string() << '\n'; return false; }
+    std::string bytes((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    LinearNetwork network;
+    std::string error;
+    if (!ExtractLinearNetwork(bytes, network, &error)) {
+        std::cerr << "FAIL: " << path.filename().string() << ": " << error << '\n';
+        return false;
+    }
+    if (network.nodes.size() == 0 && network.segmentCount != 0) {
+        std::cerr << "FAIL: missing nodes for declared segments in " << path.filename().string() << '\n';
+        return false;
+    }
+    if (network.segmentGeometryComplete && network.segments.size() != network.segmentCount) {
+        std::cerr << "FAIL: segment count mismatch in " << path.filename().string() << '\n';
+        return false;
+    }
+    for (const auto& segment : network.segments) {
+        if (segment.nodeA >= network.nodes.size() || segment.nodeB >= network.nodes.size()) {
+            std::cerr << "FAIL: endpoint node out of range in " << path.filename().string() << '\n';
+            return false;
+        }
+        for (const auto& point : segment.points) {
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z) ||
+                std::abs(point.x) > MaxLinearNetworkWorldCoordinate ||
+                std::abs(point.y) > MaxLinearNetworkWorldCoordinate ||
+                std::abs(point.z) > MaxLinearNetworkWorldCoordinate) {
+                std::cerr << "FAIL: invalid point in " << path.filename().string() << '\n';
+                return false;
+            }
+        }
+    }
+    std::cout << path.parent_path().filename().string() << '/' << path.filename().string()
+              << " nodes=" << network.nodes.size() << " segments=" << network.segmentCount
+              << " decoded=" << network.segments.size() << " points=";
+    std::size_t pointCount = 0;
+    for (const auto& segment : network.segments) pointCount += segment.points.size();
+    std::cout << pointCount << '\n';
+    return true;
+}
+}
+int main(int argc, char** argv) {
     LinearNetwork n;
     std::string error;
     Check(ExtractLinearNetwork(EmptyFile(), n, &error), "12-byte empty network parses");
     Check(n.nodes.empty() && n.segmentCount == 0 && n.groupCount == 0,
           "empty header counts are preserved");
 
-    Check(ExtractLinearNetwork(OneNodeFile(), n, &error), "node and link arrays parse");
+    Check(ExtractLinearNetwork(NodeFile(), n, &error), "node and link arrays parse");
     Check(n.nodes.size() == 1 && n.nodes[0].x == 100.0f && n.nodes[0].y == 4.5f &&
               n.nodes[0].z == -25.0f, "node XYZ is retained");
-    Check(n.nodes[0].links[0] == std::vector<std::uint32_t>{8} &&
+    Check(n.nodes[0].links[0] == std::vector<std::uint32_t>{0} &&
               n.nodes[0].links[3] == std::vector<std::uint32_t>{11},
           "four arrays are retained without semantic assumptions");
-    Check(n.segmentCount == 2 && n.unparsedSegmentCount == 2 && !n.segmentDiagnostic.empty(),
-          "segment records fail closed with an explicit diagnostic");
+
+    Check(ExtractLinearNetwork(PolylineFile(), n, &error), "segment point records parse");
+    Check(n.segmentGeometryComplete && n.segments.size() == 1 &&
+              n.segments[0].nodeA == 0 && n.segments[0].nodeB == 1 &&
+              n.segments[0].points.size() == 2 && n.segments[0].points[1].x == 9.5f,
+          "segment references and ordered XYZ points are retained");
+
+    auto unknownTail = PolylineFile();
+    const std::size_t segmentHeader = 12 + 2 * (0x48 + 4 * 4);
+    unknownTail[segmentHeader + 0x85] = 1;
+    Check(ExtractLinearNetwork(unknownTail, n, &error) && !n.segmentGeometryComplete &&
+              n.segments.size() == 1 && !n.segmentDiagnostic.empty(),
+          "unknown conditional tail returns a safe geometry prefix with a diagnostic");
 
     const auto previous = n.nodes.size();
-    auto truncated = OneNodeFile(); truncated.pop_back();
+    auto truncated = PolylineFile(); truncated.pop_back();
     Check(!ExtractLinearNetwork(truncated, n, &error) && n.nodes.size() == previous,
           "truncated data fails transactionally");
-    auto outOfBounds = OneNodeFile();
+    auto outOfBounds = NodeFile();
     const float far = 20001.0f;
     std::memcpy(outOfBounds.data() + 12, &far, sizeof(far));
     Check(!ExtractLinearNetwork(outOfBounds, n, &error) && n.nodes.size() == previous,
           "out-of-world node fails transactionally");
-    return failures == 0 ? 0 : 1;
+    auto outOfBoundsPoint = PolylineFile();
+    const std::size_t pointOffset = segmentHeader + 0x88;
+    std::memcpy(outOfBoundsPoint.data() + pointOffset, &far, sizeof(far));
+    Check(!ExtractLinearNetwork(outOfBoundsPoint, n, &error) && n.nodes.size() == previous,
+          "out-of-world segment point fails transactionally");
+    if (failures != 0) return 1;
+    if (argc > 1) {
+        const std::filesystem::path root(argv[1]);
+        std::size_t checked = 0;
+        if (std::filesystem::is_regular_file(root)) {
+            if (!ValidatePackageFile(root)) return 1;
+            checked = 1;
+        } else if (std::filesystem::is_directory(root)) {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+                if (!entry.is_regular_file()) continue;
+                const auto name = entry.path().filename().string();
+                if (name == "rail.bin" || name == "rail_secondary.bin" ||
+                    name == "electro_high.bin" || name == "electro_low.bin" ||
+                    name == "fence.bin" || name == "pipe.bin") {
+                    if (!ValidatePackageFile(entry.path())) return 1;
+                    ++checked;
+                }
+            }
+        }
+        std::cout << "checked_files=" << checked << '\n';
+    }
+    return 0;
 }
