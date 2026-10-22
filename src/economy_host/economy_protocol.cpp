@@ -890,6 +890,36 @@ std::string Dispatcher::HandleLine(std::string_view line) {
       return invalid("unknown command kind");
     out =
         Json{{"errorCode", Error(s.error)}, {"handle", std::to_string(s.handle)}, {"state", State(s.state)}};
+  } else if (method == "create_haul_orders") {
+    // Batch of up to 64 haul orders under one revision check; each entry succeeds or fails on its own.
+    if (!Fields(req, {"revision", "orders"}, message))
+      return invalid(message);
+    std::uint64_t revision{};
+    if (!U64(req, "revision", revision, message))
+      return invalid(message);
+    if (!req["orders"].is_array() || req["orders"].empty() || req["orders"].size() > 64)
+      return invalid("orders must be an array of 1 to 64 entries");
+    if (role_ != Role::Controller) {
+      out = Json{{"errorCode", "permission_denied"}};
+    } else {
+      Json results = Json::array();
+      for (const auto &o : req["orders"]) {
+        if (!o.is_object() || !NestedFields(o, {"source", "destination", "resource", "vehicleType"}, message))
+          return invalid(o.is_object() ? message : "each order must be an object");
+        std::uint64_t source{}, destination{};
+        std::string resource, vehicle;
+        if (!Unsigned(o, "source", UINT32_MAX, source, message) ||
+            !Unsigned(o, "destination", UINT32_MAX, destination, message) ||
+            !String(o, "resource", resource, message) || !String(o, "vehicleType", vehicle, message))
+          return invalid(message);
+        // Queuing does not change the revision, so the single check above covers the whole batch.
+        const auto s = api_->CreateHaulOrder(revision, static_cast<economy::BuildingId>(source),
+                                             static_cast<economy::BuildingId>(destination), resource, vehicle);
+        results.push_back(
+            Json{{"errorCode", Error(s.error)}, {"handle", std::to_string(s.handle)}, {"state", State(s.state)}});
+      }
+      out = Json{{"errorCode", "none"}, {"results", results}};
+    }
   } else if (method == "reload_rules") {
     // Swaps in a Lua-tuned catalog of identical structure between ticks (controller only).
     if (!Fields(req, {"text"}, message))

@@ -58,6 +58,22 @@ int main() {
 
   economy_host::Dispatcher controller(economy_host::Role::Controller, catalog);
   const auto controllerHello = Response(controller, Request("controller-hello", "hello"));
+  {
+    // Batch haul orders: bounds are enforced, observers are denied, entries are queued independently.
+    const auto order = Json{{"source", 1}, {"destination", 2}, {"resource", "grain"}, {"vehicleType", "truck"}};
+    const auto batch = Response(controller, Request("batch", "create_haul_orders",
+                                                     Json{{"revision", "0"}, {"orders", Json::array({order, order})}}));
+    ok &= Check(batch["ok"] && batch["result"]["results"].size() == 2 &&
+                    batch["result"]["results"][1]["handle"] != batch["result"]["results"][0]["handle"],
+                "batch haul orders return one result per order");
+    ok &= Check(!Response(controller, Request("empty", "create_haul_orders",
+                                               Json{{"revision", "0"}, {"orders", Json::array()}}))["ok"],
+                "an empty batch is rejected");
+    ok &= Check(Response(observer, Request("deny", "create_haul_orders",
+                                            Json{{"revision", "0"}, {"orders", Json::array({order})}}))["result"]["errorCode"] ==
+                    "permission_denied",
+                "observers cannot batch haul orders");
+  }
   const std::string controllerSession = controllerHello.value("sessionId", std::string());
   ok &= Check(!controllerSession.empty() && controllerSession != observerSession,
               "independent host dispatchers receive different session IDs");
