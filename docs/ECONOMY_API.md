@@ -7,9 +7,7 @@ OpenRepublic interfaces; they make no compatibility claim about WRSR.
 
 The host reuses `third_party/WickedEngine/Editor/json.hpp`. CMake exposes the
 containing directory as the `OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR` cache path.
-It defaults to this checkout's initialized Wicked Engine submodule, or to
-`D:/.CODEX_Projects/OpenRepublic/third_party/WickedEngine/Editor` when that
-submodule header is absent and the main checkout is available. Set the cache
+It defaults to this checkout's initialized Wicked Engine submodule. Set the cache
 path explicitly when the header is stored elsewhere.
 
 ## Host and framing
