@@ -17,7 +17,7 @@ namespace openrepublic::preview
 	namespace
 	{
 		constexpr double kFarHalfExtent = 7000.0;
-		constexpr std::uint32_t kFarSamples = 769;
+		constexpr std::uint32_t kFarSamples = 1435; // ~9.8 m spacing = the 2048 heightmap's own sample spacing
 		constexpr float kPi = 3.14159265358979f;
 
 		std::uint32_t HashInts(int x, int z, std::uint32_t seed)
