@@ -95,6 +95,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool mapRegion = false;
 	double mapRadiusMeters = 0.0;
 	std::string buildingTypeName;
+	std::string economyHost;
+	int economyPort = 0;
 	std::optional<openrepublic::runtime::GraphicsSettings> graphicsSettings;
 	int buildingModelLevel = 0;
 	std::vector<std::filesystem::path> nmfTextureRoots;
@@ -129,6 +131,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			else if (std::wstring_view(arguments[i]) == L"--content-root" && i + 1 < argumentCount)
 			{
 				contentRoot = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--economy-url" && i + 1 < argumentCount)
+			{
+				// http://127.0.0.1:PORT (loopback only)
+				const std::wstring url = arguments[++i];
+				const std::wstring prefix = L"http://127.0.0.1:";
+				if (url.rfind(prefix, 0) == 0 && url.size() > prefix.size() && url.size() <= prefix.size() + 5)
+				{
+					const int port = std::wcstol(url.c_str() + prefix.size(), nullptr, 10);
+					if (port > 0 && port < 65536)
+					{
+						economyHost = "127.0.0.1";
+						economyPort = port;
+					}
+				}
+				if (economyPort == 0)
+				{
+					nmfCaptureArgumentError = "--economy-url requires http://127.0.0.1:<port>";
+				}
 			}
 			else if (std::wstring_view(arguments[i]) == L"--graphics" && i + 1 < argumentCount)
 			{
@@ -584,6 +605,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	if (graphicsSettings)
 	{
 		application.SetGraphicsSettings(*graphicsSettings);
+	}
+	if (economyPort > 0)
+	{
+		application.SetEconomyOverlay(economyHost, economyPort);
 	}
 	if (mapPlacementRequest)
 	{

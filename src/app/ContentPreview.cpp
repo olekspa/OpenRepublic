@@ -1322,7 +1322,8 @@ namespace openrepublic::preview
 	bool CreateMapRegionPreview(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request,
 		const std::filesystem::path& contentRoot, double radiusMeters,
-		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error)
+		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
+		std::vector<RegionInstance>* outInstances)
 	{
 		using namespace openrepublic::content;
 		constexpr std::size_t kMaxRegionObjects = 1500;
@@ -1549,6 +1550,13 @@ namespace openrepublic::preview
 			matrix._41 = static_cast<float>(placed.X() - center.X());
 			matrix._43 = static_cast<float>(placed.Z() - center.Z());
 			scene.transforms.GetComponent(instance)->MatrixTransform(matrix);
+			if (outInstances != nullptr)
+			{
+				const std::string prefix = "MIRRORZ_";
+				const bool mirroredName = placed.typeName.rfind(prefix, 0) == 0;
+				outInstances->push_back({ instance,
+					mirroredName ? placed.typeName.substr(prefix.size()) : placed.typeName, placed.X(), placed.Z() });
+			}
 			++instances;
 		}
 

@@ -2,6 +2,7 @@
 
 #include "WickedEngine.h"
 #include "openrepublic/agent_api/agent_api.h"
+#include "EconomyOverlay.h"
 #include "openrepublic/content/map_placement.h"
 #include "openrepublic/runtime/graphics_settings.h"
 #include "openrepublic/content/terrain_dds.h"
@@ -27,6 +28,7 @@ namespace openrepublic
 		void SetNmfTextureRoots(std::vector<std::filesystem::path> roots);
 		void SetNmfMaterialPath(std::filesystem::path path);
 		void SetGraphicsSettings(openrepublic::runtime::GraphicsSettings settings);
+		void SetEconomyOverlay(std::string host, int port);
 		void SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
 			bool regionPreview, std::filesystem::path contentRoot);
 		void SetNmfUnlitPreview(bool enabled);
@@ -81,6 +83,10 @@ namespace openrepublic
 		double mapRadiusMeters = 0.0;
 		bool mapRegionPreview = false;
 		float cameraSpeedScale = 1.0f;
+		std::string economyHost;
+		int economyPort = 0;
+		std::unique_ptr<openrepublic::preview::EconomyOverlay> economyOverlay;
+		std::vector<openrepublic::preview::RegionInstance> regionInstances;
 		std::optional<openrepublic::runtime::GraphicsSettings> graphicsSettings;
 		std::filesystem::path mapContentRoot;
 		bool nmfUnlitPreview = false;

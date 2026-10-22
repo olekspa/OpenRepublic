@@ -2,6 +2,7 @@
 
 #include "WickedEngine.h"
 #include "openrepublic/content/glb_container.h"
+#include "EconomyOverlay.h"
 #include "openrepublic/content/glb_semantic.h"
 #include "openrepublic/content/map_placement.h"
 #include "openrepublic/content/terrain_dds.h"
@@ -184,7 +185,8 @@ namespace openrepublic::preview
 	bool CreateMapRegionPreview(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request,
 		const std::filesystem::path& contentRoot, double radiusMeters,
-		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error);
+		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
+		std::vector<RegionInstance>* outInstances = nullptr);
 
 	bool CreateMapTerrainAroundPlacement(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request, const NmfPreviewFrame& frame,

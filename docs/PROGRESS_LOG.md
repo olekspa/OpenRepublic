@@ -33,3 +33,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - Launching the game: `steam.exe -applaunch 784150` works; running the game launcher exe directly or `steam://rungameid` fails (reported by the project owner on 2026-10-21). The game and saves remain read-only research sources per `AGENTS.md`.
 - Computer-use access to OpenRepublic: `request_access` only matches installed Start-menu apps or running processes; the running app is matched by executable name (`OpenRepublic.exe`) while it is running, and a Start-menu shortcut `OpenRepublic` (region view of a save) exists for launching it.
 - Ghidra projects must live under a path without dot-prefixed folders (e.g. `D:\ghidra_claude_c3d`); trace scripts and outputs are archived in the private research folder `OpenRepublic-Research\ghidra-claude`.
+
+- 2026-10-21 Region view: live economy overlay (`--economy-url http://127.0.0.1:PORT`) polls the bridge, tints buildings by stall reason, marks trucks; synthetic demo controls are hidden in region mode. Verified visually: status line showed tick 12, 2/10 buildings running on the real N22 layout. Per-building tint legibility not yet judged.

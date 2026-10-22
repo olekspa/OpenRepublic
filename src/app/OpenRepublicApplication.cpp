@@ -277,6 +277,12 @@ namespace openrepublic
 		graphicsSettings = settings;
 	}
 
+	void OpenRepublicApplication::SetEconomyOverlay(std::string host, int port)
+	{
+		economyHost = std::move(host);
+		economyPort = port;
+	}
+
 	void OpenRepublicApplication::SetNmfUnlitPreview(bool enabled)
 	{
 		nmfUnlitPreview = enabled;
@@ -555,7 +561,7 @@ namespace openrepublic
 				if (mapRegionPreview && mapPlacement)
 				{
 					created = preview::CreateMapRegionPreview(previewWorld, *mapPlacement, mapContentRoot,
-						mapRadiusMeters, nmfPreviewCameraTarget, nmfPreviewCameraDistance, description, error);
+						mapRadiusMeters, nmfPreviewCameraTarget, nmfPreviewCameraDistance, description, error, &regionInstances);
 					geometryAuditSummary = "map region preview (per-model audits are in the records above)";
 				}
 				else
@@ -572,6 +578,10 @@ namespace openrepublic
 					if (mapRegionPreview)
 					{
 						wilog("[OpenRepublic] %s", description.c_str());
+						if (economyPort > 0 && !nmfCaptureMode)
+						{
+							economyOverlay = std::make_unique<openrepublic::preview::EconomyOverlay>(economyHost, economyPort);
+						}
 					}
 					else if (mapPlacement)
 					{
@@ -874,6 +884,25 @@ namespace openrepublic
 			renderPath->camera->UpdateCamera();
 		}
 
+		if (mapRegionPreview && nmfPreviewLoaded)
+		{
+			// A map region replaces the synthetic demo: drop its controls and keep one status line.
+			for (wi::gui::Widget* widget : { static_cast<wi::gui::Widget*>(&pauseButton), static_cast<wi::gui::Widget*>(&stepButton),
+				static_cast<wi::gui::Widget*>(&roadButton), static_cast<wi::gui::Widget*>(&buildRoadButton),
+				static_cast<wi::gui::Widget*>(&placeStorageButton), static_cast<wi::gui::Widget*>(&buildFarmButton),
+				static_cast<wi::gui::Widget*>(&buildMillButton), static_cast<wi::gui::Widget*>(&cancelPlacementButton),
+				static_cast<wi::gui::Widget*>(&setTruckFarmButton), static_cast<wi::gui::Widget*>(&setTruckMillButton),
+				static_cast<wi::gui::Widget*>(&setTruckStorageButton), static_cast<wi::gui::Widget*>(&queueTruckPlanButton),
+				static_cast<wi::gui::Widget*>(&selectNextStorageButton), static_cast<wi::gui::Widget*>(&saveButton),
+				static_cast<wi::gui::Widget*>(&loadButton), static_cast<wi::gui::Widget*>(&reloadRulesButton) })
+			{
+				gui.RemoveWidget(widget);
+			}
+			simulationStatus.SetPos(XMFLOAT2(18, 18));
+			simulationStatus.SetSize(XMFLOAT2(760, 44));
+			simulationStatus.SetText(economyOverlay ? "Economy overlay: connecting..." : uiNotice);
+		}
+
 		ActivatePath(renderPath.get());
 		if (!capturePreview)
 		{
@@ -887,6 +916,14 @@ namespace openrepublic
 		if (nmfCaptureMode)
 		{
 			return;
+		}
+		if (economyOverlay && mapPlacement)
+		{
+			const std::string status = economyOverlay->Update(previewWorld, regionInstances, *mapPlacement);
+			if (!status.empty())
+			{
+				simulationStatus.SetText(status);
+			}
 		}
 
 		if (simulationPaused)
@@ -1898,6 +1935,10 @@ namespace openrepublic
 
 	void OpenRepublicApplication::UpdateStatusLabel()
 	{
+		if (mapRegionPreview)
+		{
+			return;
+		}
 		const openrepublic::sim::Snapshot snapshot = QuerySimulationSnapshot();
 		std::ostringstream text;
 		text << "Tick " << snapshot.tick
