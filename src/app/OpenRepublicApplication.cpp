@@ -264,11 +264,12 @@ namespace openrepublic
 	}
 
 	void OpenRepublicApplication::SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
-		bool regionPreview, std::filesystem::path contentRoot)
+		bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel)
 	{
 		mapPlacement = std::move(request);
 		mapRadiusMeters = radiusMeters;
 		mapRegionPreview = regionPreview;
+		mapRegionModelLevel = regionModelLevel;
 		mapContentRoot = std::move(contentRoot);
 	}
 
@@ -561,7 +562,8 @@ namespace openrepublic
 				if (mapRegionPreview && mapPlacement)
 				{
 					created = preview::CreateMapRegionPreview(previewWorld, *mapPlacement, mapContentRoot,
-						mapRadiusMeters, nmfPreviewCameraTarget, nmfPreviewCameraDistance, description, error, &regionInstances);
+						mapRadiusMeters, mapRegionModelLevel, nmfPreviewCameraTarget, nmfPreviewCameraDistance,
+						description, error, &regionInstances);
 					geometryAuditSummary = "map region preview (per-model audits are in the records above)";
 				}
 				else

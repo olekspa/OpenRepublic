@@ -30,7 +30,7 @@ namespace openrepublic
 		void SetGraphicsSettings(openrepublic::runtime::GraphicsSettings settings);
 		void SetEconomyOverlay(std::string host, int port);
 		void SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
-			bool regionPreview, std::filesystem::path contentRoot);
+			bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel);
 		void SetNmfUnlitPreview(bool enabled);
 		void SetNmfMaterialUnlitPreview(bool enabled);
 		void SetNmfCapturePaths(std::vector<std::filesystem::path> paths);
@@ -82,6 +82,7 @@ namespace openrepublic
 		std::optional<openrepublic::content::MapPlacementRequest> mapPlacement;
 		double mapRadiusMeters = 0.0;
 		bool mapRegionPreview = false;
+		int mapRegionModelLevel = 0;
 		float cameraSpeedScale = 1.0f;
 		std::string economyHost;
 		int economyPort = 0;

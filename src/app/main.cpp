@@ -94,6 +94,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool mapBuildingIndexGiven = false;
 	bool mapRegion = false;
 	double mapRadiusMeters = 0.0;
+	int mapBuildingModelLevel = 0;
+	bool mapBuildingModelLevelGiven = false;
 	std::string buildingTypeName;
 	std::string economyHost;
 	int economyPort = 0;
@@ -204,6 +206,26 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				else
 				{
 					mapRadiusMeters = parsed;
+				}
+			}
+			else if (std::wstring_view(arguments[i]) == L"--map-lod")
+			{
+				if (i + 1 >= argumentCount)
+				{
+					nmfCaptureArgumentError = "--map-lod requires 0, 1 or 2";
+				}
+				else
+				{
+					const std::wstring_view level = arguments[++i];
+					if (level == L"0" || level == L"1" || level == L"2")
+					{
+						mapBuildingModelLevel = level[0] - L'0';
+						mapBuildingModelLevelGiven = true;
+					}
+					else
+					{
+						nmfCaptureArgumentError = "--map-lod requires 0, 1 or 2";
+					}
 				}
 			}
 			else if (std::wstring_view(arguments[i]) == L"--building-type" && i + 1 < argumentCount)
@@ -378,6 +400,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			}
 		}
 		LocalFree(arguments);
+	}
+	if (nmfCaptureArgumentError.empty() && mapBuildingModelLevelGiven && (mapPackage.empty() || !mapRegion))
+	{
+		nmfCaptureArgumentError = "--map-lod requires --map-package and --map-region";
 	}
 	std::optional<openrepublic::content::MapPlacementRequest> mapPlacementRequest;
 	if (nmfCaptureArgumentError.empty() && !mapPackage.empty())
@@ -612,7 +638,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	if (mapPlacementRequest)
 	{
-		application.SetMapPlacement(std::move(*mapPlacementRequest), mapRadiusMeters, mapRegion, contentRoot);
+		application.SetMapPlacement(std::move(*mapPlacementRequest), mapRadiusMeters, mapRegion,
+			contentRoot, mapBuildingModelLevel);
 	}
 	application.SetNmfUnlitPreview(nmfUnlitPreview);
 	application.SetNmfMaterialUnlitPreview(nmfMaterialUnlitPreview);

@@ -1321,13 +1321,18 @@ namespace openrepublic::preview
 
 	bool CreateMapRegionPreview(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request,
-		const std::filesystem::path& contentRoot, double radiusMeters,
+		const std::filesystem::path& contentRoot, double radiusMeters, int modelLevel,
 		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
 		std::vector<RegionInstance>* outInstances)
 	{
 		using namespace openrepublic::content;
 		constexpr std::size_t kMaxRegionObjects = 1500;
 		constexpr std::size_t kMaxRegionTypes = 160;
+		if (modelLevel < 0 || modelLevel > 2)
+		{
+			error = "map region model level must be 0, 1 or 2";
+			return false;
+		}
 		const double radius = radiusMeters > 0.0 ? radiusMeters : 400.0;
 		const PlacedBuilding& center = request.placement;
 
@@ -1484,6 +1489,7 @@ namespace openrepublic::preview
 		std::size_t failedLoads = 0;
 		std::size_t skippedByLimit = 0;
 		std::set<std::string> missingTypeNames;
+		std::set<std::string> lodFallbackTypeNames;
 		for (const std::size_t index : selected)
 		{
 			const PlacedBuilding& placed = request.allPlacements[index];
@@ -1506,11 +1512,33 @@ namespace openrepublic::preview
 					const BuildingTypeDefinition* type = FindBuildingType(types, baseName);
 					BuildingTypeAssetPaths assets;
 					std::string assetError;
-					if (type == nullptr || !ResolveBuildingTypeAssets(*type, 0, contentRoot, assets, &assetError))
+					int selectedLod = -1;
+					if (type != nullptr)
+					{
+						for (int candidateLod = modelLevel; candidateLod >= 0; --candidateLod)
+						{
+							if ((candidateLod == 2 && !type->lod2.has_value()) ||
+								(candidateLod == 1 && !type->lod1.has_value()))
+							{
+								continue;
+							}
+							if (ResolveBuildingTypeAssets(*type, candidateLod, contentRoot, assets, &assetError))
+							{
+								selectedLod = candidateLod;
+								break;
+							}
+						}
+					}
+					else
+					{
+						assetError = "building type definition was not found";
+					}
+					if (selectedLod < 0)
 					{
 						++unresolvedTypes;
 						missingTypeNames.insert(placed.typeName);
-						wilog("[OpenRepublic] Map region type '%s' has no resolvable model", placed.typeName.c_str());
+						wilog("[OpenRepublic] Map region type '%s' has no resolvable model at or below LOD %d: %s",
+							placed.typeName.c_str(), modelLevel, assetError.c_str());
 					}
 					else
 					{
@@ -1527,6 +1555,12 @@ namespace openrepublic::preview
 							if (wi::scene::ObjectComponent* own = scene.objects.GetComponent(meshEntity))
 							{
 								own->SetRenderable(false);
+							}
+							if (selectedLod < modelLevel)
+							{
+								lodFallbackTypeNames.insert(placed.typeName);
+								wilog("[OpenRepublic] Map region type '%s' requested LOD %d; using lower available LOD %d",
+									placed.typeName.c_str(), modelLevel, selectedLod);
 							}
 						}
 						else
@@ -1565,9 +1599,11 @@ namespace openrepublic::preview
 		std::ostringstream summary;
 		summary << "Map region: " << instances << " building instances of "
 			<< (meshByType.size() - unresolvedTypes - failedLoads) << " models within " << radius
-			<< " m of placement " << request.placementIndex + 1 << '/' << request.placementCount << " ("
+			<< " m of placement " << request.placementIndex + 1 << '/' << request.placementCount << " at requested LOD "
+			<< modelLevel << " ("
 			<< center.typeName << "); " << selected.size() << " placements selected, " << unresolvedTypes
-			<< " unresolved types, " << failedLoads << " failed loads, " << skippedByLimit
+			<< " unresolved types, " << failedLoads << " failed loads, " << lodFallbackTypeNames.size()
+			<< " types used a lower available LOD, " << skippedByLimit
 			<< " skipped by the instance/type limits; " << roadEdges << " road links drawn as chords; 1:1 metres,"
 			<< " verified terrain transform, placement"
 			<< " matrices applied as stored";
