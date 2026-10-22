@@ -14,18 +14,40 @@ add_subdirectory(src/sim)
 add_subdirectory(src/agent_api)
 add_subdirectory(src/content)
 add_subdirectory(src/economy)
+add_subdirectory(src/economy_api)
 
 # The stdio Agent API adapter reuses the same MIT-licensed JSON header pinned
 # with Wicked Engine's Editor importer. The authoritative API/simulation remain
 # buildable without this optional transport dependency.
 set(OPENREPUBLIC_AGENT_HOST_AVAILABLE FALSE)
+if(NOT DEFINED OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR)
+    set(_OPENREPUBLIC_DEFAULT_JSON_INCLUDE_DIR
+        "${PROJECT_SOURCE_DIR}/third_party/WickedEngine/Editor")
+    if(NOT EXISTS "${_OPENREPUBLIC_DEFAULT_JSON_INCLUDE_DIR}/json.hpp" AND
+       EXISTS "D:/.CODEX_Projects/OpenRepublic/third_party/WickedEngine/Editor/json.hpp")
+        set(_OPENREPUBLIC_DEFAULT_JSON_INCLUDE_DIR
+            "D:/.CODEX_Projects/OpenRepublic/third_party/WickedEngine/Editor")
+    endif()
+    set(OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR "${_OPENREPUBLIC_DEFAULT_JSON_INCLUDE_DIR}" CACHE PATH
+        "Directory containing the pinned Wicked Engine Editor/json.hpp header")
+endif()
 set(OPENREPUBLIC_WICKED_JSON_HEADER
+    "${OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR}/json.hpp")
+set(OPENREPUBLIC_AGENT_JSON_HEADER
     "${PROJECT_SOURCE_DIR}/third_party/WickedEngine/Editor/json.hpp")
-if(EXISTS "${OPENREPUBLIC_WICKED_JSON_HEADER}")
+if(EXISTS "${OPENREPUBLIC_AGENT_JSON_HEADER}")
     add_subdirectory(src/agent_host)
     set(OPENREPUBLIC_AGENT_HOST_AVAILABLE TRUE)
 else()
     message(STATUS "OpenRepublicAgentHost disabled: pinned nlohmann/json.hpp is unavailable")
+endif()
+
+set(OPENREPUBLIC_ECONOMY_HOST_AVAILABLE FALSE)
+if(EXISTS "${OPENREPUBLIC_WICKED_JSON_HEADER}")
+    add_subdirectory(src/economy_host)
+    set(OPENREPUBLIC_ECONOMY_HOST_AVAILABLE TRUE)
+else()
+    message(STATUS "OpenRepublicEconomyHost disabled: pinned nlohmann/json.hpp is unavailable")
 endif()
 
 if(OPENREPUBLIC_BUILD_CLIENT)
@@ -62,9 +84,14 @@ if(OPENREPUBLIC_BUILD_TESTS)
     add_subdirectory(tests/agent_api)
     add_subdirectory(tests/content)
     add_subdirectory(tests/economy)
+    add_subdirectory(tests/economy_api)
 
     if(OPENREPUBLIC_AGENT_HOST_AVAILABLE)
         add_subdirectory(tests/agent_host)
+    endif()
+
+    if(OPENREPUBLIC_ECONOMY_HOST_AVAILABLE)
+        add_subdirectory(tests/economy_host)
     endif()
 
     if(OPENREPUBLIC_BUILD_CLIENT AND TARGET LUA)
