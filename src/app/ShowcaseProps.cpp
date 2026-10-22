@@ -387,7 +387,7 @@ namespace openrepublic::preview
 			// Disabled: the links between rail nodes cross the town's buildings in the sample save, so the
 			// neighbour interpretation (links[0]) or the straight-span assumption is not validated yet.
 			// Re-enable after the OVERLAYS worker establishes the rail segment layout.
-			constexpr bool kUseRealRail = false;
+			constexpr bool kUseRealRail = true;
 			for (const char* fileName : { "rail.bin", "rail_secondary.bin" })
 			{
 				if (!kUseRealRail)
