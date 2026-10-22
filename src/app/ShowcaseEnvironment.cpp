@@ -432,6 +432,8 @@ namespace openrepublic::preview
 		}
 		data.waterLevel = level;
 		data.hasWater = level > data.grid.minHeight + 0.5f;
+		// Maps with real mountains keep their true relief; flat maps get the presentation boost.
+		data.reliefScale = std::clamp(1.0f - (data.grid.maxHeight - std::max(level, data.grid.minHeight) - 300.0f) / 250.0f, 0.0f, 1.0f);
 		return true;
 	}
 
@@ -446,12 +448,12 @@ namespace openrepublic::preview
 		rawHeight += 9.0f * (Fbm(worldX / 210.0 + 5.0, worldZ / 210.0 - 8.0, 3, 41) - 0.5f) *
 			SmoothStep(static_cast<float>(data.nearHalfExtent) * 1.1f, static_cast<float>(data.nearHalfExtent) * 2.4f, static_cast<float>(dist)) *
 			SmoothStep(data.waterLevel + 2.0f, data.waterLevel + 14.0f, rawHeight);
-		const float boost = 1.0f + 1.5f * SmoothStep(900.0f, 3200.0f, static_cast<float>(dist));
+		const float boost = 1.0f + 1.5f * data.reliefScale * SmoothStep(900.0f, 3200.0f, static_cast<float>(dist));
 		float height = data.waterLevel + (rawHeight - data.waterLevel) * boost;
 		const float ridge = 1.0f - std::fabs(2.0f * Fbm(worldX / 2300.0 + 9.0, worldZ / 2300.0 - 4.0, 5, 19) - 1.0f);
 		const float range = Fbm(worldX / 3600.0 + 3.0, worldZ / 3600.0 + 11.0, 2, 23);
 		const float landward = SmoothStep(data.waterLevel + 3.0f, data.waterLevel + 30.0f, rawHeight);
-		height += 360.0f * SmoothStep(1500.0f, 6500.0f, static_cast<float>(dist)) * ridge * ridge *
+		height += 360.0f * data.reliefScale * SmoothStep(1500.0f, 6500.0f, static_cast<float>(dist)) * ridge * ridge *
 			SmoothStep(0.25f, 0.5f, range) * landward;
 		return height;
 	}
@@ -473,7 +475,7 @@ namespace openrepublic::preview
 		const XMFLOAT3 meadow(0.22f, 0.30f, 0.09f);
 		const XMFLOAT3 dry(0.34f, 0.31f, 0.14f);
 		const XMFLOAT3 forestFloor(0.055f, 0.105f, 0.045f);
-		const XMFLOAT3 rock(0.26f, 0.25f, 0.23f);
+		const XMFLOAT3 rock(0.22f, 0.22f, 0.22f);
 		const XMFLOAT3 snow(0.78f, 0.80f, 0.84f);
 		const XMFLOAT3 sand(0.40f, 0.35f, 0.24f);
 

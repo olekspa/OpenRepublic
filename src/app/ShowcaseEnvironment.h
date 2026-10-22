@@ -38,6 +38,8 @@ namespace openrepublic::preview
 		double nearHalfExtent = 0.0;
 		float waterLevel = 0.0f;
 		bool hasWater = false;
+		// 1 for flat maps (relief is exaggerated), 0 for maps that already have real mountains.
+		float reliefScale = 1.0f;
 	};
 
 	// Optional authentic tree meshes loaded from a local WRSR install (never committed or published).

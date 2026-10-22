@@ -14,7 +14,7 @@ constexpr std::size_t kNameBytes = 64;
 constexpr std::size_t kSpeciesHeaderBytes = kNameBytes + 4;
 constexpr std::size_t kRecordBytes = 17;
 constexpr std::size_t kTrailerBytes = 4;
-constexpr std::uintmax_t kMaxFileBytes = 64u * 1024u * 1024u;
+constexpr std::uintmax_t kMaxFileBytes = 256u * 1024u * 1024u;
 constexpr double kMaxCoordinate = 1'000'000.0;
 
 bool Fail(std::string* error, const std::string& message) {
@@ -122,7 +122,7 @@ bool LoadTreePlacements(const std::filesystem::path& mapDirectory,
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
     if (ec || size > kMaxFileBytes)
-        return Fail(error, "trees.bin is missing or exceeds the 64 MiB limit");
+        return Fail(error, "trees.bin is missing or exceeds the 256 MiB limit");
     std::string bytes(static_cast<std::size_t>(size), '\0');
     std::ifstream in(path, std::ios::binary);
     in.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));

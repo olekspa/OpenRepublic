@@ -124,8 +124,8 @@ bool LoadMapPlacements(const std::filesystem::path& mapDirectory,
     std::error_code ec;
     const auto path = mapDirectory / "buildings_game.bin";
     const auto bytes = std::filesystem::file_size(path, ec);
-    if (ec || bytes > 64u * 1024u * 1024u)
-        return Fail(error, "buildings_game.bin is missing or exceeds the 64 MiB limit");
+    if (ec || bytes > 512u * 1024u * 1024u)
+        return Fail(error, "buildings_game.bin is missing or exceeds the 512 MiB limit");
     std::string data(static_cast<std::size_t>(bytes), '\0');
     std::ifstream in(path, std::ios::binary);
     in.read(data.data(), static_cast<std::streamsize>(data.size()));
