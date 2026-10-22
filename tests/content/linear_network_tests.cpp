@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 
 using namespace openrepublic::content;
@@ -118,12 +119,49 @@ int main(int argc, char** argv) {
               n.segments[0].points.size() == 2 && n.segments[0].points[1].x == 9.5f,
           "segment references and ordered XYZ points are retained");
 
+    LinearNetwork emptyNetwork;
+    std::vector<PowerLinePolylineCandidate> powerLines;
+    Check(ExtractLinearNetwork(EmptyFile(), emptyNetwork, &error) &&
+              ExtractPowerLinePolylineCandidates(emptyNetwork, powerLines, &error) &&
+              powerLines.empty(),
+          "an empty complete network produces no power-line candidates");
+
+    Check(ExtractPowerLinePolylineCandidates(n, powerLines, &error) &&
+              powerLines.size() == 1 && powerLines[0].nodeA == 0 && powerLines[0].nodeB == 1 &&
+              powerLines[0].points.size() == 2 && powerLines[0].points[0].x == 0.5f &&
+              powerLines[0].points[1].x == 9.5f && powerLines[0].points[1].y == 2.0f &&
+              powerLines[0].points[1].z == -3.0f,
+          "complete power-line candidate paths preserve endpoint ids and ordered XYZ");
+
     auto unknownTail = PolylineFile();
     const std::size_t segmentHeader = 12 + 2 * (0x48 + 4 * 4);
     unknownTail[segmentHeader + 0x85] = 1;
     Check(ExtractLinearNetwork(unknownTail, n, &error) && !n.segmentGeometryComplete &&
               n.segments.size() == 1 && !n.segmentDiagnostic.empty(),
           "unknown conditional tail returns a safe geometry prefix with a diagnostic");
+    const auto previousPowerLines = powerLines;
+    Check(!ExtractPowerLinePolylineCandidates(n, powerLines, &error) &&
+              !error.empty() && powerLines.size() == previousPowerLines.size() &&
+              powerLines[0].points[1].x == previousPowerLines[0].points[1].x,
+          "incomplete segment prefixes are not exposed as power-line candidates");
+
+    LinearNetwork invalidPowerNetwork;
+    Check(ExtractLinearNetwork(PolylineFile(), invalidPowerNetwork, &error),
+          "fresh network parses for power-line candidate validation");
+    invalidPowerNetwork.segments[0].nodeB = 2;
+    Check(!ExtractPowerLinePolylineCandidates(invalidPowerNetwork, powerLines, &error) &&
+              !error.empty() && powerLines.size() == previousPowerLines.size(),
+          "invalid endpoint ids fail transactionally");
+    invalidPowerNetwork.segments[0].nodeB = 1;
+    invalidPowerNetwork.segments[0].points[0].y = std::numeric_limits<float>::quiet_NaN();
+    Check(!ExtractPowerLinePolylineCandidates(invalidPowerNetwork, powerLines, &error) &&
+              !error.empty() && powerLines.size() == previousPowerLines.size(),
+          "non-finite candidate points fail transactionally");
+    invalidPowerNetwork.segments[0].points[0].y = 2.0f;
+    invalidPowerNetwork.segments[0].points[0].x = MaxLinearNetworkWorldCoordinate + 1.0f;
+    Check(!ExtractPowerLinePolylineCandidates(invalidPowerNetwork, powerLines, &error) &&
+              !error.empty() && powerLines.size() == previousPowerLines.size(),
+          "out-of-world candidate points fail transactionally");
 
     const auto previous = n.nodes.size();
     auto truncated = PolylineFile(); truncated.pop_back();

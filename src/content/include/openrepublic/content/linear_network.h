@@ -26,6 +26,15 @@ struct LinearNetworkSegment {
     std::vector<RoadPoint> points;
 };
 
+// Rendering-facing copy of one decoded power-network point sequence. The
+// points are candidate line geometry only: the decoder evidence does not
+// identify poles, cable attachment points, or a sag model.
+struct PowerLinePolylineCandidate {
+    std::uint32_t nodeA = 0;
+    std::uint32_t nodeB = 0;
+    std::vector<RoadPoint> points;
+};
+
 struct LinearNetwork {
     std::vector<LinearNetworkNode> nodes;
     std::uint32_t segmentCount = 0;
@@ -48,5 +57,13 @@ constexpr float MaxLinearNetworkWorldCoordinate = 20000.0f;
 // On failure, output is unchanged.
 bool ExtractLinearNetwork(std::string_view bytes, LinearNetwork& output,
                           std::string* error = nullptr);
+
+// Copies complete, validated segment point sequences for a power-line preview.
+// Header nodes remain endpoint candidates and are not classified as pylons.
+// An incomplete geometry prefix or invalid segment reference fails without
+// changing output.
+bool ExtractPowerLinePolylineCandidates(const LinearNetwork& network,
+                                       std::vector<PowerLinePolylineCandidate>& output,
+                                       std::string* error = nullptr);
 
 } // namespace openrepublic::content
