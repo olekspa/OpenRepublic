@@ -384,8 +384,16 @@ namespace openrepublic::preview
 			{
 				realPylons += stringPowerLine(low, poleMesh, 9.0, 0.9, 3, 1.2f, 600);
 			}
+			// Disabled: the links between rail nodes cross the town's buildings in the sample save, so the
+			// neighbour interpretation (links[0]) or the straight-span assumption is not validated yet.
+			// Re-enable after the OVERLAYS worker establishes the rail segment layout.
+			constexpr bool kUseRealRail = false;
 			for (const char* fileName : { "rail.bin", "rail_secondary.bin" })
 			{
+				if (!kUseRealRail)
+				{
+					break;
+				}
 				openrepublic::content::LinearNetwork rail;
 				if (railMesh == wi::ecs::INVALID_ENTITY || !loadNetwork(fileName, rail))
 				{
