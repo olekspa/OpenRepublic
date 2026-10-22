@@ -1,4 +1,5 @@
 #include "ContentPreview.h"
+#include "ShowcaseProps.h"
 #include "openrepublic/content/mtl_dependencies.h"
 #include "openrepublic/content/mtl_preview_color.h"
 #include "openrepublic/content/mtl_preview_texture.h"
@@ -1679,7 +1680,7 @@ namespace openrepublic::preview
 						if (baseMap.resource.IsValid())
 						{
 							material->textures[wi::scene::MaterialComponent::EMISSIVEMAP] = baseMap;
-							material->SetEmissiveColor(XMFLOAT4(1.0f, 0.97f, 0.9f, 0.30f));
+							material->SetEmissiveColor(XMFLOAT4(1.0f, 0.97f, 0.9f, 0.45f));
 						}
 						material->CreateRenderData(true);
 					}
@@ -1702,6 +1703,18 @@ namespace openrepublic::preview
 			else
 			{
 				wilog("[OpenRepublic] Showcase environment skipped: %s", environmentError.c_str());
+			}
+			{
+				ShowcasePropsInfo propsInfo;
+				std::string propsError;
+				if (BuildShowcaseProps(scene, request, showcaseTerrain, regionRadius, propsInfo, propsError))
+				{
+					wilog("[OpenRepublic] %s", propsInfo.summary.c_str());
+				}
+				else
+				{
+					wilog("[OpenRepublic] Showcase props skipped: %s", propsError.c_str());
+				}
 			}
 		}
 

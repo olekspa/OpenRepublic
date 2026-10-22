@@ -1098,7 +1098,10 @@ namespace openrepublic
 			renderPath->setFXAAEnabled(true);
 			renderPath->setSharpenFilterEnabled(true);
 			renderPath->setSharpenFilterAmount(0.25f);
-			renderPath->setExposure(1.6f);
+			renderPath->setExposure(1.5f);
+			renderPath->setTonemap(wi::renderer::Tonemap::ACES);
+			renderPath->setLightShaftsEnabled(true);
+			renderPath->setLightShaftsStrength(0.35f);
 		}
 		if (graphicsSettings)
 		{

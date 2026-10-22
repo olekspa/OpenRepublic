@@ -1,0 +1,404 @@
+#include "ShowcaseProps.h"
+
+#include "openrepublic/content/terrain_dds.h"
+#include "openrepublic/procgeo/props.h"
+#include "openrepublic/procgeo/vehicles.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <sstream>
+
+namespace openrepublic::preview
+{
+	using namespace openrepublic::content;
+	namespace pg = openrepublic::procgeo;
+
+	namespace
+	{
+		float Hash01(int x, int z, std::uint32_t seed)
+		{
+			std::uint32_t hash = static_cast<std::uint32_t>(x) * 0x8da6b343u ^
+				static_cast<std::uint32_t>(z) * 0xd8163841u ^ seed * 0x9e3779b9u;
+			hash ^= hash >> 13;
+			hash *= 0x85ebca6bu;
+			hash ^= hash >> 16;
+			hash *= 0xc2b2ae35u;
+			hash ^= hash >> 15;
+			return static_cast<float>(hash & 0x00ffffffu) / 16777215.0f;
+		}
+
+		std::uint32_t PackLinear(const pg::Color3& c)
+		{
+			return wi::Color::fromFloat4(XMFLOAT4(std::clamp(c.r, 0.0f, 1.0f), std::clamp(c.g, 0.0f, 1.0f),
+				std::clamp(c.b, 0.0f, 1.0f), 1.0f)).rgba;
+		}
+
+		struct Placement
+		{
+			double x = 0.0;
+			double z = 0.0;
+			double yaw = 0.0;
+			double pitch = 0.0;
+			double y = 0.0;
+		};
+
+		void AddObject(wi::scene::Scene& scene, wi::ecs::Entity mesh, const Placement& p, const MapPlacementRequest& request,
+			double centerX, double centerZ, float scale, bool castShadow, XMFLOAT4 tint = XMFLOAT4(1, 1, 1, 1))
+		{
+			const wi::ecs::Entity object = scene.Entity_CreateObject("");
+			wi::scene::ObjectComponent* component = scene.objects.GetComponent(object);
+			component->meshID = mesh;
+			component->SetCastShadow(castShadow);
+			component->color = tint;
+			XMFLOAT4X4 matrix;
+			XMStoreFloat4x4(&matrix, XMMatrixScaling(scale, scale, scale) *
+				XMMatrixRotationRollPitchYaw(static_cast<float>(-p.pitch), static_cast<float>(p.yaw), 0.0f) *
+				XMMatrixTranslation(static_cast<float>(p.x - centerX), static_cast<float>(p.y), static_cast<float>(p.z - centerZ)));
+			scene.transforms.GetComponent(object)->MatrixTransform(matrix);
+			(void)request;
+		}
+	}
+
+	wi::ecs::Entity CreateProceduralMeshEntity(wi::scene::Scene& scene, const char* name, const pg::Mesh& source,
+		float roughness, float metalness)
+	{
+		if (!source.Valid() || source.positions.empty())
+		{
+			return wi::ecs::INVALID_ENTITY;
+		}
+		std::vector<XMFLOAT3> positions;
+		positions.reserve(source.positions.size());
+		for (const pg::Vec3& p : source.positions)
+		{
+			positions.emplace_back(p.x, p.y, p.z);
+		}
+		const wi::ecs::Entity entity = scene.Entity_CreateMeshFromData(name, source.indices.size(),
+			source.indices.data(), positions.size(), positions.data());
+		wi::scene::MeshComponent* mesh = scene.meshes.GetComponent(entity);
+		wi::scene::MaterialComponent* material = scene.materials.GetComponent(entity);
+		if (mesh == nullptr || material == nullptr)
+		{
+			return wi::ecs::INVALID_ENTITY;
+		}
+		mesh->vertex_colors.reserve(source.colors.size());
+		for (const pg::Color3& c : source.colors)
+		{
+			mesh->vertex_colors.push_back(PackLinear(c));
+		}
+		mesh->CreateRenderData();
+		material->SetUseVertexColors(true);
+		material->SetBaseColor(XMFLOAT4(1, 1, 1, 1));
+		material->SetRoughness(roughness);
+		material->SetMetalness(metalness);
+		material->SetReflectance(0.3f);
+		material->SetDoubleSided(true);
+		material->CreateRenderData(true);
+		if (wi::scene::ObjectComponent* own = scene.objects.GetComponent(entity))
+		{
+			own->SetRenderable(false);
+		}
+		return entity;
+	}
+
+	bool BuildShowcaseProps(wi::scene::Scene& scene, const MapPlacementRequest& request,
+		const ShowcaseTerrainData& terrain, double regionRadius, ShowcasePropsInfo& info, std::string& error)
+	{
+		const TerrainTransform transform = MakeMapTerrainTransform(request.metadata);
+		const double cx = request.placement.X();
+		const double cz = request.placement.Z();
+		const auto heightAt = [&](double wx, double wz)
+		{
+			double h = 0.0;
+			SampleTerrainHeight(request.heightmap, transform,
+				std::min(std::max(wx, transform.originX), transform.originX + transform.sizeX),
+				std::min(std::max(wz, transform.originZ), transform.originZ + transform.sizeZ), h, nullptr);
+			return static_cast<double>(ShowcaseLandHeight(terrain, wx, wz, static_cast<float>(h)));
+		};
+		// Ground pose for an object of given length oriented along `yaw` (pitch from the slope).
+		const auto pose = [&](double x, double z, double yaw, double length, double lift)
+		{
+			Placement p;
+			p.x = x;
+			p.z = z;
+			p.yaw = yaw;
+			const double fx = std::sin(yaw) * length * 0.5;
+			const double fz = std::cos(yaw) * length * 0.5;
+			const double front = heightAt(x + fx, z + fz);
+			const double back = heightAt(x - fx, z - fz);
+			p.y = (front + back) * 0.5 + lift;
+			p.pitch = length > 0.5 ? std::atan2(front - back, length) : 0.0;
+			return p;
+		};
+
+		// ---- Meshes (created once, instanced many times).
+		struct VehicleType
+		{
+			pg::VehicleKind kind;
+			std::uint32_t seed;
+			wi::ecs::Entity mesh;
+			float length;
+		};
+		std::vector<VehicleType> vehicleTypes;
+		const std::pair<pg::VehicleKind, float> weights[] = {
+			{ pg::VehicleKind::CargoTruck, 0.26f }, { pg::VehicleKind::Tanker, 0.10f }, { pg::VehicleKind::BoxVan, 0.16f },
+			{ pg::VehicleKind::Car, 0.36f }, { pg::VehicleKind::Bus, 0.12f } };
+		std::vector<float> weightTable;
+		for (const auto& [kind, weight] : weights)
+		{
+			for (std::uint32_t variant = 0; variant < 4; ++variant)
+			{
+				VehicleType type{ kind, variant * 7u + 3u, wi::ecs::INVALID_ENTITY, pg::VehicleLength(kind) };
+				type.mesh = CreateProceduralMeshEntity(scene, "showcase vehicle", pg::MakeVehicle(kind, type.seed), 0.45f, 0.1f);
+				vehicleTypes.push_back(type);
+				weightTable.push_back(weight);
+			}
+		}
+		const wi::ecs::Entity lampMesh = CreateProceduralMeshEntity(scene, "showcase street lamp", pg::MakeStreetLamp(), 0.6f, 0.4f);
+		const wi::ecs::Entity poleMesh = CreateProceduralMeshEntity(scene, "showcase utility pole", pg::MakeWoodenUtilityPole(), 0.9f);
+		const pg::Mesh pylonSource = pg::MakeSteelLatticePylon();
+		const wi::ecs::Entity pylonMesh = CreateProceduralMeshEntity(scene, "showcase pylon", pylonSource, 0.6f, 0.5f);
+		const wi::ecs::Entity railMesh = CreateProceduralMeshEntity(scene, "showcase rail", pg::MakeRailSegment(12.0f), 0.7f, 0.3f);
+		const wi::ecs::Entity crossbuckMesh = CreateProceduralMeshEntity(scene, "showcase crossbuck", pg::MakeRailCrossbuck(), 0.6f);
+		const wi::ecs::Entity chimneyMesh = CreateProceduralMeshEntity(scene, "showcase chimney", pg::MakeBrickChimney(), 0.9f);
+		const wi::ecs::Entity towerMesh = CreateProceduralMeshEntity(scene, "showcase cooling tower", pg::MakeCoolingTower(), 0.9f);
+		if (lampMesh == wi::ecs::INVALID_ENTITY || poleMesh == wi::ecs::INVALID_ENTITY)
+		{
+			error = "procedural prop meshes were rejected by the scene";
+			return false;
+		}
+		pg::Vec3 pylonLo, pylonHi;
+		pylonSource.Bounds(pylonLo, pylonHi);
+
+		pg::Mesh wires; // every cable in one mesh, positions in centre-relative world metres
+		const auto addWire = [&](double ax, double ay, double az, double bx, double by, double bz, float sag, float thickness)
+		{
+			const int segments = std::max(4, static_cast<int>(std::hypot(bx - ax, bz - az) / 6.0));
+			wires.Append(pg::MakeCable({ static_cast<float>(ax - cx), static_cast<float>(ay), static_cast<float>(az - cz) },
+				{ static_cast<float>(bx - cx), static_cast<float>(by), static_cast<float>(bz - cz) }, sag, segments, thickness));
+		};
+
+		// ---- Roads: vehicles, poles, lamps.
+		std::size_t vehicles = 0;
+		std::size_t poles = 0;
+		std::size_t lamps = 0;
+		const double limit = regionRadius * 1.1;
+		if (request.hasRoads)
+		{
+			const auto& nodes = request.roads.nodes;
+			for (std::size_t i = 0; i < nodes.size(); ++i)
+			{
+				for (const std::uint32_t j : nodes[i].neighbors)
+				{
+					if (j <= i || j >= nodes.size())
+					{
+						continue;
+					}
+					const double ax = nodes[i].x, az = nodes[i].z, bx = nodes[j].x, bz = nodes[j].z;
+					const bool inside = (std::fabs(ax - cx) < limit && std::fabs(az - cz) < limit) ||
+						(std::fabs(bx - cx) < limit && std::fabs(bz - cz) < limit);
+					const double length = std::hypot(bx - ax, bz - az);
+					if (!inside || length < 14.0)
+					{
+						continue;
+					}
+					const double dx = (bx - ax) / length;
+					const double dz = (bz - az) / length;
+					const double yaw = std::atan2(dx, dz);
+					const int seedA = static_cast<int>(i), seedB = static_cast<int>(j);
+					// Vehicles: roughly one per 55 m per segment, in the lane of its travel direction.
+					const int count = static_cast<int>(length / 55.0 + Hash01(seedA, seedB, 3));
+					for (int k = 0; k < count && vehicles < 260; ++k)
+					{
+						const double t = length * (0.12 + 0.76 * Hash01(seedA * 31 + k, seedB, 5));
+						const bool forward = Hash01(seedA + k, seedB, 7) < 0.5f;
+						const double lane = forward ? -1.35 : 1.35;
+						const double x = ax + dx * t + dz * lane;
+						const double z = az + dz * t - dx * lane;
+						float pick = Hash01(seedA + k, seedB * 3, 11);
+						float sum = 0.0f;
+						for (float w : weightTable) { sum += w; }
+						pick *= sum;
+						std::size_t chosen = 0;
+						for (std::size_t w = 0; w < weightTable.size(); ++w)
+						{
+							pick -= weightTable[w];
+							if (pick <= 0.0f) { chosen = w; break; }
+						}
+						const VehicleType& type = vehicleTypes[chosen];
+						if (type.mesh == wi::ecs::INVALID_ENTITY)
+						{
+							continue;
+						}
+						const Placement p = pose(x, z, forward ? yaw : yaw + 3.14159265, type.length, 0.3);
+						AddObject(scene, type.mesh, p, request, cx, cz, 1.0f, true);
+						++vehicles;
+					}
+					// Utility poles every 38 m on the left side with wires between consecutive poles,
+					// street lamps every 50 m on the right side inside the town.
+					if (length > 60.0)
+					{
+						Placement previous;
+						bool havePrevious = false;
+						double previousTop = 0.0;
+						for (double t = 10.0; t < length - 8.0 && poles < 160; t += 38.0)
+						{
+							const double side = 5.2;
+							const double x = ax + dx * t + dz * side;
+							const double z = az + dz * t - dx * side;
+							Placement p = pose(x, z, yaw, 0.0, -0.1);
+							AddObject(scene, poleMesh, p, request, cx, cz, 1.0f, false);
+							++poles;
+							const double top = p.y + 9.2;
+							if (havePrevious)
+							{
+								for (int line = 0; line < 3; ++line)
+								{
+									const double across = (line - 1) * 0.95;
+									addWire(previous.x + dz * across, previousTop - line * 0.05, previous.z - dx * across,
+										p.x + dz * across, top - line * 0.05, p.z - dx * across, 0.55f, 0.04f);
+								}
+							}
+							previous = p;
+							previousTop = top;
+							havePrevious = true;
+						}
+						const double distanceFromCenter = std::hypot((ax + bx) * 0.5 - cx, (az + bz) * 0.5 - cz);
+						if (distanceFromCenter < regionRadius * 0.95)
+						{
+							for (double t = 18.0; t < length - 10.0 && lamps < 140; t += 50.0)
+							{
+								const double side = -4.6;
+								const double x = ax + dx * t + dz * side;
+								const double z = az + dz * t - dx * side;
+								AddObject(scene, lampMesh, pose(x, z, yaw + 3.14159265 * 0.5, 0.0, -0.05), request, cx, cz, 1.0f, false);
+								++lamps;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// ---- Pylon line crossing the landscape on the far side of the town.
+		std::size_t pylons = 0;
+		if (pylonMesh != wi::ecs::INVALID_ENTITY)
+		{
+			const double angle = 0.9;
+			const double ux = std::cos(angle), uz = std::sin(angle);
+			const double px = -uz, pz = ux; // offset perpendicular to the line direction
+			const double offset = regionRadius * 1.15;
+			double prevX = 0.0, prevZ = 0.0, prevY = 0.0;
+			bool havePrev = false;
+			const double width = static_cast<double>(pylonHi.x - pylonLo.x) * 0.45;
+			for (int n = -7; n <= 7; ++n)
+			{
+				const double x = cx + px * offset + ux * n * 260.0;
+				const double z = cz + pz * offset + uz * n * 260.0;
+				if (x < transform.originX || z < transform.originZ || x > transform.originX + transform.sizeX || z > transform.originZ + transform.sizeZ)
+				{
+					havePrev = false;
+					continue;
+				}
+				const double h = heightAt(x, z);
+				if (terrain.hasWater && h < terrain.waterLevel + 1.5)
+				{
+					havePrev = false;
+					continue;
+				}
+				Placement p;
+				p.x = x; p.z = z; p.y = h - 0.3; p.yaw = angle; p.pitch = 0.0;
+				AddObject(scene, pylonMesh, p, request, cx, cz, 1.0f, true);
+				++pylons;
+				if (havePrev)
+				{
+					for (int arm = 0; arm < 3; ++arm)
+					{
+						const double top = (0.93 - 0.13 * arm) * static_cast<double>(pylonHi.y);
+						for (int side = -1; side <= 1; side += 2)
+						{
+							const double lateral = side * width * (1.0 - 0.18 * arm);
+							addWire(prevX + (-uz) * lateral, prevY + top, prevZ + ux * lateral,
+								x + (-uz) * lateral, p.y + top, z + ux * lateral, 7.5f, 0.07f);
+						}
+					}
+				}
+				prevX = x; prevZ = z; prevY = p.y; havePrev = true;
+			}
+		}
+
+		// ---- Railway: a long gentle line tangent to the town, piece by piece along the terrain.
+		std::size_t railPieces = 0;
+		if (railMesh != wi::ecs::INVALID_ENTITY)
+		{
+			const double angle = -0.55;
+			const double ux = std::cos(angle), uz = std::sin(angle);
+			const double px = -uz, pz = ux;
+			const double offset = -regionRadius * 1.02;
+			for (int n = -70; n <= 70; ++n)
+			{
+				const double x = cx + px * offset + ux * n * 12.0 + std::sin(n * 0.05) * 18.0 * px;
+				const double z = cz + pz * offset + uz * n * 12.0 + std::sin(n * 0.05) * 18.0 * pz;
+				if (x < transform.originX || z < transform.originZ || x > transform.originX + transform.sizeX || z > transform.originZ + transform.sizeZ)
+				{
+					continue;
+				}
+				const double h = heightAt(x, z);
+				if (terrain.hasWater && h < terrain.waterLevel + 1.0)
+				{
+					continue;
+				}
+				AddObject(scene, railMesh, pose(x, z, std::atan2(ux, uz), 12.0, 0.15), request, cx, cz, 1.0f, false);
+				++railPieces;
+			}
+		}
+
+		// ---- Industrial skyline: chimney and cooling tower beyond the town edge.
+		const auto industrial = [&](wi::ecs::Entity mesh, double dx, double dz)
+		{
+			if (mesh == wi::ecs::INVALID_ENTITY)
+			{
+				return;
+			}
+			const double x = cx + dx, z = cz + dz;
+			const double h = heightAt(x, z);
+			if (terrain.hasWater && h < terrain.waterLevel + 2.0)
+			{
+				return;
+			}
+			Placement p;
+			p.x = x; p.z = z; p.y = h - 0.3; p.yaw = 0.0; p.pitch = 0.0;
+			AddObject(scene, mesh, p, request, cx, cz, 1.0f, true);
+		};
+		industrial(chimneyMesh, regionRadius * 1.6, -regionRadius * 0.5);
+		industrial(towerMesh, regionRadius * 1.9, -regionRadius * 0.15);
+		industrial(chimneyMesh, regionRadius * 1.75, regionRadius * 0.1);
+		(void)crossbuckMesh;
+
+		// ---- Wires: one static mesh, lit and shadowed like the rest.
+		if (!wires.indices.empty())
+		{
+			const wi::ecs::Entity wireEntity = CreateProceduralMeshEntity(scene, "showcase wires", wires, 0.5f, 0.6f);
+			if (wireEntity != wi::ecs::INVALID_ENTITY)
+			{
+				if (wi::scene::ObjectComponent* object = scene.objects.GetComponent(wireEntity))
+				{
+					object->SetRenderable(true);
+					object->SetCastShadow(false);
+				}
+			}
+		}
+
+		info.vehicles = vehicles;
+		info.poles = poles;
+		info.lamps = lamps;
+		info.pylons = pylons;
+		info.railPieces = railPieces;
+		std::ostringstream summary;
+		summary << "Showcase props (OpenRepublic procedural meshes): " << vehicles << " vehicles on roads, " << poles
+			<< " utility poles with wires, " << lamps << " street lamps, " << pylons << " pylons, " << railPieces
+			<< " railway pieces, industrial skyline.";
+		info.summary = summary.str();
+		return true;
+	}
+}
