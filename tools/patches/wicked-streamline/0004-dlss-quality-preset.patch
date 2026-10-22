@@ -1,0 +1,29 @@
+From 49f9825801c52a22204f31fb517981f027c670d1 Mon Sep 17 00:00:00 2001
+From: OpenRepublic Patch Builder <patch-builder@openrepublic.invalid>
+Date: Thu, 22 Oct 2026 10:00:00 -0400
+Subject: [PATCH] Select DLSS Quality mode for OpenRepublic
+
+---
+ WickedEngine/wiRenderPath3D.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
+index 46848517..46848517 100644
+--- a/WickedEngine/wiRenderPath3D.cpp
++++ b/WickedEngine/wiRenderPath3D.cpp
+@@ -66,5 +66,5 @@ namespace wi
+ 		const sl::ViewportHandle viewport(1);
+ 		sl::DLSSOptions options{};
+-		options.mode = sl::DLSSMode::eBalanced;
++		options.mode = sl::DLSSMode::eMaxQuality;
+ 		options.outputWidth = outputWidth;
+ 		options.outputHeight = outputHeight;
+@@ -3286,5 +3286,5 @@ void RenderPath3D::setDLSSEnabled(bool value)
+ 		auto getOptimal = reinterpret_cast<PFun_slDLSSGetOptimalSettings*>(function);
+ 		sl::DLSSOptions options{};
+-		options.mode = sl::DLSSMode::eBalanced;
++		options.mode = sl::DLSSMode::eMaxQuality;
+ 		options.outputWidth = GetPhysicalWidth();
+ 		options.outputHeight = GetPhysicalHeight();
+-- 
+2.47.1.windows.2
