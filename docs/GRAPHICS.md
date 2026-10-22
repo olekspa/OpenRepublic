@@ -15,3 +15,12 @@ Integration points found in the pinned Wicked Engine (OBSERVED by reading the so
 - Simulation: the economy production phase runs on worker threads for worlds of 1024+ buildings (`economy::SetProductionThreads`); a test checks the state hash equals the serial path. Haul movement (which couples buildings) is still serial; no speedup has been measured.
 - Rendering: instancing is already used for placed buildings (one mesh per type). Next: LOD selection from the building definitions' LOD fields (loader defaults 1000/2000), frustum/occlusion handled by Wicked, texture streaming for large maps.
 - Compute offload candidates: terrain tessellation/normal generation, vehicle/path queries, road graph rasterization.
+
+## Streamline integration checklist (OBSERVED from NVIDIA's ProgrammingGuide.md, 2026-10-22; not yet implemented)
+1. Load `sl.interposer.dll` by full path after verifying its signature; ship `sl.common.dll` plus the feature DLLs used (`sl.dlss.dll`, `nvngx_dlss.dll`). Unsigned/self-built DLLs only for development.
+2. `slInit` before any DXGI/D3D12 call: `renderAPI = eD3D12`, `featuresToLoad`, log paths, `eUseFrameBasedResourceTagging`.
+3. Create the factory/device through the interposer's exports, or create natively and call `slSetD3DDevice` immediately; check `slGetFeatureRequirements` and `slIsFeatureSupported` per adapter.
+4. Swap chain/queues: Streamline hooks the first swap chain; `presentCommon()` must run exactly once per frame.
+5. Per frame: `slGetNewFrameToken`, `slSetConstants` (row-major unjittered matrices, jitter offset, camera data, depth/motion flags), `slDLSSSetOptions` (render resolution from `slDLSSGetOptimalSettings`), `slSetTagForFrame` for depth, motion vectors, scaling input/output colour (frame generation also HUD-less colour), then `slEvaluateFeature` where FSR2 is evaluated now. DLSS-G uses the Present marker instead.
+6. `slShutdown` at exit.
+Mapping onto the engine: step 5's inputs correspond to `rtVelocity`, `depthBuffer_Copy`, the FSR2 jitter and `rt_read`/`rtFSR[0]` at the `Postprocess_FSR2` call; steps 1-4 need changes inside the vendored `GraphicsDevice_DX12`, which is why this has not been started: it needs a decision to patch or fork the pinned Wicked Engine submodule.
