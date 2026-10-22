@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace openrepublic::compat {
@@ -15,6 +16,11 @@ struct CatalogImportOptions {
     std::uint32_t ticksPerDay = 24;
     std::uint32_t defaultFootprint = 4;
     double storageDaysFallback = 10.0;
+    // Opt-in reviewed mappings from (transport class, resource name) to
+    // micro-units per raw explicit-storage amount. The product is rounded to
+    // binary64 before capacity is rounded upward to a whole micro-unit.
+    // Empty preserves fallback.
+    std::map<std::pair<std::string, std::string>, double> storageCapacityFactors;
 };
 
 struct SkippedBuilding {
@@ -31,8 +37,13 @@ struct ImportReport {
     std::size_t buildingsImported{};
     std::size_t buildingsSkipped{};
     std::size_t resourceSpecificStorageEntriesSeen{};
+    std::size_t storageEntriesMapped{};
+    std::size_t storageEntriesUnmapped{};
+    std::size_t ambiguousStorageResources{};
+    std::size_t storageOnlyBuildingsImported{};
     std::vector<SkippedBuilding> skippedBuildings;
     std::vector<std::string> warnings;
+    std::vector<std::string> storageDiagnostics;
 };
 
 // Economy amounts are integer micro-units: 1 unit equals 1,000,000 micro-units.

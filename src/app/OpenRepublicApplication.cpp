@@ -244,6 +244,7 @@ namespace openrepublic
 		bool BuildAppOwnedRegionEconomy(
 			const openrepublic::content::MapPlacementRequest& request,
 			const std::filesystem::path& contentRoot, double radiusMeters,
+			const openrepublic::compat::CatalogImportOptions& catalogOptions,
 			openrepublic::economy::Catalog& catalog,
 			std::unique_ptr<openrepublic::economy::World>& world,
 			openrepublic::compat::RegionImportReport& importReport,
@@ -293,7 +294,7 @@ namespace openrepublic
 			}
 
 			compat::ImportReport catalogReport;
-			if (!compat::ImportCatalogFromDefinitions(definitions, {}, catalog, catalogReport))
+			if (!compat::ImportCatalogFromDefinitions(definitions, catalogOptions, catalog, catalogReport))
 			{
 				error = "economy catalog import failed: " + catalogReport.error;
 				return false;
@@ -447,6 +448,11 @@ namespace openrepublic
 	void OpenRepublicApplication::SetLocalEconomyPipeName(std::wstring name)
 	{
 		localEconomyPipeName = std::move(name);
+	}
+
+	void OpenRepublicApplication::SetRegionCatalogImportOptions(openrepublic::compat::CatalogImportOptions options)
+	{
+		regionCatalogImportOptions = std::move(options);
 	}
 
 	void OpenRepublicApplication::SetScenePipeName(std::wstring name)
@@ -988,7 +994,7 @@ namespace openrepublic
 							const double effectiveRadius = mapRadiusMeters > 0.0 ? mapRadiusMeters : 400.0;
 							std::string economyDescription;
 							std::string economyError;
-							if (BuildAppOwnedRegionEconomy(*mapPlacement, mapContentRoot, effectiveRadius,
+							if (BuildAppOwnedRegionEconomy(*mapPlacement, mapContentRoot, effectiveRadius, regionCatalogImportOptions,
 								regionEconomyCatalog, regionEconomyWorld, regionEconomyImport,
 								economyDescription, economyError))
 							{

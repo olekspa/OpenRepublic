@@ -61,6 +61,27 @@ bool ToCapacity(long double value, std::uint64_t &capacity) {
     return true;
 }
 
+bool IsSupportedStorageDirective(const std::string &directive) {
+    return directive == "$STORAGE_SPECIAL" || directive == "$STORAGE_IMPORT_SPECIAL" ||
+           directive == "$STORAGE_EXPORT_SPECIAL";
+}
+
+bool ToExplicitCapacity(double rawAmount, double factor, std::uint64_t &capacity) {
+    if (!std::isfinite(rawAmount) || rawAmount <= 0.0 || !std::isfinite(factor) || factor <= 0.0)
+        return false;
+    // Make the profile multiplication's precision platform-independent:
+    // first round the product to binary64, then ceil that value.
+    const double binary64Product = rawAmount * factor;
+    const long double scaled = static_cast<long double>(binary64Product);
+    if (!std::isfinite(scaled) || scaled <= 0.0L || scaled >= kUint64ExclusiveLimit)
+        return false;
+    const long double rounded = std::ceil(scaled);
+    if (!std::isfinite(rounded) || rounded <= 0.0L || rounded >= kUint64ExclusiveLimit)
+        return false;
+    capacity = static_cast<std::uint64_t>(rounded);
+    return capacity != 0;
+}
+
 void AddSkipped(ImportReport &report, const std::string &name, const std::string &reason) {
     report.skippedBuildings.push_back({name, reason});
     ++report.buildingsSkipped;
@@ -169,6 +190,7 @@ bool ImportCatalogFromDefinitions(
         next.success = false;
         next.error = message;
         std::sort(next.warnings.begin(), next.warnings.end());
+        std::sort(next.storageDiagnostics.begin(), next.storageDiagnostics.end());
         report = std::move(next);
         return false;
     };
@@ -178,6 +200,12 @@ bool ImportCatalogFromDefinitions(
         return failImport("defaultFootprint must be positive");
     if (!std::isfinite(options.storageDaysFallback) || options.storageDaysFallback <= 0.0)
         return failImport("storageDaysFallback must be finite and positive");
+    for (const auto &factor : options.storageCapacityFactors) {
+        if (!ValidName(factor.first.first) || !ValidName(factor.first.second) ||
+            !std::isfinite(factor.second) || factor.second <= 0.0) {
+            return failImport("storage capacity profile keys must be valid names and factors must be finite and positive");
+        }
+    }
 
     std::set<std::string> resourceNames;
     for (const auto &building : definitions) {
@@ -214,10 +242,6 @@ bool ImportCatalogFromDefinitions(
         const auto &definition = building.second;
         const bool hasEconomics = !definition.production.empty() || !definition.consumption.empty() ||
                                   !definition.consumptionPerSecond.empty();
-        if (!hasEconomics) {
-            AddSkipped(next, name, "no production or consumption entries");
-            continue;
-        }
         if (!ValidName(name)) {
             AddSkipped(next, name, "invalid building name for economy catalog");
             continue;
@@ -252,8 +276,87 @@ bool ImportCatalogFromDefinitions(
             AddSkipped(next, name, reason);
             continue;
         }
-        if (inputs.empty() && outputs.empty()) {
-            AddSkipped(next, name, "all economic rates are zero at micro-unit precision");
+
+        // Work out explicit capacities before mutating the builder. A generic
+        // storage row may represent a shared pool, so its presence disables
+        // every row-level profile mapping on this definition.
+        const bool hasGeneralStorage = std::any_of(
+            definition.storage.begin(), definition.storage.end(),
+            [](const content::BuildingStorageEntry &entry) { return entry.resource.empty(); });
+        std::map<std::string, std::size_t> rowsPerResource;
+        for (const auto &entry : definition.storage)
+            if (!entry.resource.empty())
+                ++rowsPerResource[entry.resource];
+        for (const auto &entry : rowsPerResource)
+            if (entry.second > 1)
+                ++next.ambiguousStorageResources;
+
+        std::map<std::string, std::uint64_t> explicitCapacities;
+        std::size_t mappedEntriesForBuilding = 0;
+        std::vector<std::string> mappedDiagnosticsForBuilding;
+        for (const auto &entry : definition.storage) {
+            if (entry.resource.empty())
+                continue;
+            const auto rowCount = rowsPerResource.at(entry.resource);
+            if (rowCount > 1) {
+                ++next.storageEntriesUnmapped;
+                next.storageDiagnostics.push_back("building '" + name + "' resource '" +
+                    entry.resource + "' has ambiguous explicit storage rows; using rate fallback");
+                continue;
+            }
+            if (hasGeneralStorage) {
+                ++next.storageEntriesUnmapped;
+                next.storageDiagnostics.push_back("building '" + name + "' resource '" +
+                    entry.resource + "' explicit row disabled by a general storage row");
+                continue;
+            }
+            if (!IsSupportedStorageDirective(entry.directive)) {
+                ++next.storageEntriesUnmapped;
+                next.storageDiagnostics.push_back("building '" + name + "' resource '" +
+                    entry.resource + "' directive '" + entry.directive + "' has no supported mapping");
+                continue;
+            }
+            const auto factor = options.storageCapacityFactors.find(
+                {entry.transportClass, entry.resource});
+            if (factor == options.storageCapacityFactors.end()) {
+                ++next.storageEntriesUnmapped;
+                next.storageDiagnostics.push_back("building '" + name + "' resource '" +
+                    entry.resource + "' transport class '" + entry.transportClass +
+                    "' has no capacity factor; using rate fallback");
+                continue;
+            }
+            std::uint64_t capacity = 0;
+            if (!ToExplicitCapacity(entry.amount, factor->second, capacity)) {
+                AddSkipped(next, name, "invalid or overflowing explicit storage amount for resource '" +
+                                      entry.resource + "' at line " + std::to_string(entry.line));
+                explicitCapacities.clear();
+                break;
+            }
+            explicitCapacities.emplace(entry.resource, capacity);
+            ++mappedEntriesForBuilding;
+            mappedDiagnosticsForBuilding.push_back("building '" + name + "' resource '" +
+                entry.resource + "' mapped to " + std::to_string(capacity) + " micro-units");
+        }
+        if (!next.skippedBuildings.empty() && next.skippedBuildings.back().name == name)
+            continue;
+        for (const auto &entry : explicitCapacities) {
+            const auto input = inputAmounts.find(entry.first);
+            const auto output = outputAmounts.find(entry.first);
+            const auto required = std::max(input == inputAmounts.end() ? 0 : input->second,
+                                           output == outputAmounts.end() ? 0 : output->second);
+            if (entry.second < required) {
+                AddSkipped(next, name, "explicit storage capacity is below one recipe tick for resource '" +
+                                      entry.first + "'");
+                explicitCapacities.clear();
+                break;
+            }
+        }
+        if (!next.skippedBuildings.empty() && next.skippedBuildings.back().name == name)
+            continue;
+        if (inputs.empty() && outputs.empty() && explicitCapacities.empty()) {
+            AddSkipped(next, name, hasEconomics
+                                    ? "all economic rates are zero at micro-unit precision"
+                                    : "no production, consumption, or mapped storage entries");
             continue;
         }
 
@@ -266,6 +369,8 @@ bool ImportCatalogFromDefinitions(
         for (const auto &entry : inputAmounts)
             storedNames.insert(entry.first);
         for (const auto &entry : outputAmounts)
+            storedNames.insert(entry.first);
+        for (const auto &entry : explicitCapacities)
             storedNames.insert(entry.first);
         for (const auto &resource : storedNames) {
             const long double productionDay = rates.productionPerDay.count(resource)
@@ -286,16 +391,27 @@ bool ImportCatalogFromDefinitions(
                                                 std::max(productionTick, consumptionTick)) *
                                             4.0L;
             std::uint64_t capacity = 0;
-            if (!ToCapacity(std::max(fallback, tickMinimum), capacity))
+            const auto explicitCapacity = explicitCapacities.find(resource);
+            if (explicitCapacity != explicitCapacities.end())
+                capacity = explicitCapacity->second;
+            else if (!ToCapacity(std::max(fallback, tickMinimum), capacity))
                 return failImport("storage capacity overflow for building '" + name +
                                   "', resource '" + resource + "'");
             if (!builder.AddStorage(buildingId, resourceIds.at(resource), capacity, catalogError))
                 return failImport("could not add storage for building '" + name + "': " +
                                   catalogError.message);
         }
-        if (!builder.AddRecipe(buildingId, {"operate", 1, inputs, outputs}, catalogError))
-            return failImport("could not add recipe for building '" + name + "': " +
-                              catalogError.message);
+        if (!inputs.empty() || !outputs.empty()) {
+            if (!builder.AddRecipe(buildingId, {"operate", 1, inputs, outputs}, catalogError))
+                return failImport("could not add recipe for building '" + name + "': " +
+                                  catalogError.message);
+        } else {
+            ++next.storageOnlyBuildingsImported;
+        }
+        next.storageEntriesMapped += mappedEntriesForBuilding;
+        next.storageDiagnostics.insert(next.storageDiagnostics.end(),
+                                       mappedDiagnosticsForBuilding.begin(),
+                                       mappedDiagnosticsForBuilding.end());
         ++next.buildingsImported;
     }
 
@@ -308,6 +424,7 @@ bool ImportCatalogFromDefinitions(
     next.success = true;
     next.error.clear();
     std::sort(next.warnings.begin(), next.warnings.end());
+    std::sort(next.storageDiagnostics.begin(), next.storageDiagnostics.end());
     report = std::move(next);
     return true;
 }
@@ -321,6 +438,10 @@ std::string DescribeImport(const ImportReport &report) {
            << report.buildingsSkipped << "\n";
     output << "Resource-specific storage entries observed: "
            << report.resourceSpecificStorageEntriesSeen << "\n";
+    output << "Explicit storage profile entries: " << report.storageEntriesMapped << " mapped, "
+           << report.storageEntriesUnmapped << " unmapped; ambiguous resources: "
+           << report.ambiguousStorageResources << "; storage-only buildings imported: "
+           << report.storageOnlyBuildingsImported << "\n";
     output << "Options: ticksPerDay=" << report.options.ticksPerDay
            << ", defaultFootprint=" << report.options.defaultFootprint
            << ", storageDaysFallback="
@@ -328,14 +449,17 @@ std::string DescribeImport(const ImportReport &report) {
            << report.options.storageDaysFallback << "\n";
     output << "OBSERVED in one reviewed build: worker scaling depends on declaration order and "
               "per-second input is multiplied by 60. Rate time base and fallback capacity are "
-              "INFERRED; explicit storage resource mapping is UNKNOWN. Truck capacity/speed and "
-              "footprint are OpenRepublic defaults.\n";
+              "INFERRED; caller-supplied explicit profile factors are experimental, while the "
+              "original capacity conversion remains UNKNOWN. "
+              "Truck capacity/speed and footprint are OpenRepublic defaults.\n";
     if (!report.error.empty())
         output << "Error: " << report.error << "\n";
     for (const auto &skipped : report.skippedBuildings)
         output << "Skipped " << skipped.name << ": " << skipped.reason << "\n";
     for (const auto &warning : report.warnings)
         output << "Warning: " << warning << "\n";
+    for (const auto &diagnostic : report.storageDiagnostics)
+        output << "Storage: " << diagnostic << "\n";
     return output.str();
 }
 

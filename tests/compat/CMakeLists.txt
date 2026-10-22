@@ -12,3 +12,8 @@ add_executable(OpenRepublicRegionRoadsTests region_roads_tests.cpp)
 target_link_libraries(OpenRepublicRegionRoadsTests PRIVATE OpenRepublicCompat)
 target_compile_features(OpenRepublicRegionRoadsTests PRIVATE cxx_std_17)
 add_test(NAME CompatRegionRoads COMMAND OpenRepublicRegionRoadsTests)
+
+add_executable(OpenRepublicStorageProfileTests storage_profile_tests.cpp)
+target_link_libraries(OpenRepublicStorageProfileTests PRIVATE OpenRepublicCompat)
+target_compile_features(OpenRepublicStorageProfileTests PRIVATE cxx_std_17)
+add_test(NAME CompatStorageProfile COMMAND OpenRepublicStorageProfileTests)

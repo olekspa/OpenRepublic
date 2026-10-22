@@ -26,6 +26,10 @@ add_test(NAME EconomyCommandHistoryProtocol COMMAND OpenRepublicCommandHistoryPr
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME EconomyStorageProfileExternalController
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/storage_profile_controller.py"
+            "$<TARGET_FILE:OpenRepublicEconomyHost>")
+    set_tests_properties(EconomyStorageProfileExternalController PROPERTIES TIMEOUT 30)
     add_test(NAME OpenRepublicEconomyHostExternalController
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/economy_controller.py"
             "$<TARGET_FILE:OpenRepublicEconomyHost>")

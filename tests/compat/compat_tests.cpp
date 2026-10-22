@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <string>
 
 using namespace openrepublic;
@@ -220,5 +221,206 @@ int main() {
                                         preciseOptions.options.storageDaysFallback;
     Check(fallbackRoundTrips,
           "human-readable report preserves the configured fallback value");
+
+    // Reviewed explicit-storage profiles are opt-in, exact (class, resource)
+    // mappings. These synthetic cases exercise only adapter behavior.
+    const compat::CatalogImportOptions profiledOptions{
+        24, 4, 10.0, {{{"RESOURCE_TRANSPORT_COVERED", "grain"}, 3.0},
+                      {{"RESOURCE_TRANSPORT_OPEN", "grain"}, 9.0},
+                      {{"RESOURCE_TRANSPORT_COVERED", "ore"}, 2.5},
+                      {{"RESOURCE_TRANSPORT_COVERED", "unknown"}, 1.0}}};
+    content::BuildingDefinition profiled;
+    profiled.production.push_back(Rate("grain", 0.0001));
+    profiled.storage.push_back({"$STORAGE_IMPORT_SPECIAL", "RESOURCE_TRANSPORT_COVERED",
+                                2.1, "grain", 10});
+    content::BuildingDefinition unmatched;
+    unmatched.production.push_back(Rate("grain", 1.0));
+    unmatched.storage.push_back({"$STORAGE_EXPORT_SPECIAL", "UNPROFILED_CLASS", 5.0,
+                                 "grain", 11});
+    content::BuildingDefinition unsupported;
+    unsupported.production.push_back(Rate("grain", 1.0));
+    unsupported.storage.push_back({"$STORAGE_IMPORT", "RESOURCE_TRANSPORT_COVERED", 5.0,
+                                  "grain", 111});
+    content::BuildingDefinition duplicated;
+    duplicated.production.push_back(Rate("ore", 1.0));
+    duplicated.storage.push_back({"$STORAGE_SPECIAL", "RESOURCE_TRANSPORT_COVERED", 3.0,
+                                  "ore", 12});
+    duplicated.storage.push_back({"$STORAGE_IMPORT_SPECIAL", "RESOURCE_TRANSPORT_COVERED", 4.0,
+                                  "ore", 13});
+    content::BuildingDefinition shared;
+    shared.production.push_back(Rate("grain", 1.0));
+    shared.storage.push_back({"$STORAGE_SPECIAL", "RESOURCE_TRANSPORT_COVERED", 2.0,
+                              "grain", 14});
+    shared.storage.push_back({"$STORAGE", "RESOURCE_TRANSPORT_COVERED", 100.0, "", 15});
+    content::BuildingDefinition storageOnlyDefinition;
+    storageOnlyDefinition.storage.push_back({"$STORAGE_EXPORT_SPECIAL", "RESOURCE_TRANSPORT_COVERED",
+                                             3.0, "ore", 16});
+    std::map<std::string, content::BuildingDefinition> profileDefinitions{
+        {"duplicate", duplicated}, {"profiled", profiled}, {"shared", shared},
+        {"storage_only", storageOnlyDefinition}, {"unmatched", unmatched},
+        {"unsupported", unsupported}};
+    economy::Catalog profiledCatalog;
+    compat::ImportReport profiledReport;
+    Check(compat::ImportCatalogFromDefinitions(profileDefinitions, profiledOptions,
+                                                profiledCatalog, profiledReport),
+          "explicit storage profile definitions import");
+    economy::BuildingTypeId profiledId{}, unmatchedId{}, duplicateId{}, sharedId{}, storageOnlyId{},
+        unsupportedId{};
+    profiledCatalog.FindBuildingType("profiled", profiledId);
+    profiledCatalog.FindBuildingType("unmatched", unmatchedId);
+    profiledCatalog.FindBuildingType("duplicate", duplicateId);
+    profiledCatalog.FindBuildingType("shared", sharedId);
+    profiledCatalog.FindBuildingType("storage_only", storageOnlyId);
+    profiledCatalog.FindBuildingType("unsupported", unsupportedId);
+    const auto *profiledType = profiledCatalog.BuildingType(profiledId);
+    const auto *unmatchedType = profiledCatalog.BuildingType(unmatchedId);
+    const auto *duplicateType = profiledCatalog.BuildingType(duplicateId);
+    const auto *sharedType = profiledCatalog.BuildingType(sharedId);
+    const auto *storageOnlyType = profiledCatalog.BuildingType(storageOnlyId);
+    const auto *unsupportedType = profiledCatalog.BuildingType(unsupportedId);
+    economy::ResourceId grainId{}, oreId{};
+    profiledCatalog.FindResource("grain", grainId);
+    profiledCatalog.FindResource("ore", oreId);
+    auto capacityFor = [](const economy::BuildingTypeDef *type, economy::ResourceId resource) {
+        if (!type)
+            return std::uint64_t{};
+        for (const auto &slot : type->storage)
+            if (slot.resource == resource)
+                return slot.capacity;
+        return std::uint64_t{};
+    };
+    Check(capacityFor(profiledType, grainId) == 7,
+          "explicit profile capacity uses exact class/resource mapping and rounds up");
+    Check(capacityFor(unmatchedType, grainId) == 10000000,
+          "unknown class retains inferred rate fallback");
+    Check(capacityFor(unsupportedType, grainId) == 10000000,
+          "unreviewed storage directives retain rate fallback");
+    Check(capacityFor(duplicateType, oreId) == 10000000 &&
+              profiledReport.ambiguousStorageResources == 1,
+          "duplicate resource rows are ambiguous and use rate fallback without summing");
+    Check(capacityFor(sharedType, grainId) == 10000000,
+          "any general storage row disables explicit mappings for that definition");
+    Check(storageOnlyType && storageOnlyType->recipes.empty() &&
+              capacityFor(storageOnlyType, oreId) == 8 &&
+              profiledReport.storageOnlyBuildingsImported == 1,
+          "mapped storage-only definition imports without a recipe and rounds capacity up");
+    Check(profiledReport.storageEntriesMapped == 2 &&
+              profiledReport.storageEntriesUnmapped == 5,
+          "profile report counts mapped and unmapped resource-bearing rows");
+    Check(std::is_sorted(profiledReport.storageDiagnostics.begin(),
+                         profiledReport.storageDiagnostics.end()),
+          "storage diagnostics are sorted deterministically");
+
+    content::BuildingDefinition binary64TenTenths;
+    binary64TenTenths.storage.push_back({"$STORAGE_SPECIAL", "CLASS_A", 10.0,
+                                         "binary_a", 20});
+    content::BuildingDefinition binary64HundredHundredths;
+    binary64HundredHundredths.storage.push_back({"$STORAGE_SPECIAL", "CLASS_B", 100.0,
+                                                  "binary_b", 21});
+    const compat::CatalogImportOptions binary64Options{
+        24, 4, 10.0, {{{"CLASS_A", "binary_a"}, 0.1}, {{"CLASS_B", "binary_b"}, 0.01}}};
+    economy::Catalog binary64Catalog;
+    compat::ImportReport binary64Report;
+    Check(compat::ImportCatalogFromDefinitions(
+              {{"binary_a", binary64TenTenths}, {"binary_b", binary64HundredHundredths}},
+              binary64Options, binary64Catalog, binary64Report),
+          "binary64 storage product fixtures import");
+    economy::BuildingTypeId binaryAId{}, binaryBId{};
+    economy::ResourceId binaryAResource{}, binaryBResource{};
+    binary64Catalog.FindBuildingType("binary_a", binaryAId);
+    binary64Catalog.FindBuildingType("binary_b", binaryBId);
+    binary64Catalog.FindResource("binary_a", binaryAResource);
+    binary64Catalog.FindResource("binary_b", binaryBResource);
+    Check(capacityFor(binary64Catalog.BuildingType(binaryAId), binaryAResource) == 1 &&
+              capacityFor(binary64Catalog.BuildingType(binaryBId), binaryBResource) == 1,
+          "explicit amount-factor products round to binary64 before ceiling");
+    economy::Catalog profiledAgain;
+    compat::ImportReport profiledAgainReport;
+    Check(compat::ImportCatalogFromDefinitions(profileDefinitions, profiledOptions,
+                                                profiledAgain, profiledAgainReport) &&
+              economy::WriteCatalogText(profiledAgain) == economy::WriteCatalogText(profiledCatalog) &&
+              compat::DescribeImport(profiledAgainReport) == compat::DescribeImport(profiledReport),
+          "profiled catalog and diagnostics are deterministic");
+
+    content::BuildingDefinition invalidAmount;
+    invalidAmount.storage.push_back({"$STORAGE_SPECIAL", "RESOURCE_TRANSPORT_COVERED", 0.0,
+                                     "grain", 17});
+    content::BuildingDefinition overflowAmount;
+    overflowAmount.storage.push_back({"$STORAGE_SPECIAL", "RESOURCE_TRANSPORT_COVERED",
+                                      std::numeric_limits<double>::max(), "grain", 18});
+    const compat::CatalogImportOptions overflowingProfile{
+        24, 4, 10.0, {{{"RESOURCE_TRANSPORT_COVERED", "grain"},
+                      std::numeric_limits<double>::max()}}};
+    economy::Catalog rejectionCatalog;
+    compat::ImportReport rejectionReport;
+    Check(compat::ImportCatalogFromDefinitions(
+              {{"invalid_amount", invalidAmount}}, profiledOptions, rejectionCatalog,
+              rejectionReport) &&
+              rejectionReport.buildingsSkipped == 1 &&
+              rejectionReport.skippedBuildings[0].reason.find("invalid or overflowing") !=
+                  std::string::npos &&
+              rejectionCatalog.BuildingTypes().empty(),
+          "invalid explicit amount skips before adding a building to the catalog");
+    Check(compat::ImportCatalogFromDefinitions(
+              {{"overflow_amount", overflowAmount}}, overflowingProfile, rejectionCatalog,
+              rejectionReport) &&
+              rejectionReport.buildingsSkipped == 1 && rejectionCatalog.BuildingTypes().empty(),
+          "overflowing explicit capacity skips before builder mutation");
+
+    content::BuildingDefinition laterInvalid;
+    laterInvalid.storage.push_back({"$STORAGE_SPECIAL", "RESOURCE_TRANSPORT_COVERED", 1.0,
+                                    "grain", 181});
+    laterInvalid.storage.push_back({"$STORAGE_SPECIAL", "RESOURCE_TRANSPORT_COVERED", 0.0,
+                                    "ore", 182});
+    const compat::CatalogImportOptions laterInvalidProfile{
+        24, 4, 10.0, {{{"RESOURCE_TRANSPORT_COVERED", "grain"}, 1.0},
+                      {{"RESOURCE_TRANSPORT_COVERED", "ore"}, 1.0}}};
+    Check(compat::ImportCatalogFromDefinitions({{"later_invalid", laterInvalid}},
+                                                laterInvalidProfile, rejectionCatalog,
+                                                rejectionReport) &&
+              rejectionReport.buildingsSkipped == 1 &&
+              rejectionReport.storageEntriesMapped == 0 &&
+              std::none_of(rejectionReport.storageDiagnostics.begin(),
+                           rejectionReport.storageDiagnostics.end(),
+                           [](const std::string &diagnostic) {
+                               return diagnostic.find("mapped to") != std::string::npos;
+                           }),
+          "a later invalid row discards earlier provisional mappings from the report");
+
+    content::BuildingDefinition undersized;
+    undersized.production.push_back(Rate("grain", 1.0));
+    undersized.storage.push_back({"$STORAGE_SPECIAL", "RESOURCE_TRANSPORT_COVERED", 1.0,
+                                  "grain", 19});
+    const compat::CatalogImportOptions undersizedProfile{
+        24, 4, 10.0, {{{"RESOURCE_TRANSPORT_COVERED", "grain"}, 1.0}}};
+    Check(compat::ImportCatalogFromDefinitions({{"undersized", undersized}}, undersizedProfile,
+                                                rejectionCatalog, rejectionReport) &&
+              rejectionReport.buildingsSkipped == 1 && rejectionCatalog.BuildingTypes().empty() &&
+              rejectionReport.storageEntriesMapped == 0 &&
+              std::none_of(rejectionReport.storageDiagnostics.begin(),
+                           rejectionReport.storageDiagnostics.end(),
+                           [](const std::string &diagnostic) {
+                               return diagnostic.find("mapped to") != std::string::npos;
+                           }) &&
+              rejectionReport.skippedBuildings[0].reason.find("below one recipe tick") !=
+                  std::string::npos,
+          "explicit capacity below one recipe tick skips before builder mutation");
+    economy::Catalog unchanged = catalog;
+    compat::ImportReport invalidProfileReport;
+    const compat::CatalogImportOptions invalidProfile{
+        24, 4, 10.0, {{{"invalid class", "grain"}, 1.0}}};
+    Check(!compat::ImportCatalogFromDefinitions({}, invalidProfile, unchanged,
+                                                 invalidProfileReport) &&
+              economy::WriteCatalogText(unchanged) == firstText,
+          "invalid profile key fails transactionally without changing output catalog");
+
+    economy::Catalog noProfileCatalog;
+    compat::ImportReport noProfileReport;
+    Check(compat::ImportCatalogFromDefinitions({{"profiled", profiled}}, options,
+                                                noProfileCatalog, noProfileReport) &&
+              noProfileReport.storageEntriesMapped == 0 &&
+              noProfileCatalog.BuildingTypes().size() == 1 &&
+              noProfileCatalog.BuildingTypes()[0].storage[0].capacity == 1000,
+          "without a profile the legacy rate-based storage behavior remains active");
     return failures == 0 ? 0 : 1;
 }

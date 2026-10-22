@@ -3,6 +3,7 @@
 #include "WickedEngine.h"
 #include "openrepublic/agent_api/agent_api.h"
 #include "openrepublic/compat/region_import.h"
+#include "openrepublic/compat/catalog_import.h"
 #include "EconomyOverlay.h"
 #include "NativeEconomyScene.h"
 #include "NativeEconomyTools.h"
@@ -42,6 +43,7 @@ namespace openrepublic
 		void SetGraphicsSettings(openrepublic::runtime::GraphicsSettings settings);
 		void SetEconomyOverlay(std::string host, int port);
 		void SetLocalEconomyPipeName(std::wstring name);
+		void SetRegionCatalogImportOptions(openrepublic::compat::CatalogImportOptions options);
 		void SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
 			bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel);
 		void SetSyntheticRegionFixture();
@@ -142,6 +144,7 @@ namespace openrepublic
 		// Lifetime order is intentional: EconomyApi references regionEconomyWorld,
 		// which references regionEconomyCatalog. Destruction runs in reverse order.
 		openrepublic::economy::Catalog regionEconomyCatalog;
+		openrepublic::compat::CatalogImportOptions regionCatalogImportOptions;
 		std::unique_ptr<openrepublic::economy::World> regionEconomyWorld;
 		std::unique_ptr<openrepublic::economy_api::EconomyApi> regionEconomyApi;
 		// Destruction order is intentional: stop/join the endpoint before destroying

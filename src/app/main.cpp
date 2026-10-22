@@ -4,6 +4,7 @@
 #include "openrepublic/content/mtl_dependencies.h"
 #include "openrepublic/runtime/graphics_settings.h"
 #include "openrepublic/economy/checkpoint.h"
+#include "openrepublic/compat/storage_profile.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -39,7 +40,7 @@ namespace
 			L"--showcase-camera", L"--scene-pipe-name", L"--showcase-sun", L"--building-type",
 			L"--building-lod", L"--nmf-texture-root", L"--nmf-unlit-preview",
 			L"--nmf-material-unlit-preview", L"--capture-preview", L"--capture-preview-zoom",
-			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform" };
+			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform", L"--storage-profile" };
 		return std::find(std::begin(incompatible), std::end(incompatible), argument) != std::end(incompatible);
 	}
 
@@ -209,6 +210,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::filesystem::path nmfProbePath;
 	std::filesystem::path nmfMaterialPath;
 	std::filesystem::path contentRoot;
+	std::filesystem::path storageProfilePath;
+	bool storageProfileGiven = false;
+	std::string storageProfileError;
+	openrepublic::compat::CatalogImportOptions regionCatalogOptions;
 	std::filesystem::path mapPackage;
 	std::size_t mapBuildingIndex = 0;
 	bool mapBuildingIndexGiven = false;
@@ -311,6 +316,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			else if (std::wstring_view(arguments[i]) == L"--content-root" && i + 1 < argumentCount)
 			{
 				contentRoot = arguments[++i];
+			}
+			else if (argument == L"--storage-profile")
+			{
+				if (storageProfileGiven)
+					storageProfileError = "--storage-profile may only be supplied once";
+				storageProfileGiven = true;
+				if (i + 1 >= argumentCount || std::wstring_view(arguments[i + 1]).empty() ||
+					std::wstring_view(arguments[i + 1]).rfind(L"--", 0) == 0)
+					storageProfileError = "--storage-profile requires a non-empty file path";
+				else
+					storageProfilePath = arguments[++i];
 			}
 			else if (std::wstring_view(arguments[i]) == L"--economy-url")
 			{
@@ -794,6 +810,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			return LogNativeEconomyStartupError(layoutError);
 		}
 	}
+	if (storageProfileGiven)
+	{
+		if (storageProfileError.empty() && (mapPackage.empty() || !mapRegion || contentRoot.empty() ||
+			economyUrlArgumentSeen || syntheticRegionFixture || !nmfCapturePaths.empty() || !mapShowcaseCapturePath.empty()))
+			storageProfileError = "--storage-profile requires an app-owned --map-package --map-region --content-root economy";
+		if (storageProfileError.empty())
+			openrepublic::compat::LoadStorageCapacityProfile(storageProfilePath,
+				regionCatalogOptions.storageCapacityFactors, storageProfileError);
+		if (!storageProfileError.empty())
+		{
+			std::fprintf(stderr, "OpenRepublic storage profile startup failed: %s\n", storageProfileError.c_str());
+			wilog("[OpenRepublic] storage profile startup failed: %s", storageProfileError.c_str());
+			return 2;
+		}
+	}
 	if (nmfCaptureArgumentError.empty() && mapBuildingModelLevelGiven && (mapPackage.empty() || !mapRegion))
 	{
 		nmfCaptureArgumentError = "--map-lod requires --map-package and --map-region";
@@ -1137,6 +1168,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	if (mapPlacementRequest)
 	{
+		application.SetRegionCatalogImportOptions(std::move(regionCatalogOptions));
 		application.SetMapPlacement(std::move(*mapPlacementRequest), mapRadiusMeters, mapRegion,
 			contentRoot, mapBuildingModelLevel);
 	}

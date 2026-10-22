@@ -19,12 +19,13 @@ compatibility. Tests use synthetic definitions only.
 - Resource names are sorted before catalog insertion. A building with an
   invalid catalog resource name is skipped with a reason. Duplicate rate rows
   for the same resource are combined by direction.
-- Only buildings with nonzero converted production or consumption get an
-  `operate` recipe. Each used recipe resource receives a storage slot.
+- Buildings with nonzero converted production or consumption get an `operate`
+  recipe. Each used recipe resource receives a storage slot. An explicitly mapped
+  storage-only definition imports with storage and no recipe.
 - **INFERRED:** capacity uses `ceil(storageDaysFallback * larger daily rate)`
   in micro-units, with a minimum of four times the larger per-tick amount.
-  Explicit storage rows are not mapped because their transport-class resource
-  relationship is **UNKNOWN**; resource-bearing row count is reported.
+  This remains the default when no explicit capacity profile is supplied or a
+  resource cannot be mapped unambiguously.
 - **UNKNOWN:** real building footprints. The configured square footprint and
   the 20-unit, 2-cells-per-tick `truck` are OpenRepublic defaults, not WRSR
   data.
@@ -32,6 +33,52 @@ compatibility. Tests use synthetic definitions only.
 `ImportReport` records the options, counts, ordered skipped buildings,
 warnings, and errors. `DescribeImport` produces a deterministic human-readable
 summary. The adapter does not read or write game files, saves, or assets.
+
+## Optional authored storage capacity profiles
+
+Both the desktop imported-region mode and the headless region host accept
+`--storage-profile <file>`. The desktop requires `--map-package`, `--map-region`
+and `--content-root`, using its app-owned economy. The host requires `--region`
+and `--content-root`. Native checkpoint/catalog modes do not accept a profile:
+checkpoints already contain their exact converted catalog.
+
+The versioned format starts with this exact header. This example is synthetic
+OpenRepublic policy; `BOX` and `grain` do not assert original-game semantics:
+
+```text
+OPENREPUBLIC_STORAGE_PROFILE 1
+# micro-units per raw storage amount
+FACTOR BOX grain 1000000
+```
+
+For a definition row `$STORAGE_IMPORT_SPECIAL BOX 3 grain`, that profile produces
+a 3,000,000-micro-unit storage slot. `$STORAGE_SPECIAL` and
+`$STORAGE_EXPORT_SPECIAL` are also eligible. Pair matching is exact and case
+sensitive. Factors use positive finite decimal notation, without exponent syntax.
+Blank lines and whole-line comments are allowed after the header. Files are
+bounded to 64 KiB and 4096 factor rows; duplicate pairs and malformed files fail
+before world creation. Windows paths retain Unicode support.
+
+Capacity uses the binary64 product of raw amount and factor, rounded upward to a
+whole micro-unit, with finite/positive/uint64 range checks. Explicit capacity
+overrides the inferred fallback without a hidden minimum increase. A capacity
+below one recipe tick skips the definition with a reason. A valid mapped
+storage-only definition can now be placed by region import and used by existing
+human/API haul controls. Capacity does not seed inventory.
+
+Any general resource-empty storage row disables explicit mapping for that entire
+definition. Multiple rows for the same resource are ambiguous and remain
+unmapped. Unknown pairs/directives retain fallback for recipe resources;
+storage-only definitions without a usable mapping remain excluded. Separate
+import/export pools, shared capacity, allowed cargo modes and utility networks
+remain **UNKNOWN** or unsupported. Profiles do not establish those behaviors.
+
+**OBSERVED, static trace in one reviewed build:** special storage row quantities
+are multiplied by a resource/class coefficient. This justifies a profile input;
+the project bundles no original coefficient table. **VERIFIED, synthetic tests:**
+profile parsing, conversion, storage-only import, authoritative hauling and exact
+checkpoint continuation. Original-game stock, units and runtime parity remain
+**UNKNOWN**. See the [development receipt](DEVELOPMENT_REPORT_2026-10-22_STORAGE_PROFILES.md).
 
 # Region import into the economy
 
@@ -47,7 +94,7 @@ bounded grid with a four-cell margin. Grid dimensions are capped at 512 cells;
 when needed, the selected radius is reduced and recorded in the report. Unknown
 types, out-of-region positions, and rejected footprint/access-cell collisions
 are counted separately. Placements are submitted in source order and accepted
-through one economy tick. Roads are omitted because road data is not decoded.
+through one economy tick. Road import is a separate subsequent step described below.
 
 This adapter does not parse map packages or establish original-game economic
 behavior. The input data is synthetic/plain data in its tests; map placement

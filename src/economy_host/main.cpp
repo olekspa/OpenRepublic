@@ -3,6 +3,7 @@
 #include "openrepublic/compat/catalog_import.h"
 #include "openrepublic/compat/region_import.h"
 #include "openrepublic/compat/region_roads.h"
+#include "openrepublic/compat/storage_profile.h"
 #include "openrepublic/content/map_placement.h"
 #include "openrepublic/content/road_network.h"
 #include "openrepublic/economy/checkpoint.h"
@@ -44,11 +45,13 @@ LineStatus ReadBoundedLine(std::istream &input, std::string &line) {
 void PrintUsage() {
   std::cerr << "Usage: OpenRepublicEconomyHost [--role observer|controller] [--catalog file]\n"
             << "       [--rules <economy_rules.lua>] [--region <map dir> --content-root <dir> [--center N] [--radius M]]\n"
+            << "       [--storage-profile <file> (only with --region)]\n"
             << "       [--role observer|controller] --checkpoint <file>\n"
             << "Reads protocolVersion 0 JSONL requests from stdin and writes responses to stdout.\n"
             << "--region imports a local WRSR map package's placements and roads into the world\n"
             << "(the catalog is built from <content-root>/buildings_types; local content only).\n"
-            << "--checkpoint restores a bounded native simulation checkpoint; do not combine it with catalog, rules, or region options.\n";
+            << "--checkpoint restores a bounded native simulation checkpoint; do not combine it with catalog, rules, region, or storage-profile options.\n"
+            << "--storage-profile loads OpenRepublic-authored storage factors for a region import.\n";
 }
 
 bool ReadFile(const std::filesystem::path &path, std::string &text) {
@@ -104,6 +107,7 @@ bool ApplyRules(const std::filesystem::path &rulesPath, economy::Catalog &catalo
 // Imports a map package region into a new world. All outputs stay owned by the caller.
 bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::filesystem::path &mapDir,
                       long centerIndex, double radius, const std::filesystem::path &rulesPath,
+                      const compat::StorageCapacityFactors &storageCapacityFactors,
                       economy::Catalog &catalog,
                       std::unique_ptr<economy::World> &world, std::string &description,
                       std::string &regionInfoJson, std::string &error) {
@@ -118,8 +122,10 @@ bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::files
       definitions[entry.path().stem().string()] = std::move(definition);
   }
   compat::ImportReport catalogReport;
+  compat::CatalogImportOptions catalogOptions;
+  catalogOptions.storageCapacityFactors = storageCapacityFactors;
   if (definitions.empty() ||
-      !compat::ImportCatalogFromDefinitions(definitions, {}, catalog, catalogReport)) {
+      !compat::ImportCatalogFromDefinitions(definitions, catalogOptions, catalog, catalogReport)) {
     error = "could not build a catalog from <content-root>/buildings_types";
     return false;
   }
@@ -163,6 +169,7 @@ bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::files
           << " of " << placements.size() << ", radius " << radius << " m, cell size "
           << options.cellSizeMeters << " m. Cell (cx,cz) covers map x " << imported.originX
           << " + 4*cx .. +4, z " << imported.originZ << " + 4*cz .. +4.\n"
+          << compat::DescribeImport(catalogReport) << "\n"
           << compat::DescribeRegionImport(imported) << "\n" << compat::DescribeRegionRoads(roadReport);
   description = summary.str();
   std::ostringstream info;
@@ -187,9 +194,11 @@ int main(int argc, char **argv) {
   bool contentRootSpecified = false;
   bool centerSpecified = false;
   bool radiusSpecified = false;
+  bool storageProfileSpecified = false;
   std::filesystem::path regionDir;
   std::filesystem::path contentRoot;
   std::filesystem::path rulesPath;
+  std::filesystem::path storageProfilePath;
   long centerIndex = -1;
   double radius = 400.0;
   for (int i = 1; i < argc; ++i) {
@@ -225,6 +234,24 @@ int main(int argc, char **argv) {
     } else if (arg == "--rules" && i + 1 < argc) {
       rulesSpecified = true;
       rulesPath = argv[++i];
+    } else if (arg == "--storage-profile") {
+      if (storageProfileSpecified) {
+        std::cerr << "--storage-profile may be specified only once.\n";
+        PrintUsage();
+        return 2;
+      }
+      storageProfileSpecified = true;
+      if (i + 1 >= argc || std::string(argv[i + 1]).rfind("--", 0) == 0) {
+        std::cerr << "--storage-profile needs a file path.\n";
+        PrintUsage();
+        return 2;
+      }
+      storageProfilePath = argv[++i];
+      if (storageProfilePath.empty()) {
+        std::cerr << "--storage-profile needs a non-empty file path.\n";
+        PrintUsage();
+        return 2;
+      }
     } else if (arg == "--center" && i + 1 < argc) {
       centerSpecified = true;
       centerIndex = std::strtol(argv[++i], nullptr, 10);
@@ -243,8 +270,8 @@ int main(int argc, char **argv) {
 
   if (checkpointSpecified &&
       (catalogSpecified || rulesSpecified || regionSpecified || contentRootSpecified ||
-       centerSpecified || radiusSpecified)) {
-    std::cerr << "--checkpoint cannot be combined with explicit catalog, rules, region, content-root, center, or radius options.\n";
+       centerSpecified || radiusSpecified || storageProfileSpecified)) {
+    std::cerr << "--checkpoint cannot be combined with explicit catalog, rules, region, content-root, center, radius, or storage-profile options.\n";
     PrintUsage();
     return 2;
   }
@@ -252,6 +279,21 @@ int main(int argc, char **argv) {
     std::cerr << "--checkpoint needs a non-empty file path.\n";
     PrintUsage();
     return 2;
+  }
+  if (storageProfileSpecified && (!regionSpecified || catalogSpecified || checkpointSpecified)) {
+    std::cerr << "--storage-profile requires --region and cannot be combined with --catalog or --checkpoint.\n";
+    PrintUsage();
+    return 2;
+  }
+
+  compat::StorageCapacityFactors storageCapacityFactors;
+  if (storageProfileSpecified) {
+    std::string profileError;
+    if (!compat::LoadStorageCapacityProfile(storageProfilePath, storageCapacityFactors,
+                                            profileError)) {
+      std::cerr << "Storage profile rejected: " << profileError << ".\n";
+      return 2;
+    }
   }
 
   economy::Catalog catalog = economy::MakeSyntheticCatalog();
@@ -303,8 +345,9 @@ int main(int argc, char **argv) {
       return 2;
     }
     std::string error;
-    if (!BuildRegionWorld(contentRoot, regionDir, centerIndex, radius, rulesPath, catalog, regionWorld,
-                          regionDescription, regionInfoJson, error)) {
+    if (!BuildRegionWorld(contentRoot, regionDir, centerIndex, radius, rulesPath,
+                          storageCapacityFactors, catalog, regionWorld, regionDescription,
+                          regionInfoJson, error)) {
       std::cerr << "Region import failed: " << error << "\n";
       return 2;
     }
