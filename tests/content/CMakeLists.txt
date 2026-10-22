@@ -111,3 +111,10 @@ add_executable(OpenRepublicLinearNetworkTests
 target_link_libraries(OpenRepublicLinearNetworkTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicLinearNetworkTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicLinearNetworkTests COMMAND OpenRepublicLinearNetworkTests)
+
+add_executable(OpenRepublicTreePlacementTests
+    tree_placements_tests.cpp
+)
+target_link_libraries(OpenRepublicTreePlacementTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicTreePlacementTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicTreePlacementTests COMMAND OpenRepublicTreePlacementTests)

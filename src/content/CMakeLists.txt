@@ -15,6 +15,7 @@ add_library(OpenRepublicContent STATIC
     road_network.cpp
     terrain_dds.cpp
     terrain_preview.cpp
+    tree_placements.cpp
     text_table.cpp
 )
 target_include_directories(OpenRepublicContent PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
