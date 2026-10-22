@@ -87,3 +87,5 @@ Then `POST http://127.0.0.1:8950/rpc` with `{"method": "...", ...}` (`protocolVe
 - Rule reloads now appear in `events` as `rules_reloaded` (with the tick), so a replay knows when to resend them. The autopilot has `--count-electricity` to include power-plant output in the score (N22, tick 6,016: 9,866 stored units vs 953 without it).
 
 - Batch haul orders: `{"method":"create_haul_orders","revision":"<rev>","orders":[{"source":1,"destination":2,"resource":"rawiron","vehicleType":"truck"}, ...]}` queues up to 64 orders under one revision check and returns one `{errorCode, handle, state}` per order; poll each handle after stepping. Controller only.
+
+- `rules_history` (observer or controller) lists every accepted `reload_rules` text with the tick it applied at; replaying a run means resending those at the same ticks. Rejected reloads are not recorded.

@@ -51,6 +51,7 @@ private:
   std::string regionInfoJson_;
   RulesBuilder rulesBuilder_;
   std::vector<std::unique_ptr<economy::Catalog>> retiredCatalogs_;
+  std::vector<std::pair<std::uint64_t, std::string>> rulesHistory_;
 };
 
 } // namespace openrepublic::economy_host

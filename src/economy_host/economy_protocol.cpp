@@ -570,7 +570,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
       return invalid(message);
     const Json roles = Json::array({"observer", "controller"}), control = Json::array({"controller"});
     Json methods = Json::array();
-    for (const char *name : {"hello", "capabilities", "catalog", "world", "explain", "advise", "poll", "events"})
+    for (const char *name : {"hello", "capabilities", "catalog", "world", "explain", "advise", "rules_history", "poll", "events"})
       methods.push_back(Json{{"name", name}, {"roles", roles}});
     for (const char *name : {"submit", "step"})
       methods.push_back(Json{{"name", name}, {"roles", control}});
@@ -780,6 +780,14 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                {"tick", std::to_string(q.world.tick)},
                {"unservedInputs", needs},
                {"unconsumedSurplus", surplus}};
+  } else if (method == "rules_history") {
+    // Every accepted `reload_rules` text with the tick it took effect at, so a replay can resend them.
+    if (!Fields(req, {}, message))
+      return invalid(message);
+    Json history = Json::array();
+    for (const auto &entry : rulesHistory_)
+      history.push_back(Json{{"tick", std::to_string(entry.first)}, {"text", entry.second}});
+    out = Json{{"errorCode", "none"}, {"history", history}};
   } else if (method == "poll") {
     if (!Fields(req, {"handle"}, message))
       return invalid(message);
@@ -940,6 +948,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         const auto code = api_->ReplaceCatalog(*tuned, error);
         if (code == economy_api::ErrorCode::None) {
           retiredCatalogs_.push_back(std::move(tuned));
+          rulesHistory_.emplace_back(api_->QueryWorld().world.tick, text);
           out = Json{{"errorCode", "none"}};
         } else {
           out = Json{{"errorCode", Error(code)}, {"message", error}};

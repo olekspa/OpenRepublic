@@ -58,6 +58,8 @@ int main() {
 
   economy_host::Dispatcher controller(economy_host::Role::Controller, catalog);
   const auto controllerHello = Response(controller, Request("controller-hello", "hello"));
+  ok &= Check(Response(controller, Request("history", "rules_history"))["result"]["history"].empty(),
+              "a fresh host has no rule reloads in its history");
   {
     // Batch haul orders: bounds are enforced, observers are denied, entries are queued independently.
     const auto order = Json{{"source", 1}, {"destination", 2}, {"resource", "grain"}, {"vehicleType", "truck"}};
