@@ -68,6 +68,10 @@ namespace openrepublic::preview
 	XMFLOAT3 ShadeShowcaseTerrain(const ShowcaseTerrainData& data, double worldX, double worldZ,
 		float height, float slope);
 
+	// Sun elevation the baked terrain colours are tuned for; a high sun needs a lower tint gain
+	// (vertex colours cannot be re-shaded at runtime). NaN keeps the golden-hour tuning.
+	void SetShowcaseBakedSunElevation(float elevationDegrees);
+
 	// Procedural detail textures (created once, shared).
 	const wi::Resource& ShowcaseGrassTexture();
 	const wi::Resource& ShowcaseAsphaltTexture();

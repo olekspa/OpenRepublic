@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <sstream>
 
@@ -464,6 +465,16 @@ namespace openrepublic::preview
 		bool RealGroundAlbedoValid();
 	}
 
+	namespace
+	{
+		float g_bakedSunElevation = std::numeric_limits<float>::quiet_NaN();
+	}
+
+	void SetShowcaseBakedSunElevation(float elevationDegrees)
+	{
+		g_bakedSunElevation = elevationDegrees;
+	}
+
 	XMFLOAT3 ShadeShowcaseTerrain(const ShowcaseTerrainData& data, double worldX, double worldZ,
 		float height, float slope)
 	{
@@ -491,7 +502,8 @@ namespace openrepublic::preview
 			color = Mix(color, sand, 1.0f - SmoothStep(data.waterLevel + 0.3f, data.waterLevel + 2.6f, height));
 		}
 		// The real WRSR ground tile is much darker on average than the procedural one.
-		const float detail = (0.97f + fine * 0.04f) * (RealGroundAlbedoValid() ? 3.2f - 0.9f * rockMask : 1.45f);
+		const float sunGain = std::isfinite(g_bakedSunElevation) ? 1.0f - 0.38f * std::clamp((g_bakedSunElevation - 17.0f) / 38.0f, 0.0f, 1.0f) : 1.0f;
+		const float detail = sunGain * (0.97f + fine * 0.04f) * (RealGroundAlbedoValid() ? 3.2f - 0.9f * rockMask : 1.45f);
 		return XMFLOAT3(color.x * detail, color.y * detail, color.z * detail);
 	}
 

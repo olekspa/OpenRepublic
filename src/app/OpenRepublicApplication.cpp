@@ -551,6 +551,7 @@ namespace openrepublic
 	void OpenRepublicApplication::SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees)
 	{
 		mapShowcaseSunElevationDegrees = elevationDegrees;
+		preview::SetShowcaseBakedSunElevation(elevationDegrees);
 		mapShowcaseSunYawOffsetDegrees = yawOffsetDegrees;
 	}
 
