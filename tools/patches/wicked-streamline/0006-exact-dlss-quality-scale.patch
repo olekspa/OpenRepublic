@@ -1,0 +1,27 @@
+From 4f93f3fd4f337aeb38dbfe410701b83024ccdd42 Mon Sep 17 00:00:00 2001
+From: OpenRepublic contributors <dev@openrepublic.invalid>
+Date: Thu, 22 Oct 2026 11:00:00 -0400
+Subject: [PATCH 6/6] Use the limiting DLSS Quality render scale
+
+The internal render target rounds dimensions up. Choosing the larger axis
+ratio can therefore produce an input larger than both Streamline's optimal
+dimensions, causing the runtime guard to skip DLSS evaluation. The smaller
+ratio keeps the render allocation at or below both optima; the postprocess
+path still verifies exact dimensions before evaluation.
+---
+ WickedEngine/wiRenderPath3D.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
+--- a/WickedEngine/wiRenderPath3D.cpp
++++ b/WickedEngine/wiRenderPath3D.cpp
+@@ -3300,6 +3300,6 @@ void RenderPath3D::setDLSSEnabled(bool value)
+ 			return;
+ 		}
+-		const float targetScale = std::max(float(optimal.optimalRenderWidth) / float(GetPhysicalWidth()), float(optimal.optimalRenderHeight) / float(GetPhysicalHeight()));
++		const float targetScale = std::min(float(optimal.optimalRenderWidth) / float(GetPhysicalWidth()), float(optimal.optimalRenderHeight) / float(GetPhysicalHeight()));
+ 		fsr2Enabled = false;
+ 		fsr2Resources = {};
+ 		dlssEnabled = true;
+-- 
+2.45.0
