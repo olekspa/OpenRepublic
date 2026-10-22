@@ -20,7 +20,9 @@ namespace openrepublic::preview
 
 	namespace
 	{
-		// Rotation applied to the install's vehicle meshes so their front follows the road direction.
+		// OBSERVED: vehicle script.ini files place $LIGHT_FORWARD at +Z and $LIGHT_BACKWARD/exhaust at -Z, so the
+		// install meshes already face +Z like the procedural ones; no yaw offset is needed.
+		// Rotation applied to the install vehicle meshes so their front follows the road direction.
 		constexpr double kRealVehicleYawOffset = 0.0;
 
 		float Hash01(int x, int z, std::uint32_t seed)
