@@ -47,7 +47,7 @@ A legitimate installation and read-only loading are project assumptions and engi
 
 **Consequence:** keep original game files, saves, captures, and extracted payloads local and read-only. Rights-holder clarification/legal review remains a gate before distributing original content or a binary release that uses it.
 
-**Update 2026-10-22:** the project owner explicitly authorized publication of OpenRepublic-authored source. That source is published on `origin/main` through `a28ac80`; the repository contains no WRSR binaries, assets, saves, captures, or extracted data. This source-publication decision does not grant rights to distribute original content, establish standalone-use rights, or clear a binary/content release. No separate release build has been published.
+**Update 2026-10-22:** the project owner explicitly authorized publication of OpenRepublic-authored source. That source is published on `origin/main` through `da8f460`; the repository contains no WRSR binaries, assets, saves, captures, or extracted data. This source-publication decision does not grant rights to distribute original content, establish standalone-use rights, or clear a binary/content release. No separate release build has been published.
 
 ## D-006: Prove the OpenRepublic viewer with synthetic content first
 
@@ -81,8 +81,17 @@ Expose the typed Agent API through a separate process that reads one versioned J
 **Date:** 22 October 2026
 **Status:** Accepted
 
-An architecture review found `src/sim` (hard-coded Farm/Mill/Storage, grain/flour fields baked into the snapshot, API, save and UI) cannot host authentic content. A new standalone `src/economy` library (catalog, deterministic world, haul orders, explanations, save/load) with its own typed API and JSONL host (`src/economy_api`, `src/economy_host`) is the migration target. The old simulation, API and desktop UI remain until the economy has an equivalent human UI.
+An architecture review found `src/sim` (hard-coded Farm/Mill/Storage, grain/flour fields baked into the snapshot, API, save and UI) cannot host authentic content. A new standalone `src/economy` library (catalog, deterministic world, haul orders, explanations, save/load) with its own typed API and JSONL host (`src/economy_api`, `src/economy_host`) is the migration target. The old simulation, API and desktop UI remain during migration. The map-region view now has a bounded human adapter to the separate economy host, but the host still owns the authoritative world process and the main demo UI remains intact elsewhere in the app.
 
 **Consequence:** new gameplay work targets `src/economy*`; authentic content enters only through adapters (`src/compat`, local under D-005) that produce `economy::Catalog` data, never by adding resource types to `src/sim`. The desktop app's content preview code now lives in `ContentPreview.*` so presentation and content import stay separate from simulation.
 
-**Update 2026-10-22:** the owner-authorized source publication is recorded under D-005. `origin/main` currently includes the integration work through `a28ac80`; distribution rights for original content and binary releases remain unresolved.
+**Update 2026-10-22:** the owner-authorized source publication is recorded under D-005. `origin/main` currently includes source through `da8f460`; distribution rights for original content and binary releases remain unresolved. A local working-tree increment now makes the map-region path app-owned by default: it imports a bounded region into `economy::World`, uses the typed `EconomyApi` for human actions, and maps rendered placements to imported IDs through the source index from that exact loaded placement vector. The optional explicit `--economy-url` path remains a separate host and retains session binding and approximate matching. Client and headless Release builds succeed and both full test suites pass 29/29; importer tests cover exact key mapping and duplicate-key failure transactionality. UI runtime acceptance remains open, external controller access to the app-owned instance is not implemented, and the loaded-vector index is not a durable cross-version identity. The next integration target is a versioned local controller interface into the same app-owned world, followed by synthetic-fixture graphical acceptance. Package identity is not fingerprinted.
+
+## D-009: Use an opt-in Windows named pipe for in-app controller access
+
+**Date:** 22 October 2026
+**Status:** Accepted for the initial app-owned controller endpoint
+
+`--economy-pipe-name <name>` exposes the existing map-region `EconomyApi` through a Windows named pipe at `\\.\pipe\<name>`. The embedded JSONL dispatcher borrows the app's API instance, requires session binding after `hello`/`capabilities`, and does not advertise or accept `shutdown`. A transport worker performs bounded line framing and response handoff only; the app update thread executes dispatcher calls against the same world used by the UI. The endpoint is disabled by default and remains separate from the standalone `OpenRepublicEconomyHost` and `--economy-url` bridge.
+
+**Consequence:** this is a trusted-local controller surface, not authentication. The pipe uses the process token's default security descriptor and rejects remote clients, so any local process allowed by that descriptor can issue controller commands. The initial transport serializes one client at a time; a connected client that never completes a line can retain the slot until disconnect or app shutdown. Keep protocol v0 bounds, session/revision checks, and lifecycle limits explicit. A synthetic/open-fixture UI interaction is still required before treating the graphical control path as accepted.

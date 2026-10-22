@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <limits>
 #include <locale>
+#include <set>
 #include <sstream>
 
 namespace openrepublic::compat {
@@ -51,6 +52,16 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
         next.notes.push_back("Import failed: invalid center placement or region options.");
         report = std::move(next);
         return false;
+    }
+
+    std::set<std::uint64_t> sourcePlacementKeys;
+    for (const auto &placement : placements) {
+        if (placement.sourcePlacementKey &&
+            !sourcePlacementKeys.insert(*placement.sourcePlacementKey).second) {
+            next.notes.push_back("Import failed: duplicate source placement key.");
+            report = std::move(next);
+            return false;
+        }
     }
 
     const auto &center = placements[centerIndex];
@@ -193,7 +204,12 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
         const auto result = candidate->GetCommandResult(command.second);
         if (result.state == economy::CommandState::Accepted) {
             const auto &placement = placements[command.first];
-            next.placedBuildings.emplace_back(BaseTypeName(placement.typeName), result.building);
+            const std::string baseType = BaseTypeName(placement.typeName);
+            next.placedBuildings.emplace_back(baseType, result.building);
+            if (placement.sourcePlacementKey) {
+                next.placedSourceBuildings.push_back(
+                    {*placement.sourcePlacementKey, baseType, result.building});
+            }
             ++next.placed;
         } else if (result.failure == economy::CommandFailure::OutOfBounds) {
             ++next.skippedOutOfBounds;

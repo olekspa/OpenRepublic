@@ -2,11 +2,15 @@
 
 #include "WickedEngine.h"
 #include "openrepublic/agent_api/agent_api.h"
+#include "openrepublic/compat/region_import.h"
 #include "EconomyOverlay.h"
 #include "openrepublic/content/map_placement.h"
+#include "openrepublic/economy_api/economy_api.h"
 #include "openrepublic/runtime/graphics_settings.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/sim/simulation.h"
+#include "../economy_host/economy_protocol.h"
+#include "LocalEconomyPipeEndpoint.h"
 
 #include <filesystem>
 #include <memory>
@@ -29,8 +33,12 @@ namespace openrepublic
 		void SetNmfMaterialPath(std::filesystem::path path);
 		void SetGraphicsSettings(openrepublic::runtime::GraphicsSettings settings);
 		void SetEconomyOverlay(std::string host, int port);
+		void SetLocalEconomyPipeName(std::wstring name);
 		void SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
 			bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel);
+		void SetSyntheticRegionFixture();
+		void SetMapShowcaseCapture(std::filesystem::path outputPath, bool enhancedLook,
+			float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale);
 		void SetNmfUnlitPreview(bool enabled);
 		void SetNmfMaterialUnlitPreview(bool enabled);
 		void SetNmfCapturePaths(std::vector<std::filesystem::path> paths);
@@ -69,11 +77,37 @@ namespace openrepublic
 		void ReloadLuaRules();
 		openrepublic::sim::Snapshot QuerySimulationSnapshot() const;
 		void SetEntityColor(wi::ecs::Entity entity, const XMFLOAT4& color);
+		void UpdateRegionStatus();
+		void PumpLocalEconomyRequests();
+		void RefreshRegionEconomy();
+		void UpdateRegionEconomyPresentation();
+		std::optional<openrepublic::preview::EconomyBuildingStatus> GetRegionBuildingForInstance(
+			wi::ecs::Entity instance) const;
+		void QueueRegionStep();
+		void QueueRegionBuildingToggle();
+		void SetRegionHaulSource();
+		void QueueRegionHaul();
 
 		wi::scene::Scene previewWorld;
 		std::unique_ptr<wi::RenderPath3D> renderPath;
 		openrepublic::sim::Simulation simulation;
 		openrepublic::agent_api::AgentApi agentApi;
+		// Lifetime order is intentional: EconomyApi references regionEconomyWorld,
+		// which references regionEconomyCatalog. Destruction runs in reverse order.
+		openrepublic::economy::Catalog regionEconomyCatalog;
+		std::unique_ptr<openrepublic::economy::World> regionEconomyWorld;
+		std::unique_ptr<openrepublic::economy_api::EconomyApi> regionEconomyApi;
+		// Destruction order is intentional: stop/join the endpoint before destroying
+		// its dispatcher, shared API, world, and catalog.
+		std::unique_ptr<openrepublic::economy_host::Dispatcher> localEconomyDispatcher;
+		std::unique_ptr<openrepublic::economy_host::LocalEconomyPipeEndpoint> localEconomyPipeEndpoint;
+		std::wstring localEconomyPipeName;
+		openrepublic::compat::RegionImportReport regionEconomyImport;
+		std::optional<openrepublic::economy_api::WorldView> regionEconomySnapshot;
+		std::vector<std::uint64_t> regionPendingCommandHandles;
+		std::vector<wi::ecs::Entity> regionTruckEntities;
+		std::string regionEconomyDescription;
+		std::optional<std::uint64_t> lastPresentedRegionRevision;
 		std::filesystem::path sceneProbePath;
 		std::filesystem::path glbProbePath;
 		std::filesystem::path nmfProbePath;
@@ -82,7 +116,16 @@ namespace openrepublic
 		std::optional<openrepublic::content::MapPlacementRequest> mapPlacement;
 		double mapRadiusMeters = 0.0;
 		bool mapRegionPreview = false;
+		bool syntheticRegionFixtureMode = false;
+		double syntheticRegionCenterX = 0.0;
+		double syntheticRegionCenterZ = 0.0;
 		int mapRegionModelLevel = 0;
+		bool mapShowcaseCaptureMode = false;
+		bool mapShowcaseEnhancedLook = false;
+		std::filesystem::path mapShowcaseCapturePath;
+		float mapShowcaseCameraYawDegrees = 45.0f;
+		float mapShowcaseCameraElevationDegrees = 24.5f;
+		float mapShowcaseCameraDistanceScale = 1.5f;
 		float cameraSpeedScale = 1.0f;
 		std::string economyHost;
 		int economyPort = 0;
@@ -131,6 +174,10 @@ namespace openrepublic
 		wi::gui::Button saveButton;
 		wi::gui::Button loadButton;
 		wi::gui::Button reloadRulesButton;
+		wi::gui::Button regionStepButton;
+		wi::gui::Button regionToggleButton;
+		wi::gui::Button regionHaulSourceButton;
+		wi::gui::Button regionHaulButton;
 		wi::gui::Label simulationStatus;
 		std::optional<openrepublic::sim::SimulationRules> pendingRules;
 		std::optional<openrepublic::sim::FacilityType> activeFacilityPlacement;
@@ -143,6 +190,10 @@ namespace openrepublic
 		float simulationAccumulator = 0.0f;
 		bool simulationPaused = false;
 		bool millApproachRoadEnabled = true;
+		wi::ecs::Entity selectedRegionBuildingEntity = wi::ecs::INVALID_ENTITY;
+		std::optional<std::uint64_t> selectedRegionBuildingId;
+		std::optional<std::uint64_t> regionHaulSourceId;
+		std::string regionWorldStatus;
 		std::string uiNotice;
 	};
 }

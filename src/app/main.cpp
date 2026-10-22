@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cwchar>
 #include <cwctype>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -47,6 +48,65 @@ namespace
 		if (name == L"transpose-flip-z") return RasterOrientation::TransposeFlipZ;
 		if (name == L"transpose-rotate-180") return RasterOrientation::TransposeRotate180;
 		return std::nullopt;
+	}
+
+	bool PathIsSameOrWithinDirectory(const std::filesystem::path& candidate,
+		const std::filesystem::path& directory, bool& isWithin, std::string& error)
+	{
+		std::error_code pathError;
+		std::filesystem::path canonicalCandidate = std::filesystem::weakly_canonical(candidate, pathError);
+		if (pathError)
+		{
+			error = "could not resolve showcase output path: " + pathError.message();
+			return false;
+		}
+		std::filesystem::path canonicalDirectory = std::filesystem::weakly_canonical(directory, pathError);
+		if (pathError)
+		{
+			error = "could not resolve input directory for showcase safety check: " + pathError.message();
+			return false;
+		}
+
+		std::wstring candidateText = canonicalCandidate.lexically_normal().native();
+		std::wstring directoryText = canonicalDirectory.lexically_normal().native();
+		const auto normalizeSeparators = [](std::wstring& value) {
+			for (wchar_t& character : value)
+			{
+				if (character == L'/') character = L'\\';
+			}
+		};
+		normalizeSeparators(candidateText);
+		normalizeSeparators(directoryText);
+		const auto trimTrailingSeparators = [](std::wstring& value) {
+			while (value.size() > 1 && value.back() == L'\\' &&
+				!(value.size() == 3 && value[1] == L':'))
+			{
+				value.pop_back();
+			}
+		};
+		trimTrailingSeparators(candidateText);
+		trimTrailingSeparators(directoryText);
+
+		if (directoryText.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+			candidateText.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+		{
+			error = "showcase path is too long for the Windows path safety check";
+			return false;
+		}
+		const std::size_t comparedLength = std::min(candidateText.size(), directoryText.size());
+		const int prefixComparison = CompareStringOrdinal(candidateText.c_str(),
+			static_cast<int>(comparedLength), directoryText.c_str(), static_cast<int>(comparedLength), TRUE);
+		if (prefixComparison == 0)
+		{
+			error = "Windows could not compare the showcase output path prefix";
+			return false;
+		}
+		const bool exact = candidateText.size() == directoryText.size() && prefixComparison == CSTR_EQUAL;
+		const bool directoryHasTrailingSeparator = !directoryText.empty() && directoryText.back() == L'\\';
+		const bool child = candidateText.size() > directoryText.size() && prefixComparison == CSTR_EQUAL &&
+			(directoryHasTrailingSeparator || candidateText[directoryText.size()] == L'\\');
+		isWithin = exact || child;
+		return true;
 	}
 
 	LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -93,18 +153,29 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::size_t mapBuildingIndex = 0;
 	bool mapBuildingIndexGiven = false;
 	bool mapRegion = false;
+	bool syntheticRegionFixture = false;
 	double mapRadiusMeters = 0.0;
 	int mapBuildingModelLevel = 0;
 	bool mapBuildingModelLevelGiven = false;
 	std::string buildingTypeName;
 	std::string economyHost;
 	int economyPort = 0;
+	std::wstring localEconomyPipeName;
+	bool localEconomyPipeNameGiven = false;
+	bool economyUrlArgumentSeen = false;
 	std::optional<openrepublic::runtime::GraphicsSettings> graphicsSettings;
 	int buildingModelLevel = 0;
 	std::vector<std::filesystem::path> nmfTextureRoots;
 	bool nmfUnlitPreview = false;
 	bool nmfMaterialUnlitPreview = false;
 	std::vector<std::filesystem::path> nmfCapturePaths;
+	std::filesystem::path mapShowcaseCapturePath;
+	bool mapShowcaseEnhancedLook = false;
+	bool mapShowcaseLookArgumentSeen = false;
+	float mapShowcaseCameraYawDegrees = 45.0f;
+	float mapShowcaseCameraElevationDegrees = 24.5f;
+	float mapShowcaseCameraDistanceScale = 1.5f;
+	bool mapShowcaseCameraArgumentSeen = false;
 	double nmfCaptureZoom = 1.0;
 	bool nmfCaptureZoomArgumentSeen = false;
 	std::optional<double> nmfCaptureElevationDegrees;
@@ -134,8 +205,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			{
 				contentRoot = arguments[++i];
 			}
-			else if (std::wstring_view(arguments[i]) == L"--economy-url" && i + 1 < argumentCount)
+			else if (std::wstring_view(arguments[i]) == L"--economy-url")
 			{
+				economyUrlArgumentSeen = true;
+				if (i + 1 >= argumentCount)
+				{
+					nmfCaptureArgumentError = "--economy-url requires http://127.0.0.1:<port>";
+					continue;
+				}
 				// http://127.0.0.1:PORT (loopback only)
 				const std::wstring url = arguments[++i];
 				const std::wstring prefix = L"http://127.0.0.1:";
@@ -151,6 +228,32 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				if (economyPort == 0)
 				{
 					nmfCaptureArgumentError = "--economy-url requires http://127.0.0.1:<port>";
+				}
+			}
+			else if (std::wstring_view(arguments[i]) == L"--economy-pipe-name")
+			{
+				if (localEconomyPipeNameGiven)
+				{
+					nmfCaptureArgumentError = "--economy-pipe-name may only be supplied once";
+					if (i + 1 < argumentCount) ++i;
+					continue;
+				}
+				localEconomyPipeNameGiven = true;
+				if (i + 1 >= argumentCount)
+				{
+					nmfCaptureArgumentError = "--economy-pipe-name requires 1-64 ASCII letters, digits, '.', '_' or '-'";
+					continue;
+				}
+				localEconomyPipeName = arguments[++i];
+				const bool validName = !localEconomyPipeName.empty() && localEconomyPipeName.size() <= 64 &&
+					std::all_of(localEconomyPipeName.begin(), localEconomyPipeName.end(), [](wchar_t value) {
+						return (value >= L'a' && value <= L'z') || (value >= L'A' && value <= L'Z') ||
+							(value >= L'0' && value <= L'9') || value == L'.' || value == L'_' || value == L'-';
+					});
+				if (!validName)
+				{
+					localEconomyPipeName.clear();
+					nmfCaptureArgumentError = "--economy-pipe-name requires 1-64 ASCII letters, digits, '.', '_' or '-'";
 				}
 			}
 			else if (std::wstring_view(arguments[i]) == L"--graphics" && i + 1 < argumentCount)
@@ -196,6 +299,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			{
 				mapRegion = true;
 			}
+			else if (std::wstring_view(arguments[i]) == L"--synthetic-region-fixture")
+			{
+				if (syntheticRegionFixture)
+				{
+					nmfCaptureArgumentError = "--synthetic-region-fixture may only be supplied once";
+				}
+				syntheticRegionFixture = true;
+			}
 			else if (std::wstring_view(arguments[i]) == L"--map-radius" && i + 1 < argumentCount)
 			{
 				double parsed = 0.0;
@@ -227,6 +338,70 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 						nmfCaptureArgumentError = "--map-lod requires 0, 1 or 2";
 					}
 				}
+			}
+			else if (std::wstring_view(arguments[i]) == L"--showcase-capture")
+			{
+				if (i + 1 >= argumentCount || !mapShowcaseCapturePath.empty())
+				{
+					nmfCaptureArgumentError = "--showcase-capture requires one absolute output .png path";
+					continue;
+				}
+				mapShowcaseCapturePath = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--showcase-look")
+			{
+				mapShowcaseLookArgumentSeen = true;
+				if (i + 1 >= argumentCount)
+				{
+					nmfCaptureArgumentError = "--showcase-look requires baseline or enhanced";
+					continue;
+				}
+				const std::wstring_view look = arguments[++i];
+				if (look == L"baseline")
+				{
+					mapShowcaseEnhancedLook = false;
+				}
+				else if (look == L"enhanced")
+				{
+					mapShowcaseEnhancedLook = true;
+				}
+				else
+				{
+					nmfCaptureArgumentError = "--showcase-look requires baseline or enhanced";
+				}
+			}
+			else if (std::wstring_view(arguments[i]) == L"--showcase-camera")
+			{
+				if (mapShowcaseCameraArgumentSeen)
+				{
+					nmfCaptureArgumentError = "--showcase-camera may only be supplied once";
+					if (i + 1 < argumentCount) ++i;
+					if (i + 1 < argumentCount) ++i;
+					if (i + 1 < argumentCount) ++i;
+					continue;
+				}
+				mapShowcaseCameraArgumentSeen = true;
+				if (i + 3 >= argumentCount)
+				{
+					nmfCaptureArgumentError = "--showcase-camera requires yaw-degrees elevation-degrees distance-radius-factor";
+					continue;
+				}
+				std::array<double, 3> camera{};
+				bool valuesValid = true;
+				for (std::size_t valueIndex = 0; valueIndex < camera.size(); ++valueIndex)
+				{
+					valuesValid = ParseFiniteDouble(arguments[i + 1 + static_cast<int>(valueIndex)], camera[valueIndex]) && valuesValid;
+				}
+				i += 3;
+				if (!valuesValid || camera[0] < -180.0 || camera[0] > 180.0 ||
+					camera[1] < 5.0 || camera[1] > 75.0 || camera[2] < 0.5 || camera[2] > 2.5)
+				{
+					nmfCaptureArgumentError = "--showcase-camera requires finite yaw -180..180, elevation 5..75, and distance factor 0.5..2.5";
+					continue;
+				}
+				mapShowcaseCameraYawDegrees = static_cast<float>(camera[0]);
+				mapShowcaseCameraElevationDegrees = static_cast<float>(camera[1]);
+				mapShowcaseCameraDistanceScale = static_cast<float>(camera[2]);
 			}
 			else if (std::wstring_view(arguments[i]) == L"--building-type" && i + 1 < argumentCount)
 			{
@@ -404,6 +579,99 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	if (nmfCaptureArgumentError.empty() && mapBuildingModelLevelGiven && (mapPackage.empty() || !mapRegion))
 	{
 		nmfCaptureArgumentError = "--map-lod requires --map-package and --map-region";
+	}
+	if (nmfCaptureArgumentError.empty() && localEconomyPipeNameGiven)
+	{
+		if (economyUrlArgumentSeen || economyPort > 0)
+		{
+			nmfCaptureArgumentError = "--economy-pipe-name cannot be combined with --economy-url";
+		}
+		else if (mapPackage.empty() || !mapRegion)
+		{
+			nmfCaptureArgumentError = "--economy-pipe-name requires --map-package and --map-region";
+		}
+		else if (!nmfCapturePaths.empty() || !mapShowcaseCapturePath.empty() || !sceneProbePath.empty() ||
+			!glbProbePath.empty() || !nmfProbePath.empty() || !terrainProbePath.empty() ||
+			terrainProbeTransform.has_value() || !buildingTypeName.empty())
+		{
+			nmfCaptureArgumentError = "--economy-pipe-name cannot be combined with probe or capture modes";
+		}
+	}
+	if (nmfCaptureArgumentError.empty() && syntheticRegionFixture &&
+		(!mapPackage.empty() || !contentRoot.empty() || mapRegion || mapBuildingIndexGiven ||
+			mapBuildingModelLevelGiven || mapRadiusMeters != 0.0 || economyUrlArgumentSeen ||
+			economyPort > 0 || localEconomyPipeNameGiven || !sceneProbePath.empty() ||
+			!glbProbePath.empty() || !nmfProbePath.empty() || !terrainProbePath.empty() ||
+			!buildingTypeName.empty() || !mapShowcaseCapturePath.empty() || !nmfCapturePaths.empty() ||
+			terrainProbeTransform.has_value()))
+	{
+		nmfCaptureArgumentError = "--synthetic-region-fixture is a self-contained open-content mode and cannot be combined with map inputs, probes, capture modes, or economy endpoints";
+	}
+	if (nmfCaptureArgumentError.empty() && (mapShowcaseLookArgumentSeen || mapShowcaseCameraArgumentSeen) &&
+		mapShowcaseCapturePath.empty())
+	{
+		nmfCaptureArgumentError = "--showcase-look and --showcase-camera require --showcase-capture";
+	}
+	if (nmfCaptureArgumentError.empty() && !mapShowcaseCapturePath.empty())
+	{
+		std::wstring extension = mapShowcaseCapturePath.extension().wstring();
+		std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t value) {
+			return static_cast<wchar_t>(std::towlower(value));
+		});
+		if (mapPackage.empty() || !mapRegion || !nmfCapturePaths.empty() ||
+			!terrainProbePath.empty() || !sceneProbePath.empty() || !glbProbePath.empty() ||
+			!buildingTypeName.empty() || extension != L".png" || !mapShowcaseCapturePath.is_absolute() ||
+			mapShowcaseCapturePath.parent_path().empty())
+		{
+			nmfCaptureArgumentError = "--showcase-capture requires --map-package with --map-region, one absolute .png output, and no other probe/capture mode";
+		}
+		else
+		{
+			std::error_code fileError;
+			if (contentRoot.empty() || !contentRoot.is_absolute() ||
+				!std::filesystem::is_directory(contentRoot, fileError) || fileError ||
+				!mapPackage.is_absolute() || !std::filesystem::is_directory(mapPackage, fileError) || fileError)
+			{
+				nmfCaptureArgumentError = "--showcase-capture requires existing absolute --content-root and --map-package directories";
+			}
+			else
+			{
+				bool withinInputDirectory = false;
+				std::string pathSafetyError;
+				const bool contentPathResolved = PathIsSameOrWithinDirectory(
+					mapShowcaseCapturePath, contentRoot, withinInputDirectory, pathSafetyError);
+				const bool contentConflict = contentPathResolved && withinInputDirectory;
+				bool mapPathResolved = false;
+				bool mapConflict = false;
+				if (!contentConflict && contentPathResolved)
+				{
+					mapPathResolved = PathIsSameOrWithinDirectory(
+						mapShowcaseCapturePath, mapPackage, withinInputDirectory, pathSafetyError);
+					mapConflict = mapPathResolved && withinInputDirectory;
+				}
+				if (!contentPathResolved || (!contentConflict && !mapPathResolved))
+				{
+					nmfCaptureArgumentError = "--showcase-capture could not verify that the output is outside source data: " + pathSafetyError;
+				}
+				else if (contentConflict || mapConflict)
+				{
+					nmfCaptureArgumentError = "--showcase-capture output must be outside --content-root and --map-package";
+				}
+			}
+			if (nmfCaptureArgumentError.empty() &&
+				(std::filesystem::exists(mapShowcaseCapturePath, fileError) || fileError))
+			{
+				nmfCaptureArgumentError = "--showcase-capture refuses to overwrite an existing or inaccessible output file";
+			}
+			else if (nmfCaptureArgumentError.empty())
+			{
+				std::filesystem::create_directories(mapShowcaseCapturePath.parent_path(), fileError);
+				if (fileError || !std::filesystem::is_directory(mapShowcaseCapturePath.parent_path(), fileError) || fileError)
+				{
+					nmfCaptureArgumentError = "--showcase-capture could not create or inspect the output directory";
+				}
+			}
+		}
 	}
 	std::optional<openrepublic::content::MapPlacementRequest> mapPlacementRequest;
 	if (nmfCaptureArgumentError.empty() && !mapPackage.empty())
@@ -636,6 +904,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		application.SetEconomyOverlay(economyHost, economyPort);
 	}
+	if (!localEconomyPipeName.empty())
+	{
+		application.SetLocalEconomyPipeName(std::move(localEconomyPipeName));
+	}
+	if (syntheticRegionFixture)
+	{
+		application.SetSyntheticRegionFixture();
+	}
 	if (mapPlacementRequest)
 	{
 		application.SetMapPlacement(std::move(*mapPlacementRequest), mapRadiusMeters, mapRegion,
@@ -650,7 +926,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			static_cast<float>(*nmfCaptureElevationDegrees));
 	}
 	const bool nmfCaptureMode = !nmfCapturePaths.empty();
+	const bool mapShowcaseCaptureMode = !mapShowcaseCapturePath.empty();
 	application.SetNmfCapturePaths(std::move(nmfCapturePaths));
+	application.SetMapShowcaseCapture(std::move(mapShowcaseCapturePath), mapShowcaseEnhancedLook,
+		mapShowcaseCameraYawDegrees, mapShowcaseCameraElevationDegrees, mapShowcaseCameraDistanceScale);
 	application.SetTerrainProbePath(std::move(terrainProbePath));
 	application.SetTerrainProbeTransform(std::move(terrainProbeTransform), std::move(terrainProbeTransformError));
 
@@ -680,7 +959,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 
 	application.SetWindow(window);
-	if (nmfCaptureMode)
+	if (nmfCaptureMode || mapShowcaseCaptureMode)
 	{
 		ShowWindow(window, SW_SHOWNOACTIVATE);
 	}

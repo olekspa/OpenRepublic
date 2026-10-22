@@ -184,7 +184,7 @@ namespace openrepublic::preview
 	// The preview frame is the region centre: camera target/distance are set for it.
 	bool CreateMapRegionPreview(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request,
-		const std::filesystem::path& contentRoot, double radiusMeters, int modelLevel,
+		const std::filesystem::path& contentRoot, double radiusMeters, int modelLevel, bool enhancedLook,
 		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
 		std::vector<RegionInstance>* outInstances = nullptr);
 

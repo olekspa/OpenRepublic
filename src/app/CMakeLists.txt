@@ -2,8 +2,12 @@ add_executable(OpenRepublic WIN32
     main.cpp
     ContentPreview.cpp
     EconomyOverlay.cpp
+    SyntheticRegionFixture.cpp
     EconomyOverlay.h
     ContentPreview.h
+    LocalEconomyPipeEndpoint.cpp
+    LocalEconomyPipeEndpoint.h
+    MapShowcaseCapture.h
     NmfPreviewCapture.h
     OpenRepublicApplication.cpp
     OpenRepublicApplication.h
@@ -16,7 +20,7 @@ target_include_directories(OpenRepublic PRIVATE
 )
 
 target_compile_definitions(OpenRepublic PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_link_libraries(OpenRepublic PRIVATE WickedEngine OpenRepublicSimulation OpenRepublicContent OpenRepublicAgentApi OpenRepublicRuntime shell32 winhttp)
+target_link_libraries(OpenRepublic PRIVATE WickedEngine OpenRepublicSimulation OpenRepublicContent OpenRepublicAgentApi OpenRepublicRuntime OpenRepublicCompat OpenRepublicEconomyApi OpenRepublicEconomyProtocol shell32 winhttp)
 
 if(TARGET OpenRepublicScripting)
     target_link_libraries(OpenRepublic PRIVATE OpenRepublicScripting)

@@ -37,11 +37,11 @@ int main() {
           "synthetic definitions build a catalog");
 
     const std::vector<compat::PlacedBuildingRef> placements = {
-        {"farm", 0.0, 0.0},
-        {"MIRRORZ_farm", 20.0, 0.0},
-        {"unknown", 24.0, 0.0},
-        {"factory", 1.0, 0.0},
-        {"farm", 1000.0, 0.0},
+        {"farm", 0.0, 0.0, 1001},
+        {"MIRRORZ_farm", 20.0, 0.0, 1002},
+        {"unknown", 24.0, 0.0, 1003},
+        {"factory", 1.0, 0.0, 1004},
+        {"farm", 1000.0, 0.0, 1005},
     };
     const compat::RegionImportOptions options{4.0, 50.0};
     std::unique_ptr<economy::World> firstWorld;
@@ -69,6 +69,24 @@ int main() {
               firstReport.placedBuildings[1].first == "farm" &&
               firstReport.placedBuildings[1].second == 2,
           "source order, base mirrored type, and accepted building IDs are deterministic");
+    Check(firstReport.placedSourceBuildings.size() == 2 &&
+              firstReport.placedSourceBuildings[0].sourcePlacementKey == 1001 &&
+              firstReport.placedSourceBuildings[0].typeName == "farm" &&
+              firstReport.placedSourceBuildings[0].buildingId == 1 &&
+              firstReport.placedSourceBuildings[1].sourcePlacementKey == 1002 &&
+              firstReport.placedSourceBuildings[1].typeName == "farm" &&
+              firstReport.placedSourceBuildings[1].buildingId == 2,
+          "accepted source keys map exactly to economy IDs, including mirrored base type");
+    Check(secondReport.placedSourceBuildings.size() == firstReport.placedSourceBuildings.size() &&
+              secondReport.placedSourceBuildings[0].sourcePlacementKey ==
+                  firstReport.placedSourceBuildings[0].sourcePlacementKey &&
+              secondReport.placedSourceBuildings[0].buildingId ==
+                  firstReport.placedSourceBuildings[0].buildingId &&
+              secondReport.placedSourceBuildings[1].sourcePlacementKey ==
+                  firstReport.placedSourceBuildings[1].sourcePlacementKey &&
+              secondReport.placedSourceBuildings[1].buildingId ==
+                  firstReport.placedSourceBuildings[1].buildingId,
+          "source mapping is deterministic across repeated imports");
     if (firstWorld && secondWorld) {
         const auto firstSnapshot = firstWorld->Snapshot();
         const auto secondSnapshot = secondWorld->Snapshot();
@@ -89,6 +107,20 @@ int main() {
     Check(description.find("2 placed") != std::string::npos &&
               description.find("Roads are not part of this step") != std::string::npos,
           "description is a concise readable report");
+
+    const std::vector<compat::PlacedBuildingRef> duplicateKeys = {
+        {"farm", 0.0, 0.0, 77},
+        {"unknown", 1000.0, 0.0, 77},
+    };
+    economy::World *const originalWorld = firstWorld.get();
+    compat::RegionImportReport duplicateReport;
+    Check(!compat::ImportRegionIntoWorld(duplicateKeys, 0, catalog, options, firstWorld,
+                                         duplicateReport),
+          "duplicate source keys reject import even when one placement would be skipped");
+    Check(firstWorld.get() == originalWorld && duplicateReport.placedSourceBuildings.empty() &&
+              duplicateReport.notes.size() == 1 &&
+              duplicateReport.notes[0].find("duplicate source placement key") != std::string::npos,
+          "duplicate-key failure is transactional and reports the reason");
 
     const std::vector<compat::PlacedBuildingRef> wideRegion = {
         {"farm", 0.0, 0.0},

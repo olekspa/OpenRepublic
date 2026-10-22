@@ -7,7 +7,9 @@
 #include "openrepublic/content/nmf_geometry.h"
 #include "openrepublic/content/nmf_preview_geometry.h"
 #include "openrepublic/content/terrain_preview.h"
+#include "wiColor.h"
 
+#include <algorithm>
 #include <array>
 #include <map>
 #include <set>
@@ -1321,7 +1323,7 @@ namespace openrepublic::preview
 
 	bool CreateMapRegionPreview(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request,
-		const std::filesystem::path& contentRoot, double radiusMeters, int modelLevel,
+		const std::filesystem::path& contentRoot, double radiusMeters, int modelLevel, bool enhancedLook,
 		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
 		std::vector<RegionInstance>* outInstances)
 	{
@@ -1393,10 +1395,80 @@ namespace openrepublic::preview
 			error = "Wicked Engine did not create the map region terrain components";
 			return false;
 		}
+		if (enhancedLook)
+		{
+			// This is OpenRepublic presentation styling over the verified height mesh;
+			// it does not interpret or claim compatibility with the map's unknown masks.
+			const auto latticeValue = [](int x, int z)
+			{
+				std::uint32_t hash = static_cast<std::uint32_t>(x) * 0x8da6b343u ^
+					static_cast<std::uint32_t>(z) * 0xd8163841u;
+				hash ^= hash >> 13;
+				hash *= 0x85ebca6bu;
+				hash ^= hash >> 16;
+				return static_cast<float>(hash & 0x00ffffffu) / 16777215.0f;
+			};
+			const auto smoothNoise = [&](double worldX, double worldZ, double scale)
+			{
+				const double x = worldX / scale;
+				const double z = worldZ / scale;
+				const int x0 = static_cast<int>(std::floor(x));
+				const int z0 = static_cast<int>(std::floor(z));
+				const float tx = static_cast<float>(x - x0);
+				const float tz = static_cast<float>(z - z0);
+				const float sx = tx * tx * (3.0f - 2.0f * tx);
+				const float sz = tz * tz * (3.0f - 2.0f * tz);
+				const float a = wi::math::Lerp(latticeValue(x0, z0), latticeValue(x0 + 1, z0), sx);
+				const float b = wi::math::Lerp(latticeValue(x0, z0 + 1), latticeValue(x0 + 1, z0 + 1), sx);
+				return wi::math::Lerp(a, b, sz);
+			};
+			const auto gridHeight = [&](std::uint32_t x, std::uint32_t z)
+			{
+				return grid.heights[static_cast<std::size_t>(z) * kSamples + x];
+			};
+			terrainMesh->vertex_colors.reserve(positions.size());
+			for (std::uint32_t z = 0; z < kSamples; ++z)
+			{
+				for (std::uint32_t x = 0; x < kSamples; ++x)
+				{
+					const std::uint32_t left = x == 0 ? x : x - 1;
+					const std::uint32_t right = std::min(x + 1, kSamples - 1);
+					const std::uint32_t down = z == 0 ? z : z - 1;
+					const std::uint32_t up = std::min(z + 1, kSamples - 1);
+					const double dx = grid.worldXCoordinates[right] - grid.worldXCoordinates[left];
+					const double dz = grid.worldZCoordinates[up] - grid.worldZCoordinates[down];
+					const float slopeX = dx > 0.0 ? static_cast<float>((gridHeight(right, z) - gridHeight(left, z)) / dx) : 0.0f;
+					const float slopeZ = dz > 0.0 ? static_cast<float>((gridHeight(x, up) - gridHeight(x, down)) / dz) : 0.0f;
+					const float steepness = std::clamp((std::sqrt(slopeX * slopeX + slopeZ * slopeZ) - 0.08f) * 1.6f,
+						0.0f, 0.34f);
+					const double worldX = grid.worldXCoordinates[x];
+					const double worldZ = grid.worldZCoordinates[z];
+					const float broad = smoothNoise(worldX, worldZ, 78.0);
+					const float fine = smoothNoise(worldX, worldZ, 29.0);
+					const float heightRange = grid.maxHeight - grid.minHeight;
+					const float elevation = heightRange > 0.01f
+						? std::clamp((gridHeight(x, z) - grid.minHeight) / heightRange, 0.0f, 1.0f) : 0.0f;
+					const float dryness = std::clamp((broad - 0.42f) * 0.44f + elevation * 0.16f, 0.0f, 0.32f);
+					XMFLOAT3 color(
+						0.28f + dryness * 0.46f + fine * 0.035f,
+						0.37f + (1.0f - dryness) * 0.08f + broad * 0.045f,
+						0.23f + (1.0f - dryness) * 0.035f + fine * 0.028f);
+					color.x = wi::math::Lerp(color.x, 0.39f, steepness);
+					color.y = wi::math::Lerp(color.y, 0.37f, steepness);
+					color.z = wi::math::Lerp(color.z, 0.32f, steepness);
+					terrainMesh->vertex_colors.push_back(wi::Color::fromFloat4(XMFLOAT4(color.x, color.y, color.z, 1.0f)).rgba);
+				}
+			}
+			terrainMaterial->SetUseVertexColors(true);
+			terrainMaterial->SetBaseColor(XMFLOAT4(1, 1, 1, 1));
+		}
+		else
+		{
+			terrainMaterial->SetBaseColor(XMFLOAT4(0.30f, 0.42f, 0.24f, 1.0f));
+		}
 		terrainMesh->CreateRenderData();
-		terrainMaterial->SetBaseColor(XMFLOAT4(0.30f, 0.42f, 0.24f, 1.0f));
-		terrainMaterial->SetRoughness(1.0f);
-		terrainMaterial->SetReflectance(0.0f);
+		terrainMaterial->SetRoughness(enhancedLook ? 0.92f : 1.0f);
+		terrainMaterial->SetReflectance(enhancedLook ? 0.04f : 0.0f);
 		terrainMaterial->CreateRenderData(true);
 
 		// Roads: straight ribbons between linked junctions, draped on the terrain. Segment
@@ -1473,9 +1545,10 @@ namespace openrepublic::preview
 				if (roadMesh != nullptr && roadMaterial != nullptr)
 				{
 					roadMesh->CreateRenderData();
-					roadMaterial->SetBaseColor(XMFLOAT4(0.16f, 0.17f, 0.19f, 1.0f));
-					roadMaterial->SetRoughness(1.0f);
-					roadMaterial->SetReflectance(0.0f);
+					roadMaterial->SetBaseColor(enhancedLook ? XMFLOAT4(0.13f, 0.14f, 0.15f, 1.0f)
+						: XMFLOAT4(0.16f, 0.17f, 0.19f, 1.0f));
+					roadMaterial->SetRoughness(enhancedLook ? 0.88f : 1.0f);
+					roadMaterial->SetReflectance(enhancedLook ? 0.04f : 0.0f);
 					roadMaterial->SetDoubleSided(true);
 					roadMaterial->CreateRenderData(true);
 				}
@@ -1589,7 +1662,8 @@ namespace openrepublic::preview
 				const std::string prefix = "MIRRORZ_";
 				const bool mirroredName = placed.typeName.rfind(prefix, 0) == 0;
 				outInstances->push_back({ instance,
-					mirroredName ? placed.typeName.substr(prefix.size()) : placed.typeName, placed.X(), placed.Z() });
+					mirroredName ? placed.typeName.substr(prefix.size()) : placed.typeName,
+					placed.X(), placed.Z(), static_cast<std::uint64_t>(index) });
 			}
 			++instances;
 		}

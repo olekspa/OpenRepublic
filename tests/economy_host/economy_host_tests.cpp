@@ -2,6 +2,8 @@
 
 #include "json.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <iostream>
 #include <string>
 
@@ -31,6 +33,9 @@ int main() {
   economy_host::Dispatcher observer(economy_host::Role::Observer, catalog);
   const auto hello = Response(observer, Request("hello", "hello"));
   bool ok = Check(hello["ok"] && hello["result"]["role"] == "observer", "observer hello");
+  const std::string observerSession = hello.value("sessionId", std::string());
+  ok &= Check(!observerSession.empty() && hello["result"]["sessionId"] == observerSession,
+              "hello reports a stable host session in the envelope and result");
   const auto denied = Response(observer, Request("step", "step", Json{{"ticks", 1}}));
   ok &=
       Check(denied["ok"] && denied["result"]["errorCode"] == "permission_denied", "observer mutation denied");
@@ -38,6 +43,8 @@ int main() {
       observer.HandleLine("{\"id\":\"a\",\"id\":\"b\",\"protocolVersion\":0,\"method\":\"world\"}"));
   ok &=
       Check(!duplicate["ok"] && duplicate["error"]["code"] == "duplicate_json_key", "duplicate key rejected");
+  ok &= Check(duplicate.value("sessionId", std::string()) == observerSession,
+              "protocol errors carry the current host session");
   const auto unknown = Response(observer, Request("extra", "world", Json{{"extra", true}}));
   ok &= Check(!unknown["ok"] && unknown["error"]["code"] == "invalid_request", "unknown field rejected");
   const auto catalogResult = Response(observer, Request("catalog", "catalog"));
@@ -50,6 +57,19 @@ int main() {
               "catalog uint64 quantities use decimal strings");
 
   economy_host::Dispatcher controller(economy_host::Role::Controller, catalog);
+  const auto controllerHello = Response(controller, Request("controller-hello", "hello"));
+  const std::string controllerSession = controllerHello.value("sessionId", std::string());
+  ok &= Check(!controllerSession.empty() && controllerSession != observerSession,
+              "independent host dispatchers receive different session IDs");
+  const auto beforeStaleRequest = Response(controller, Request("before-stale", "world"))["result"]["world"];
+  const auto staleSessionStep = Response(
+      controller, Request("stale-session", "step", Json{{"ticks", 1}, {"sessionId", "replaced-host"}}));
+  const auto afterStaleRequest = Response(controller, Request("after-stale", "world"))["result"]["world"];
+  ok &= Check(!controllerSession.empty() && staleSessionStep["error"]["code"] == "stale_session" &&
+                  staleSessionStep["sessionId"] == controllerSession,
+              "host rejects requests bound to a different session");
+  ok &= Check(beforeStaleRequest["tick"] == afterStaleRequest["tick"],
+              "stale-session step does not advance the world");
   const auto world = Response(controller, Request("world", "world"))["result"]["world"];
   const auto submitted = Response(
       controller,
@@ -90,5 +110,51 @@ int main() {
       Response(controller, "{\"id\":\"v\",\"protocolVersion\":7,\"method\":\"world\"}");
   ok &= Check(!malformedVersion["ok"] && malformedVersion["error"]["code"] == "unsupported_protocol_version",
               "unsupported version rejected");
+
+  economy::World sharedWorld(catalog, 64, 64);
+  economy_api::EconomyApi sharedApi(sharedWorld, economy_api::Permissions{true, true});
+  economy_host::Dispatcher appController(economy_host::Role::Controller, sharedApi, true);
+  const auto appHello = Response(appController, Request("app-hello", "hello"));
+  const std::string appSession = appHello.value("sessionId", std::string());
+  ok &= Check(appHello["ok"] && !appSession.empty(), "borrowed-API dispatcher permits initial hello");
+  const auto appCapabilities = Response(appController, Request("app-capabilities", "capabilities"));
+  ok &= Check(appCapabilities["ok"], "borrowed-API dispatcher permits initial capabilities");
+  const bool advertisesShutdown = std::any_of(appCapabilities["result"]["methods"].begin(),
+      appCapabilities["result"]["methods"].end(), [](const Json& method) {
+        return method.value("name", std::string()) == "shutdown";
+      });
+  ok &= Check(!advertisesShutdown, "embedded dispatcher does not advertise app shutdown");
+  const auto unboundWorld = Response(appController, Request("unbound-world", "world"));
+  const auto unboundStep = Response(appController, Request("unbound-step", "step", Json{{"ticks", 1}}));
+  ok &= Check(!unboundWorld["ok"] && unboundWorld["error"]["code"] == "missing_session" &&
+                  !unboundStep["ok"] && unboundStep["error"]["code"] == "missing_session",
+              "embedded dispatcher requires the handshake session on every later request");
+  Json appSessionFields{{"sessionId", appSession}};
+  const auto appWorldBefore = Response(appController, Request("app-world-before", "world", appSessionFields));
+  const auto appRevision = appWorldBefore["result"]["world"]["revision"];
+  const auto appSubmission = Response(
+      appController,
+      Request("app-place", "submit",
+              Json{{"sessionId", appSession}, {"revision", appRevision},
+                   {"command", Json{{"kind", "place_building"}, {"type", "farm"}, {"x", 1}, {"z", 1}}}}));
+  const std::string sharedHandle = appSubmission["result"].value("handle", std::string());
+  ok &= Check(appSubmission["ok"] && appSubmission["result"]["errorCode"] == "none" &&
+                  !sharedHandle.empty(),
+              "embedded dispatcher submits through the borrowed API");
+  ok &= Check(sharedApi.Step(1) == economy_api::ErrorCode::None,
+              "direct app API advances the world after an external submission");
+  const std::uint64_t appHandleValue = std::stoull(sharedHandle);
+  const auto sharedPoll = sharedApi.PollCommand(appHandleValue);
+  ok &= Check(sharedPoll.error == economy_api::ErrorCode::None &&
+                  sharedPoll.result.state == economy::CommandState::Accepted,
+              "external command handle is visible to the app's shared API instance");
+  const auto appWorldAfter = Response(appController, Request("app-world-after", "world", appSessionFields));
+  ok &= Check(appWorldAfter["ok"] && appWorldAfter["result"]["world"]["tick"] == "1" &&
+                  appWorldAfter["result"]["world"]["buildings"].size() == 1,
+              "embedded dispatcher and app API observe the same world state");
+  const auto appShutdown = Response(appController, Request("app-shutdown", "shutdown", appSessionFields));
+  ok &= Check(appShutdown["ok"] && appShutdown["result"]["errorCode"] == "permission_denied" &&
+                  !appController.ShutdownRequested(),
+              "embedded controller cannot shut down the desktop app");
   return ok ? 0 : 1;
 }

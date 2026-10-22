@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,6 +22,15 @@ struct PlacedBuildingRef {
     std::string typeName;
     double x{};
     double z{};
+    // Optional caller-owned identity for the source placement. Map adapters can
+    // use a placement index from their source package; generic callers may omit it.
+    std::optional<std::uint64_t> sourcePlacementKey;
+};
+
+struct ImportedBuildingIdentity {
+    std::uint64_t sourcePlacementKey{};
+    std::string typeName;
+    economy::BuildingId buildingId{};
 };
 
 struct RegionImportReport {
@@ -35,6 +45,8 @@ struct RegionImportReport {
     std::uint32_t gridDepth{};
     std::vector<std::string> notes;
     std::vector<std::pair<std::string, economy::BuildingId>> placedBuildings;
+    // Exact caller-key to economy identity for accepted placements that supplied a key.
+    std::vector<ImportedBuildingIdentity> placedSourceBuildings;
 };
 
 // Creates a new world transactionally; on invalid input, outWorld is unchanged.

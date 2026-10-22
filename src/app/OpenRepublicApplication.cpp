@@ -1,7 +1,9 @@
 #include "OpenRepublicApplication.h"
 #include "ModelImporter.h"
 #include "ContentPreview.h"
+#include "MapShowcaseCapture.h"
 #include "NmfPreviewCapture.h"
+#include "SyntheticRegionFixture.h"
 #include "wiHelper.h"
 #include "openrepublic/content/glb_container.h"
 #include "openrepublic/content/glb_semantic.h"
@@ -14,6 +16,8 @@
 #include "openrepublic/content/nmf_preview_geometry.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/content/terrain_preview.h"
+#include "openrepublic/compat/catalog_import.h"
+#include "openrepublic/compat/region_roads.h"
 
 #ifdef OPENREPUBLIC_WITH_LUA_RULES
 #include "openrepublic/scripting/lua_rules_loader.h"
@@ -34,9 +38,11 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 namespace openrepublic
@@ -80,6 +86,7 @@ namespace openrepublic
 		constexpr char kDemoRulesFile[] = "data/rules/demo_rules.lua";
 		// Current synthetic storage capacity also shown by the demo stock readout.
 		constexpr std::uint32_t kStorageFlourCapacity = 5;
+		constexpr std::size_t kMaxPendingRegionCommands = 64;
 
 		std::string PendingTruckPlanCommandLabel(const openrepublic::agent_api::AgentApi& api,
 			std::uint64_t simulationCommandId)
@@ -231,6 +238,122 @@ namespace openrepublic
 			}
 			return workingPath;
 		}
+
+		bool BuildAppOwnedRegionEconomy(
+			const openrepublic::content::MapPlacementRequest& request,
+			const std::filesystem::path& contentRoot, double radiusMeters,
+			openrepublic::economy::Catalog& catalog,
+			std::unique_ptr<openrepublic::economy::World>& world,
+			openrepublic::compat::RegionImportReport& importReport,
+			std::string& description, std::string& error)
+		{
+			using namespace openrepublic;
+			const std::filesystem::path definitionsPath = contentRoot / "buildings_types";
+			std::error_code fileError;
+			if (!std::filesystem::is_directory(definitionsPath, fileError) || fileError)
+			{
+				error = "building definitions directory is unavailable: " + definitionsPath.string();
+				return false;
+			}
+
+			std::map<std::string, content::BuildingDefinition> definitions;
+			for (std::filesystem::directory_iterator it(definitionsPath, fileError), end;
+				it != end && !fileError; it.increment(fileError))
+			{
+				if (!it->is_regular_file(fileError) || fileError || it->path().extension() != ".ini")
+				{
+					fileError.clear();
+					continue;
+				}
+				std::ifstream input(it->path(), std::ios::binary);
+				if (!input)
+				{
+					continue;
+				}
+				std::ostringstream buffer;
+				buffer << input.rdbuf();
+				content::BuildingDefinition definition;
+				if (input.bad() || !content::ParseBuildingDefinition(buffer.str(), definition, nullptr))
+				{
+					continue;
+				}
+				definitions[it->path().stem().string()] = std::move(definition);
+			}
+			if (fileError)
+			{
+				error = "could not enumerate building definitions: " + fileError.message();
+				return false;
+			}
+			if (definitions.empty())
+			{
+				error = "no parseable building definitions were found under " + definitionsPath.string();
+				return false;
+			}
+
+			compat::ImportReport catalogReport;
+			if (!compat::ImportCatalogFromDefinitions(definitions, {}, catalog, catalogReport))
+			{
+				error = "economy catalog import failed: " + catalogReport.error;
+				return false;
+			}
+			if (request.placementIndex >= request.allPlacements.size())
+			{
+				error = "map region centre placement is outside the loaded placement list";
+				return false;
+			}
+
+			std::vector<compat::PlacedBuildingRef> placements;
+			placements.reserve(request.allPlacements.size());
+			for (std::size_t index = 0; index < request.allPlacements.size(); ++index)
+			{
+				const auto& placed = request.allPlacements[index];
+				placements.push_back({ placed.typeName, placed.X(), placed.Z(),
+					static_cast<std::uint64_t>(index) });
+			}
+
+			compat::RegionImportOptions importOptions;
+			importOptions.radiusMeters = radiusMeters;
+			if (!compat::ImportRegionIntoWorld(placements, request.placementIndex, catalog,
+				importOptions, world, importReport))
+			{
+				error = "economy region import failed: " + compat::DescribeRegionImport(importReport);
+				return false;
+			}
+
+			std::vector<compat::RoadLinkRef> roadLinks;
+			if (request.hasRoads)
+			{
+				for (std::size_t i = 0; i < request.roads.nodes.size(); ++i)
+				{
+					for (const std::uint32_t j : request.roads.nodes[i].neighbors)
+					{
+						if (j > i && j < request.roads.nodes.size())
+						{
+							roadLinks.push_back({ request.roads.nodes[i].x, request.roads.nodes[i].z,
+								request.roads.nodes[j].x, request.roads.nodes[j].z });
+						}
+					}
+				}
+			}
+			compat::RegionRoadOptions roadOptions;
+			roadOptions.maxConnectorCells = 120;
+			compat::RegionRoadReport roadReport;
+			if (!compat::ImportRoadsIntoWorld(*world, importReport, importOptions,
+				roadLinks, roadOptions, roadReport))
+			{
+				error = "economy road import failed";
+				world.reset();
+				return false;
+			}
+
+			std::ostringstream summary;
+			summary << "App-owned region economy (experimental): "
+				<< compat::DescribeImport(catalogReport) << " "
+				<< compat::DescribeRegionImport(importReport) << " "
+				<< compat::DescribeRegionRoads(roadReport);
+			description = summary.str();
+			return true;
+		}
 	}
 
 	OpenRepublicApplication::OpenRepublicApplication()
@@ -273,6 +396,33 @@ namespace openrepublic
 		mapContentRoot = std::move(contentRoot);
 	}
 
+	void OpenRepublicApplication::SetSyntheticRegionFixture()
+	{
+		syntheticRegionFixtureMode = true;
+		mapRegionPreview = true;
+	}
+
+	void OpenRepublicApplication::SetMapShowcaseCapture(std::filesystem::path outputPath, bool enhancedLook,
+		float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale)
+	{
+		mapShowcaseCaptureMode = !outputPath.empty();
+		mapShowcaseCapturePath = std::move(outputPath);
+		mapShowcaseEnhancedLook = enhancedLook;
+		mapShowcaseCameraYawDegrees = cameraYawDegrees;
+		mapShowcaseCameraElevationDegrees = cameraElevationDegrees;
+		mapShowcaseCameraDistanceScale = cameraDistanceScale;
+		if (enhancedLook && !graphicsSettings.has_value())
+		{
+			openrepublic::runtime::GraphicsSettings settings;
+			settings.ambientOcclusion = openrepublic::runtime::AmbientOcclusion::Ssao;
+			settings.fxaa = true;
+			settings.bloom = true;
+			settings.exposure = 0.96f;
+			settings.sharpen = 0.15f;
+			graphicsSettings = settings;
+		}
+	}
+
 	void OpenRepublicApplication::SetGraphicsSettings(openrepublic::runtime::GraphicsSettings settings)
 	{
 		graphicsSettings = settings;
@@ -282,6 +432,11 @@ namespace openrepublic
 	{
 		economyHost = std::move(host);
 		economyPort = port;
+	}
+
+	void OpenRepublicApplication::SetLocalEconomyPipeName(std::wstring name)
+	{
+		localEconomyPipeName = std::move(name);
 	}
 
 	void OpenRepublicApplication::SetNmfUnlitPreview(bool enabled)
@@ -332,9 +487,10 @@ namespace openrepublic
 	void OpenRepublicApplication::Initialize()
 	{
 		wi::Application::Initialize();
-		const bool capturePreview = !nmfCapturePaths.empty();
+		const bool capturePreview = !nmfCapturePaths.empty() || mapShowcaseCaptureMode;
 		bool terrainPreviewLoaded = false;
 		bool nmfPreviewLoaded = false;
+		preview::SyntheticRegionFixtureData syntheticRegionData;
 		XMFLOAT3 nmfPreviewCameraTarget(
 			static_cast<float>(openrepublic::content::NmfPreviewCenterX),
 			static_cast<float>(openrepublic::content::NmfPreviewDisplaySpan * 0.5), 0.0f);
@@ -362,7 +518,27 @@ namespace openrepublic
 
 		// Synthetic OpenRepublic-authored content only. The view follows snapshots;
 		// no Wicked Engine scene object owns or changes simulation state.
-		if (!capturePreview)
+		if (syntheticRegionFixtureMode)
+		{
+			std::string error;
+			if (preview::CreateSyntheticRegionFixture(previewWorld, syntheticRegionData, error))
+			{
+				regionInstances = syntheticRegionData.instances;
+				syntheticRegionCenterX = syntheticRegionData.centerX;
+				syntheticRegionCenterZ = syntheticRegionData.centerZ;
+				nmfPreviewCameraTarget = syntheticRegionData.cameraTarget;
+				nmfPreviewCameraDistance = syntheticRegionData.cameraDistance;
+				nmfPreviewLoaded = true;
+				uiNotice = syntheticRegionData.description;
+				wilog("[OpenRepublic] %s", syntheticRegionData.description.c_str());
+			}
+			else
+			{
+				uiNotice = "Synthetic region fixture could not be created: " + error;
+				wilog("[OpenRepublic] %s", uiNotice.c_str());
+			}
+		}
+		else if (!capturePreview && !mapRegionPreview)
 		{
 			const wi::ecs::Entity ground = previewWorld.Entity_CreatePlane("OpenRepublic synthetic construction ground");
 			if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(ground))
@@ -394,13 +570,49 @@ namespace openrepublic
 			truckEntity = createBlock("OpenRepublic synthetic truck", -4.0f, 0.28f, XMFLOAT3(0.25f, 0.25f, 0.25f), XMFLOAT4(0.85f, 0.72f, 0.18f, 1.0f));
 		}
 
+		const XMFLOAT3 previewSunColor = mapShowcaseEnhancedLook
+			? XMFLOAT3(1.0f, 0.92f, 0.82f) : XMFLOAT3(1.0f, 0.88f, 0.72f);
 		const wi::ecs::Entity sun = previewWorld.Entity_CreateLight(
-			"OpenRepublic preview light", XMFLOAT3(0, 0, 0), XMFLOAT3(1.0f, 0.88f, 0.72f),
+			"OpenRepublic preview light", XMFLOAT3(0, 0, 0), previewSunColor,
 			4.0f, 100.0f, wi::scene::LightComponent::DIRECTIONAL);
 		if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(sun))
 		{
-			transform->RotateRollPitchYaw(XMFLOAT3(-0.7f, 0.6f, 0));
+			if (mapShowcaseEnhancedLook)
+			{
+				// Wicked's directional light points along the transform's local +Y axis.
+				// Match the camera's complete outward direction so the showcase sun sits
+				// directly behind the camera, including its elevation, at every preset.
+				constexpr float degreesToRadians = XM_PI / 180.0f;
+				const float sunElevationRadians = mapShowcaseCameraElevationDegrees * degreesToRadians;
+				const float cameraYawRadians = mapShowcaseCameraYawDegrees * degreesToRadians;
+				const float horizontalSun = std::cos(sunElevationRadians);
+				const XMFLOAT3 sunDirection(
+					std::sin(cameraYawRadians) * horizontalSun,
+					std::sin(sunElevationRadians),
+					std::cos(cameraYawRadians) * horizontalSun);
+				const XMVECTOR worldUp = XMVectorSet(0, 1, 0, 0);
+				const XMVECTOR targetDirection = XMLoadFloat3(&sunDirection);
+				const XMVECTOR axis = XMVector3Normalize(XMVector3Cross(worldUp, targetDirection));
+				const float angle = std::acos(std::clamp(sunDirection.y, -1.0f, 1.0f));
+				transform->Rotate(XMQuaternionRotationAxis(axis, angle));
+			}
+			else
+			{
+				transform->RotateRollPitchYaw(XMFLOAT3(-0.7f, 0.6f, 0.0f));
+			}
 			transform->UpdateTransform();
+		}
+		if (mapShowcaseEnhancedLook)
+		{
+			if (wi::scene::LightComponent* light = previewWorld.lights.GetComponent(sun))
+			{
+				// The sun is already aligned with the camera's outward ray. Raise its
+				// direct contribution so camera-facing building surfaces read as sunlit.
+				light->intensity = 6.0f;
+				light->forced_shadow_resolution = 2048;
+				light->SetCastShadow(true);
+				light->SetVolumetricCloudsEnabled(true);
+			}
 		}
 
 		if (!sceneProbePath.empty())
@@ -562,7 +774,8 @@ namespace openrepublic
 				if (mapRegionPreview && mapPlacement)
 				{
 					created = preview::CreateMapRegionPreview(previewWorld, *mapPlacement, mapContentRoot,
-						mapRadiusMeters, mapRegionModelLevel, nmfPreviewCameraTarget, nmfPreviewCameraDistance,
+						mapRadiusMeters, mapRegionModelLevel, mapShowcaseEnhancedLook,
+						nmfPreviewCameraTarget, nmfPreviewCameraDistance,
 						description, error, &regionInstances);
 					geometryAuditSummary = "map region preview (per-model audits are in the records above)";
 				}
@@ -580,9 +793,71 @@ namespace openrepublic
 					if (mapRegionPreview)
 					{
 						wilog("[OpenRepublic] %s", description.c_str());
-						if (economyPort > 0 && !nmfCaptureMode)
+						if (!nmfCaptureMode && !mapShowcaseCaptureMode && economyPort > 0)
 						{
 							economyOverlay = std::make_unique<openrepublic::preview::EconomyOverlay>(economyHost, economyPort);
+						}
+						else if (!nmfCaptureMode && !mapShowcaseCaptureMode && mapPlacement)
+						{
+							const double effectiveRadius = mapRadiusMeters > 0.0 ? mapRadiusMeters : 400.0;
+							std::string economyDescription;
+							std::string economyError;
+							if (BuildAppOwnedRegionEconomy(*mapPlacement, mapContentRoot, effectiveRadius,
+								regionEconomyCatalog, regionEconomyWorld, regionEconomyImport,
+								economyDescription, economyError))
+							{
+								regionEconomyApi = std::make_unique<openrepublic::economy_api::EconomyApi>(
+									*regionEconomyWorld, openrepublic::economy_api::Permissions{ true, true });
+								const auto initial = regionEconomyApi->QueryWorld();
+								if (initial.error == openrepublic::economy_api::ErrorCode::None)
+								{
+									regionEconomySnapshot = initial.world;
+									regionEconomyDescription = economyDescription;
+									regionWorldStatus = economyDescription;
+									if (!localEconomyPipeName.empty())
+									{
+										localEconomyDispatcher = std::make_unique<openrepublic::economy_host::Dispatcher>(
+											openrepublic::economy_host::Role::Controller, *regionEconomyApi, true, false);
+										localEconomyDispatcher->SetRegionDescription(economyDescription);
+
+										auto endpoint = std::make_unique<openrepublic::economy_host::LocalEconomyPipeEndpoint>(
+											localEconomyPipeName);
+										std::string endpointError;
+										if (endpoint->Start(endpointError))
+										{
+											std::string endpointName;
+											endpointName.reserve(localEconomyPipeName.size());
+											for (wchar_t character : localEconomyPipeName)
+											{
+												endpointName.push_back(static_cast<char>(character));
+											}
+											uiNotice = "Trusted-local controller endpoint listening at \\\\.\\pipe\\" +
+												endpointName + " (JSONL protocol v" +
+												std::to_string(openrepublic::economy_host::ProtocolVersion) + ").";
+											wilog("[OpenRepublic] %s", uiNotice.c_str());
+											localEconomyPipeEndpoint = std::move(endpoint);
+										}
+										else
+										{
+											uiNotice = "Trusted-local controller endpoint could not start: " + endpointError;
+											wilog("[OpenRepublic] %s", uiNotice.c_str());
+											localEconomyDispatcher.reset();
+										}
+									}
+									UpdateRegionEconomyPresentation();
+								}
+								else
+								{
+									regionEconomyApi.reset();
+									regionEconomyWorld.reset();
+									uiNotice = "Could not read the imported economy world through EconomyApi.";
+								}
+							}
+							else
+							{
+								uiNotice = "Map preview loaded, but the app-owned economy could not start: " + economyError;
+								wilog("[OpenRepublic] %s", uiNotice.c_str());
+							}
 						}
 					}
 					else if (mapPlacement)
@@ -607,13 +882,38 @@ namespace openrepublic
 					weather.ambient = XMFLOAT3(0.55f, 0.55f, 0.6f);
 					weather.horizon = XMFLOAT3(0.55f, 0.6f, 0.7f);
 					weather.zenith = XMFLOAT3(0.45f, 0.55f, 0.75f);
+					if (mapRegionPreview && mapShowcaseEnhancedLook)
+					{
+						weather.ambient = XMFLOAT3(0.62f, 0.67f, 0.75f);
+						weather.horizon = XMFLOAT3(0.56f, 0.68f, 0.84f);
+						weather.zenith = XMFLOAT3(0.20f, 0.40f, 0.72f);
+						weather.skyExposure = 0.90f;
+						weather.SetHeightFog(false);
+						weather.SetOverrideFogColor(false);
+						weather.SetVolumetricClouds(true);
+						weather.volumetricCloudParameters.cloudStartHeight = 700.0f;
+						weather.volumetricCloudParameters.cloudThickness = 2400.0f;
+						weather.volumetricCloudParameters.layerFirst.coverageAmount = 0.48f;
+						weather.volumetricCloudParameters.layerFirst.coverageMinimum = 0.06f;
+						weather.sunColor = previewSunColor;
+						if (const wi::scene::TransformComponent* sunTransform = previewWorld.transforms.GetComponent(sun))
+						{
+							// The renderer and Wicked's sky both use the light's local +Y
+							// direction: from the scene toward the sun.
+							weather.sunDirection = sunTransform->GetUp();
+							wilog("[OpenRepublic] Showcase sun aligned to camera-side daylight: direction=(%.3f, %.3f, %.3f), camera yaw=%.2f deg",
+								weather.sunDirection.x, weather.sunDirection.y, weather.sunDirection.z,
+								mapShowcaseCameraYawDegrees);
+						}
+						wilog("[OpenRepublic] Enhanced map showcase look: camera-side daylight, graded blue sky, lighter volumetric cloud cover, SSAO/FXAA/bloom, and deterministic height-mesh terrain tinting; source terrain textures and vegetation remain unimported.");
+					}
 				}
 				else
 				{
 					uiNotice = "NMF probe failed: " + error;
 				}
 			}
-			if (nmfPreviewLoaded)
+		if (nmfPreviewLoaded)
 			{
 				wilog("[OpenRepublic] NMF geometry audit: %s", geometryAuditSummary.c_str());
 				wilog("[OpenRepublic] NMF limits: UV pair-to-set mapping is inferred; slot 0 to Wicked base-color/UV0 is an opt-in inference; other texture slots remain unmapped; source axes, winding, units, normal direction, and visual fidelity remain unverified.");
@@ -645,7 +945,78 @@ namespace openrepublic
 			wilog("[OpenRepublic] Terrain probe: %s", uiNotice.c_str());
 		}
 
-		if (capturePreview && nmfPreviewLoaded)
+		if (syntheticRegionFixtureMode && nmfPreviewLoaded)
+		{
+			using namespace openrepublic;
+			regionEconomyCatalog = economy::MakeSyntheticCatalog();
+			compat::RegionImportOptions importOptions;
+			importOptions.radiusMeters = syntheticRegionData.radiusMeters;
+			std::string economyError;
+			if (compat::ImportRegionIntoWorld(syntheticRegionData.placements,
+				syntheticRegionData.centerPlacementIndex, regionEconomyCatalog, importOptions,
+				regionEconomyWorld, regionEconomyImport))
+			{
+				compat::RegionRoadOptions roadOptions;
+				roadOptions.maxConnectorCells = 120;
+				compat::RegionRoadReport roadReport;
+				if (regionEconomyWorld && compat::ImportRoadsIntoWorld(*regionEconomyWorld,
+					regionEconomyImport, importOptions, syntheticRegionData.roads, roadOptions, roadReport))
+				{
+					regionEconomyApi = std::make_unique<economy_api::EconomyApi>(
+						*regionEconomyWorld, economy_api::Permissions{ true, true });
+					const auto initial = regionEconomyApi->QueryWorld();
+					if (initial.error == economy_api::ErrorCode::None)
+					{
+						regionEconomySnapshot = initial.world;
+						std::ostringstream fixtureStatus;
+						fixtureStatus << "Synthetic/open fixture (OpenRepublic-authored; no WRSR inputs)\n"
+							<< "Import: " << regionEconomyImport.placed << "/" << regionEconomyImport.considered
+							<< " buildings; roads " << roadReport.linksConsidered << " links, "
+							<< roadReport.segmentsAccepted << "/" << roadReport.segmentsQueued
+							<< " segments, " << roadReport.buildingsConnected << " connected, "
+							<< roadReport.buildingsUnconnected << " unconnected.";
+						regionEconomyDescription = fixtureStatus.str();
+						wilog("[OpenRepublic] Synthetic region import detail: %s %s",
+							compat::DescribeRegionImport(regionEconomyImport).c_str(),
+							compat::DescribeRegionRoads(roadReport).c_str());
+						RefreshRegionEconomy();
+						UpdateRegionEconomyPresentation();
+					}
+					else
+					{
+						regionEconomyApi.reset();
+						regionEconomyWorld.reset();
+						uiNotice = "Synthetic fixture EconomyApi could not read the created world.";
+					}
+				}
+				else
+				{
+					regionEconomyWorld.reset();
+					uiNotice = "Synthetic fixture road import failed.";
+				}
+			}
+			else
+			{
+				regionEconomyWorld.reset();
+				uiNotice = "Synthetic fixture economy import failed: " + compat::DescribeRegionImport(regionEconomyImport);
+			}
+			if (!regionEconomyApi)
+			{
+				regionWorldStatus = uiNotice;
+				wilog("[OpenRepublic] %s", uiNotice.c_str());
+			}
+		}
+
+		if (mapShowcaseCaptureMode && mapRegionPreview && nmfPreviewLoaded)
+		{
+			const double effectiveRadius = mapRadiusMeters > 0.0 ? mapRadiusMeters : 400.0;
+			const float distance = static_cast<float>(effectiveRadius * mapShowcaseCameraDistanceScale);
+			renderPath = std::make_unique<MapShowcaseCaptureRenderPath>(mapShowcaseCapturePath,
+				nmfPreviewCameraTarget, distance, mapShowcaseCameraYawDegrees, mapShowcaseCameraElevationDegrees);
+			wilog("[OpenRepublic] Map showcase preset: %s",
+				mapShowcaseEnhancedLook ? "enhanced" : "baseline");
+		}
+		else if (capturePreview && nmfPreviewLoaded)
 		{
 			if (nmfUnlitPreview || nmfMaterialUnlitPreview)
 			{
@@ -663,8 +1034,16 @@ namespace openrepublic
 			renderPath = std::make_unique<wi::RenderPath3D>();
 			if (capturePreview)
 			{
-				wilog("[OpenRepublic] NMF preview capture skipped because no supported NMF model was loaded");
-				PostQuitMessage(2);
+				if (mapShowcaseCaptureMode)
+				{
+					wilog("[OpenRepublic] Map showcase capture failed because the requested region preview did not load");
+					PostQuitMessage(2);
+				}
+				else
+				{
+					wilog("[OpenRepublic] Preview capture skipped because no supported model/region was loaded");
+					PostQuitMessage(2);
+				}
 			}
 		}
 		renderPath->scene = &previewWorld;
@@ -888,7 +1267,8 @@ namespace openrepublic
 
 		if (mapRegionPreview && nmfPreviewLoaded)
 		{
-			// A map region replaces the synthetic demo: drop its controls and keep one status line.
+			// The imported region is its own simulation presentation. Keep only controls
+			// that operate its EconomyApi (in-process by default, or an explicit bridge).
 			for (wi::gui::Widget* widget : { static_cast<wi::gui::Widget*>(&pauseButton), static_cast<wi::gui::Widget*>(&stepButton),
 				static_cast<wi::gui::Widget*>(&roadButton), static_cast<wi::gui::Widget*>(&buildRoadButton),
 				static_cast<wi::gui::Widget*>(&placeStorageButton), static_cast<wi::gui::Widget*>(&buildFarmButton),
@@ -900,13 +1280,51 @@ namespace openrepublic
 			{
 				gui.RemoveWidget(widget);
 			}
-			simulationStatus.SetPos(XMFLOAT2(18, 18));
-			simulationStatus.SetSize(XMFLOAT2(760, 44));
-			simulationStatus.SetText(economyOverlay ? "Economy overlay: connecting..." : uiNotice);
+			if (economyOverlay || regionEconomyApi)
+			{
+				regionStepButton.Create("RegionEconomyStepButton");
+				regionStepButton.SetText("Step 24 ticks");
+				StyleButton(regionStepButton);
+				regionStepButton.SetSize(XMFLOAT2(132, 28));
+				regionStepButton.SetPos(XMFLOAT2(18, 18));
+				regionStepButton.OnClick([this](const wi::gui::EventArgs&) { QueueRegionStep(); });
+				gui.AddWidget(&regionStepButton);
+
+				regionToggleButton.Create("RegionEconomyToggleBuildingButton");
+				regionToggleButton.SetText("Toggle selected");
+				StyleButton(regionToggleButton);
+				regionToggleButton.SetSize(XMFLOAT2(132, 28));
+				regionToggleButton.SetPos(XMFLOAT2(156, 18));
+				regionToggleButton.OnClick([this](const wi::gui::EventArgs&) { QueueRegionBuildingToggle(); });
+				gui.AddWidget(&regionToggleButton);
+
+				regionHaulSourceButton.Create("RegionEconomyHaulSourceButton");
+				regionHaulSourceButton.SetText("Set haul source");
+				StyleButton(regionHaulSourceButton);
+				regionHaulSourceButton.SetSize(XMFLOAT2(132, 28));
+				regionHaulSourceButton.SetPos(XMFLOAT2(294, 18));
+				regionHaulSourceButton.OnClick([this](const wi::gui::EventArgs&) { SetRegionHaulSource(); });
+				gui.AddWidget(&regionHaulSourceButton);
+
+				regionHaulButton.Create("RegionEconomyHaulToSelectedButton");
+				regionHaulButton.SetText("Haul to selected");
+				StyleButton(regionHaulButton);
+				regionHaulButton.SetSize(XMFLOAT2(132, 28));
+				regionHaulButton.SetPos(XMFLOAT2(432, 18));
+				regionHaulButton.OnClick([this](const wi::gui::EventArgs&) { QueueRegionHaul(); });
+				gui.AddWidget(&regionHaulButton);
+			}
+			simulationStatus.SetPos(XMFLOAT2(18, 54));
+			simulationStatus.SetSize(XMFLOAT2(1100, 96));
+			regionWorldStatus = economyOverlay
+				? "Economy bridge connected; waiting for the first world snapshot..."
+				: (regionEconomyApi ? regionWorldStatus : uiNotice);
+			if (economyOverlay || regionEconomyApi) UpdateRegionStatus();
+			else simulationStatus.SetText(regionWorldStatus);
 		}
 
 		ActivatePath(renderPath.get());
-		if (!capturePreview)
+		if (!capturePreview && !mapRegionPreview)
 		{
 			UpdateSimulationPresentation();
 		}
@@ -915,20 +1333,45 @@ namespace openrepublic
 	void OpenRepublicApplication::Update(float dt)
 	{
 		wi::Application::Update(dt);
-		if (nmfCaptureMode)
+		if (nmfCaptureMode || mapShowcaseCaptureMode)
 		{
 			return;
 		}
+		PumpLocalEconomyRequests();
 		if (economyOverlay && mapPlacement)
 		{
-			const std::string status = economyOverlay->Update(previewWorld, regionInstances, *mapPlacement);
+			const double effectiveMapRadius = mapRadiusMeters > 0.0 ? mapRadiusMeters : 400.0;
+			const std::string status = economyOverlay->Update(previewWorld, regionInstances, *mapPlacement, effectiveMapRadius);
 			if (!status.empty())
 			{
-				simulationStatus.SetText(status);
+				regionWorldStatus = status;
+				if (selectedRegionBuildingEntity != wi::ecs::INVALID_ENTITY &&
+					!economyOverlay->GetBuildingForInstance(selectedRegionBuildingEntity).has_value())
+				{
+					selectedRegionBuildingEntity = wi::ecs::INVALID_ENTITY;
+					selectedRegionBuildingId.reset();
+				}
 			}
+			UpdateRegionStatus();
+		}
+		else if (regionEconomyApi && (mapPlacement || syntheticRegionFixtureMode))
+		{
+			UpdateRegionEconomyPresentation();
+			if (selectedRegionBuildingEntity != wi::ecs::INVALID_ENTITY &&
+				!GetRegionBuildingForInstance(selectedRegionBuildingEntity).has_value())
+			{
+				selectedRegionBuildingEntity = wi::ecs::INVALID_ENTITY;
+				selectedRegionBuildingId.reset();
+			}
+			UpdateRegionStatus();
 		}
 
-		if (simulationPaused)
+		if (mapRegionPreview)
+		{
+			// Region mode is driven by its EconomyApi; do not also advance the
+			// unrelated synthetic src/sim demo hidden behind the imported world.
+		}
+		else if (simulationPaused)
 		{
 			simulationAccumulator = 0.0f;
 		}
@@ -966,7 +1409,14 @@ namespace openrepublic
 		const bool guiHasFocus = renderPath->GetGUI().HasFocus() && !pointerOnStatusLabel;
 		if (!guiHasFocus && wi::input::Press(wi::input::KEYBOARD_BUTTON_ESCAPE))
 		{
-			if (activeRoadPlacement) CancelRoadPlacement();
+			if (mapRegionPreview)
+			{
+				selectedRegionBuildingEntity = wi::ecs::INVALID_ENTITY;
+				selectedRegionBuildingId.reset();
+				regionHaulSourceId.reset();
+				UpdateRegionStatus();
+			}
+			else if (activeRoadPlacement) CancelRoadPlacement();
 			else if (activeFacilityPlacement.has_value() || activeStoragePlacement) CancelFacilityPlacement();
 			else SelectBuilding(wi::ecs::INVALID_ENTITY);
 		}
@@ -1017,6 +1467,51 @@ namespace openrepublic
 		if (cameraMoved)
 		{
 			camera.UpdateCamera();
+		}
+	}
+
+	void OpenRepublicApplication::PumpLocalEconomyRequests()
+	{
+		if (!localEconomyPipeEndpoint || !localEconomyDispatcher)
+		{
+			return;
+		}
+		if (!localEconomyPipeEndpoint->IsRunning())
+		{
+			const std::string error = localEconomyPipeEndpoint->LastError();
+			uiNotice = "Trusted-local controller endpoint stopped" +
+				(error.empty() ? std::string(".") : ": " + error);
+			wilog("[OpenRepublic] %s", uiNotice.c_str());
+			localEconomyPipeEndpoint->Stop();
+			localEconomyPipeEndpoint.reset();
+			localEconomyDispatcher.reset();
+			return;
+		}
+
+		constexpr std::size_t MaxRequestsPerUpdate = 8;
+		for (std::size_t handled = 0; handled < MaxRequestsPerUpdate; ++handled)
+		{
+			openrepublic::economy_host::LocalEconomyPipeEndpoint::Request request;
+			if (!localEconomyPipeEndpoint->TryPop(request))
+			{
+				break;
+			}
+
+			try
+			{
+				std::string response = localEconomyDispatcher->HandleLine(request.line);
+				if (!localEconomyPipeEndpoint->Complete(request.token, std::move(response)))
+				{
+					wilog("[OpenRepublic] Local economy pipe response was rejected by its bounded transport.");
+				}
+			}
+			catch (...)
+			{
+				// Closing the current connection is safer than allowing an unexpected
+				// serialization exception to escape the app update loop.
+				localEconomyPipeEndpoint->Complete(request.token, {});
+				wilog("[OpenRepublic] Local economy pipe request dispatch failed unexpectedly.");
+			}
 		}
 	}
 
@@ -1079,6 +1574,447 @@ namespace openrepublic
 			uiNotice = "Truck farm endpoint set to OR-" + std::to_string(*id) + ". Queue the plan when all endpoints are ready.";
 		}
 		UpdateStatusLabel();
+	}
+
+	void OpenRepublicApplication::UpdateRegionStatus()
+	{
+		if (!mapRegionPreview || (!economyOverlay && !regionEconomyApi))
+		{
+			return;
+		}
+		std::ostringstream text;
+		text << regionWorldStatus;
+		if (selectedRegionBuildingEntity != wi::ecs::INVALID_ENTITY)
+		{
+			const auto selected = GetRegionBuildingForInstance(selectedRegionBuildingEntity);
+			if (selected.has_value())
+			{
+				selectedRegionBuildingId = selected->id;
+				text << "\nSelected OR-" << selected->id << " " << selected->type
+					<< " | " << (selected->enabled ? "enabled" : "disabled");
+				text << " | " << selected->stallReason;
+				if (!selected->stallExplanation.empty()) text << ": " << selected->stallExplanation;
+				if (!selected->inventory.empty())
+				{
+					const auto formatUnits = [](std::uint64_t microUnits)
+					{
+						std::string formatted = std::to_string(microUnits / 1000000);
+						const std::uint64_t fraction = microUnits % 1000000;
+						if (fraction != 0)
+						{
+							std::string decimal = std::to_string(fraction + 1000000).substr(1);
+							while (!decimal.empty() && decimal.back() == '0') decimal.pop_back();
+							formatted += "." + decimal;
+						}
+						return formatted;
+					};
+					text << " | inventory (units) ";
+					for (std::size_t i = 0; i < selected->inventory.size(); ++i)
+					{
+						if (i != 0) text << ", ";
+						text << selected->inventory[i].resource << " " << formatUnits(selected->inventory[i].amount)
+							<< "/" << formatUnits(selected->inventory[i].capacity);
+					}
+				}
+			}
+			else
+			{
+				text << "\nSelected imported building is not present in the current economy snapshot.";
+			}
+		}
+		if (regionHaulSourceId.has_value())
+		{
+			text << "\nHaul source: OR-" << *regionHaulSourceId << " (select a destination and choose Haul to selected).";
+		}
+		if (!uiNotice.empty()) text << "\n" << uiNotice;
+		if (economyOverlay)
+		{
+			const std::string action = economyOverlay->GetActionStatus();
+			if (!action.empty()) text << "\n" << action;
+		}
+		simulationStatus.SetText(text.str());
+	}
+
+	std::optional<openrepublic::preview::EconomyBuildingStatus>
+	OpenRepublicApplication::GetRegionBuildingForInstance(wi::ecs::Entity instance) const
+	{
+		if (economyOverlay)
+		{
+			return economyOverlay->GetBuildingForInstance(instance);
+		}
+		if (!regionEconomySnapshot.has_value())
+		{
+			return std::nullopt;
+		}
+		const auto rendered = std::find_if(regionInstances.begin(), regionInstances.end(),
+			[&](const auto& candidate) { return candidate.object == instance; });
+		if (rendered == regionInstances.end())
+		{
+			return std::nullopt;
+		}
+		const auto identity = std::find_if(regionEconomyImport.placedSourceBuildings.begin(),
+			regionEconomyImport.placedSourceBuildings.end(), [&](const auto& candidate) {
+				return candidate.sourcePlacementKey == rendered->sourcePlacementIndex;
+			});
+		if (identity == regionEconomyImport.placedSourceBuildings.end())
+		{
+			return std::nullopt;
+		}
+		const auto building = std::find_if(regionEconomySnapshot->buildings.begin(),
+			regionEconomySnapshot->buildings.end(), [&](const auto& candidate) {
+				return candidate.id == identity->buildingId;
+			});
+		if (building == regionEconomySnapshot->buildings.end())
+		{
+			return std::nullopt;
+		}
+		preview::EconomyBuildingStatus status;
+		status.id = building->id;
+		status.type = building->type;
+		status.enabled = building->enabled;
+		switch (building->stallReason)
+		{
+		case economy::StallReason::Running: status.stallReason = "running"; break;
+		case economy::StallReason::MissingInput: status.stallReason = "missing_input"; break;
+		case economy::StallReason::OutputFull: status.stallReason = "output_full"; break;
+		case economy::StallReason::Disabled: status.stallReason = "disabled"; break;
+		}
+		status.stallExplanation = building->stallExplanation;
+		status.inventory.reserve(building->inventory.size());
+		for (const auto& item : building->inventory)
+		{
+			status.inventory.push_back({ item.resource, item.amount, item.capacity });
+		}
+		return status;
+	}
+
+	void OpenRepublicApplication::RefreshRegionEconomy()
+	{
+		if (!regionEconomyApi)
+		{
+			return;
+		}
+		const auto queried = regionEconomyApi->QueryWorld();
+		if (queried.error != openrepublic::economy_api::ErrorCode::None)
+		{
+			regionWorldStatus = "App-owned economy API could not read the current world.";
+			return;
+		}
+		regionEconomySnapshot = queried.world;
+		lastPresentedRegionRevision.reset();
+
+		for (auto it = regionPendingCommandHandles.begin(); it != regionPendingCommandHandles.end();)
+		{
+			const auto polled = regionEconomyApi->PollCommand(*it);
+			if (polled.error != openrepublic::economy_api::ErrorCode::None)
+			{
+				uiNotice = "Economy command poll failed with API error " +
+					std::to_string(static_cast<unsigned>(polled.error)) + ".";
+				it = regionPendingCommandHandles.erase(it);
+				continue;
+			}
+			if (polled.result.state == economy::CommandState::Queued)
+			{
+				++it;
+				continue;
+			}
+			if (polled.result.state == economy::CommandState::Accepted)
+			{
+				uiNotice = "Economy command applied at tick " + std::to_string(regionEconomySnapshot->tick) + ".";
+			}
+			else
+			{
+				uiNotice = "Economy command rejected: " + polled.result.message;
+			}
+			it = regionPendingCommandHandles.erase(it);
+		}
+
+		const auto running = std::count_if(regionEconomySnapshot->buildings.begin(),
+			regionEconomySnapshot->buildings.end(), [](const auto& building) {
+				return building.stallReason == economy::StallReason::Running;
+			});
+		std::ostringstream status;
+		status << regionEconomyDescription << "\nApp-owned economy: tick "
+			<< regionEconomySnapshot->tick << ", " << running << "/"
+			<< regionEconomySnapshot->buildings.size() << " buildings running, "
+			<< regionEconomySnapshot->vehicles.size() << " trucks, "
+			<< regionEconomyImport.placedSourceBuildings.size() << " exact placement bindings";
+		regionWorldStatus = status.str();
+	}
+
+	void OpenRepublicApplication::UpdateRegionEconomyPresentation()
+	{
+		if ((!mapPlacement && !syntheticRegionFixtureMode) || !regionEconomySnapshot.has_value() ||
+			(lastPresentedRegionRevision.has_value() &&
+				*lastPresentedRegionRevision == regionEconomySnapshot->revision))
+		{
+			return;
+		}
+		lastPresentedRegionRevision = regionEconomySnapshot->revision;
+
+		std::unordered_map<std::uint64_t, openrepublic::economy::BuildingId> buildingBySource;
+		buildingBySource.reserve(regionEconomyImport.placedSourceBuildings.size());
+		for (const auto& identity : regionEconomyImport.placedSourceBuildings)
+		{
+			buildingBySource.emplace(identity.sourcePlacementKey, identity.buildingId);
+		}
+		std::unordered_map<openrepublic::economy::BuildingId,
+			const openrepublic::economy_api::BuildingView*> stateByBuilding;
+		stateByBuilding.reserve(regionEconomySnapshot->buildings.size());
+		for (const auto& building : regionEconomySnapshot->buildings)
+		{
+			stateByBuilding.emplace(building.id, &building);
+		}
+		for (const auto& instance : regionInstances)
+		{
+			wi::scene::ObjectComponent* object = previewWorld.objects.GetComponent(instance.object);
+			if (object == nullptr)
+			{
+				continue;
+			}
+			object->color = XMFLOAT4(1, 1, 1, 1);
+			const auto source = buildingBySource.find(instance.sourcePlacementIndex);
+			if (source == buildingBySource.end())
+			{
+				continue;
+			}
+			const auto state = stateByBuilding.find(source->second);
+			if (state == stateByBuilding.end())
+			{
+				continue;
+			}
+			switch (state->second->stallReason)
+			{
+			case openrepublic::economy::StallReason::Running:
+				object->color = XMFLOAT4(0.55f, 1.0f, 0.55f, 1.0f); break;
+			case openrepublic::economy::StallReason::MissingInput:
+				object->color = XMFLOAT4(1.0f, 0.85f, 0.25f, 1.0f); break;
+			case openrepublic::economy::StallReason::OutputFull:
+				object->color = XMFLOAT4(1.0f, 0.5f, 0.2f, 1.0f); break;
+			case openrepublic::economy::StallReason::Disabled:
+				object->color = XMFLOAT4(0.45f, 0.45f, 0.5f, 1.0f); break;
+			}
+		}
+
+		openrepublic::content::TerrainTransform terrainTransform{};
+		double centerX = syntheticRegionCenterX;
+		double centerZ = syntheticRegionCenterZ;
+		if (mapPlacement)
+		{
+			terrainTransform = openrepublic::content::MakeMapTerrainTransform(mapPlacement->metadata);
+			centerX = mapPlacement->placement.X();
+			centerZ = mapPlacement->placement.Z();
+		}
+		while (regionTruckEntities.size() < regionEconomySnapshot->vehicles.size())
+		{
+			const wi::ecs::Entity truck = previewWorld.Entity_CreateCube("app-owned economy truck marker");
+			if (wi::scene::MaterialComponent* material = previewWorld.materials.GetComponent(truck))
+			{
+				material->SetBaseColor(XMFLOAT4(1.0f, 0.2f, 0.1f, 1.0f));
+				material->CreateRenderData(true);
+			}
+			regionTruckEntities.push_back(truck);
+		}
+		for (std::size_t i = 0; i < regionTruckEntities.size(); ++i)
+		{
+			wi::scene::TransformComponent* marker = previewWorld.transforms.GetComponent(regionTruckEntities[i]);
+			if (marker == nullptr)
+			{
+				continue;
+			}
+			if (i >= regionEconomySnapshot->vehicles.size())
+			{
+				marker->ClearTransform();
+				marker->Translate(XMFLOAT3(0, -10000, 0));
+				marker->UpdateTransform();
+				continue;
+			}
+			const auto& vehicle = regionEconomySnapshot->vehicles[i];
+			const double worldX = regionEconomyImport.originX + (vehicle.cell.x + 0.5) * 4.0;
+			const double worldZ = regionEconomyImport.originZ + (vehicle.cell.z + 0.5) * 4.0;
+			double height = 0.0;
+			if (mapPlacement)
+			{
+				openrepublic::content::SampleTerrainHeight(mapPlacement->heightmap, terrainTransform,
+					std::min(std::max(worldX, terrainTransform.originX), terrainTransform.originX + terrainTransform.sizeX),
+					std::min(std::max(worldZ, terrainTransform.originZ), terrainTransform.originZ + terrainTransform.sizeZ), height, nullptr);
+			}
+			marker->ClearTransform();
+			marker->Scale(XMFLOAT3(3.0f, 3.0f, 3.0f));
+			marker->Translate(XMFLOAT3(static_cast<float>(worldX - centerX),
+				static_cast<float>(height) + 3.0f, static_cast<float>(worldZ - centerZ)));
+			marker->UpdateTransform();
+		}
+	}
+
+	void OpenRepublicApplication::QueueRegionStep()
+	{
+		if (economyOverlay)
+		{
+			uiNotice = economyOverlay->QueueStep(24)
+				? "Queued a 24-tick advance for the shared economy world."
+				: "Could not queue the economy step; check the bridge connection and controller role.";
+		}
+		else if (regionEconomyApi)
+		{
+			const auto error = regionEconomyApi->Step(24);
+			if (error == openrepublic::economy_api::ErrorCode::None)
+			{
+				RefreshRegionEconomy();
+				UpdateRegionEconomyPresentation();
+				uiNotice = "Advanced the app-owned economy by 24 ticks.";
+			}
+			else
+			{
+				uiNotice = "App-owned EconomyApi rejected the 24-tick step with error " +
+					std::to_string(static_cast<unsigned>(error)) + ".";
+			}
+		}
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::QueueRegionBuildingToggle()
+	{
+		if ((!economyOverlay && !regionEconomyApi) || !selectedRegionBuildingId.has_value())
+		{
+			uiNotice = "Select an imported building before toggling it.";
+			UpdateRegionStatus();
+			return;
+		}
+		if (economyOverlay)
+		{
+			uiNotice = economyOverlay->QueueToggleBuilding(*selectedRegionBuildingId)
+				? "Queued enable/disable for the selected building. Advance the shared economy world to apply it."
+				: "Could not queue the building change; refresh the world and check the controller role.";
+		}
+		else
+		{
+			if (regionPendingCommandHandles.size() >= kMaxPendingRegionCommands)
+			{
+				uiNotice = "Pending economy command limit reached; advance the world before queuing more.";
+				UpdateRegionStatus();
+				return;
+			}
+			const auto selected = GetRegionBuildingForInstance(selectedRegionBuildingEntity);
+			const auto submitted = selected.has_value() && regionEconomySnapshot.has_value()
+				? regionEconomyApi->SetBuildingEnabled(regionEconomySnapshot->revision,
+					static_cast<openrepublic::economy::BuildingId>(*selectedRegionBuildingId), !selected->enabled)
+				: openrepublic::economy_api::Submission{ openrepublic::economy_api::ErrorCode::InvalidArgument };
+			if (submitted.error == openrepublic::economy_api::ErrorCode::None)
+			{
+				regionPendingCommandHandles.push_back(submitted.handle);
+				uiNotice = "Queued the selected building state change; step the world to apply it.";
+			}
+			else
+			{
+				uiNotice = "Could not queue the selected building state change.";
+			}
+		}
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::SetRegionHaulSource()
+	{
+		if (!selectedRegionBuildingId.has_value())
+		{
+			uiNotice = "Select a source building before setting a haul source.";
+			UpdateRegionStatus();
+			return;
+		}
+		regionHaulSourceId = selectedRegionBuildingId;
+		uiNotice = "Selected building saved as the haul source.";
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::QueueRegionHaul()
+	{
+		if ((!economyOverlay && !regionEconomyApi) || !regionHaulSourceId.has_value() ||
+			!selectedRegionBuildingId.has_value())
+		{
+			uiNotice = "Choose a haul source and a destination building first.";
+			UpdateRegionStatus();
+			return;
+		}
+		if (*regionHaulSourceId == *selectedRegionBuildingId)
+		{
+			uiNotice = "The haul source and destination must be different buildings.";
+			UpdateRegionStatus();
+			return;
+		}
+		if (economyOverlay)
+		{
+			uiNotice = economyOverlay->QueueHaulOrder(*regionHaulSourceId, *selectedRegionBuildingId)
+				? "Queued a haul order using the first compatible resource and vehicle. Advance the shared economy world to apply it."
+				: "No compatible resource/vehicle was found or the bridge rejected the haul request.";
+		}
+		else if (regionEconomySnapshot.has_value())
+		{
+			const auto findBuilding = [&](std::uint64_t id) -> const openrepublic::economy_api::BuildingView* {
+				const auto found = std::find_if(regionEconomySnapshot->buildings.begin(),
+					regionEconomySnapshot->buildings.end(), [&](const auto& building) { return building.id == id; });
+				return found == regionEconomySnapshot->buildings.end() ? nullptr : &*found;
+			};
+			const auto* source = findBuilding(*regionHaulSourceId);
+			const auto* destination = findBuilding(*selectedRegionBuildingId);
+			const auto catalog = regionEconomyApi->DescribeCatalog();
+			const auto findType = [&](const std::string& name) -> const openrepublic::economy_api::BuildingTypeInfo* {
+				const auto found = std::find_if(catalog.buildingTypes.begin(), catalog.buildingTypes.end(),
+					[&](const auto& type) { return type.name == name; });
+				return found == catalog.buildingTypes.end() ? nullptr : &*found;
+			};
+			const auto* sourceType = source ? findType(source->type) : nullptr;
+			const auto* destinationType = destination ? findType(destination->type) : nullptr;
+			std::string compatibleResource;
+			if (sourceType != nullptr && destinationType != nullptr)
+			{
+				for (const auto& sourceRecipe : sourceType->recipes)
+				{
+					for (const auto& output : sourceRecipe.outputs)
+					{
+						const bool destinationConsumes = std::any_of(destinationType->recipes.begin(),
+							destinationType->recipes.end(), [&](const auto& destinationRecipe) {
+								return std::any_of(destinationRecipe.inputs.begin(), destinationRecipe.inputs.end(),
+									[&](const auto& input) { return input.resource == output.resource; });
+							});
+						if (destinationConsumes)
+						{
+							compatibleResource = output.resource;
+							break;
+						}
+					}
+					if (!compatibleResource.empty()) break;
+				}
+			}
+			if (!compatibleResource.empty() && !catalog.vehicleTypes.empty())
+			{
+				if (regionPendingCommandHandles.size() >= kMaxPendingRegionCommands)
+				{
+					uiNotice = "Pending economy command limit reached; advance the world before queuing more.";
+					UpdateRegionStatus();
+					return;
+				}
+				const auto& vehicle = catalog.vehicleTypes.front();
+				const auto submitted = regionEconomyApi->CreateHaulOrder(regionEconomySnapshot->revision,
+					static_cast<openrepublic::economy::BuildingId>(*regionHaulSourceId),
+					static_cast<openrepublic::economy::BuildingId>(*selectedRegionBuildingId),
+					compatibleResource, vehicle.name);
+				if (submitted.error == openrepublic::economy_api::ErrorCode::None)
+				{
+					regionPendingCommandHandles.push_back(submitted.handle);
+					uiNotice = "Queued " + compatibleResource + " haul using " + vehicle.name +
+						"; step the world to apply it.";
+				}
+				else
+				{
+					uiNotice = "EconomyApi rejected the haul command.";
+				}
+			}
+			else
+			{
+				uiNotice = "The selected building types have no producer-to-consumer recipe or no vehicle type.";
+			}
+		}
+		UpdateRegionStatus();
 	}
 
 	void OpenRepublicApplication::AssignTruckMillEndpoint()
@@ -1493,6 +2429,24 @@ namespace openrepublic
 			return;
 		}
 		const wi::scene::Scene::RayIntersectionResult hit = previewWorld.Intersects(ray);
+		if (mapRegionPreview && (economyOverlay || regionEconomyApi))
+		{
+			selectedRegionBuildingEntity = hit.entity;
+			const auto selected = GetRegionBuildingForInstance(selectedRegionBuildingEntity);
+			selectedRegionBuildingId = selected.has_value()
+				? std::optional<std::uint64_t>(selected->id) : std::nullopt;
+			if (selected.has_value())
+			{
+				uiNotice = "Selected imported building OR-" + std::to_string(selected->id) + " " + selected->type + ".";
+			}
+			else
+			{
+				selectedRegionBuildingEntity = wi::ecs::INVALID_ENTITY;
+				uiNotice = "No economy building is bound to the clicked map object.";
+			}
+			UpdateRegionStatus();
+			return;
+		}
 		SelectBuilding(hit.entity);
 	}
 

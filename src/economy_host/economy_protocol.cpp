@@ -4,11 +4,14 @@
 
 #include <cstdlib>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <tuple>
 #include <map>
 #include <charconv>
 #include <cstdint>
 #include <limits>
+#include <random>
 #include <set>
 #include <unordered_set>
 #include <vector>
@@ -17,6 +20,20 @@ namespace openrepublic::economy_host {
 namespace {
 using Json = nlohmann::json;
 using namespace openrepublic;
+
+std::string NewSessionId() {
+  static std::atomic<std::uint64_t> nextId{1};
+  const auto started = std::chrono::steady_clock::now().time_since_epoch().count();
+  std::uint64_t randomBits = 0;
+  try {
+    std::random_device random;
+    randomBits = (static_cast<std::uint64_t>(random()) << 32) | random();
+  } catch (...) {
+    // Keep host startup available if the standard library has no random source.
+  }
+  return std::to_string(started) + "-" + std::to_string(randomBits) + "-" +
+         std::to_string(nextId.fetch_add(1, std::memory_order_relaxed));
+}
 
 struct ParseState {
   std::size_t nodes{};
@@ -96,7 +113,7 @@ bool Fields(const Json &object, std::initializer_list<const char *> names, std::
     error = "request must be a JSON object";
     return false;
   }
-  std::set<std::string> allowed{"id", "protocolVersion", "method"};
+  std::set<std::string> allowed{"id", "protocolVersion", "method", "sessionId"};
   for (const auto *name : names)
     allowed.emplace(name);
   for (auto it = object.begin(); it != object.end(); ++it)
@@ -476,10 +493,18 @@ Json ProtocolError(const Json &id, std::string code, std::string message) {
 } // namespace
 
 Dispatcher::Dispatcher(Role role, const economy::Catalog &catalog)
-    : api_(catalog, 64, 64, economy_api::Permissions{true, role == Role::Controller}), role_(role) {}
+    : ownedApi_(std::make_unique<economy_api::EconomyApi>(
+          catalog, 64, 64, economy_api::Permissions{true, role == Role::Controller})),
+      api_(ownedApi_.get()), role_(role), sessionId_(NewSessionId()) {}
 
 Dispatcher::Dispatcher(Role role, economy::World &world)
-    : api_(world, economy_api::Permissions{true, role == Role::Controller}), role_(role) {}
+    : ownedApi_(std::make_unique<economy_api::EconomyApi>(
+          world, economy_api::Permissions{true, role == Role::Controller})),
+      api_(ownedApi_.get()), role_(role), sessionId_(NewSessionId()) {}
+
+Dispatcher::Dispatcher(Role role, economy_api::EconomyApi &api, bool requireSessionBinding, bool allowShutdown)
+    : api_(&api), role_(role), requireSessionBinding_(requireSessionBinding),
+      allowShutdown_(allowShutdown), sessionId_(NewSessionId()) {}
 
 void Dispatcher::SetRegionDescription(std::string description) {
   regionDescription_ = std::move(description);
@@ -494,33 +519,46 @@ bool Dispatcher::ShutdownRequested() const noexcept {
 }
 
 std::string Dispatcher::HandleLine(std::string_view line) {
+  const auto tagged = [this](Json response) {
+    response["sessionId"] = sessionId_;
+    return response.dump();
+  };
   Json req;
   std::string code, message;
   if (!Parse(line, req, code, message))
-    return ProtocolError(nullptr, code, message).dump();
+    return tagged(ProtocolError(nullptr, code, message));
   Json id = nullptr;
   if (!req.is_object() || !req.contains("id") || !req["id"].is_string() ||
       req["id"].get<std::string>().empty() || req["id"].get<std::string>().size() > 128)
-    return ProtocolError(nullptr, "invalid_request", "id must be a non-empty string of at most 128 bytes")
-        .dump();
+    return tagged(ProtocolError(nullptr, "invalid_request", "id must be a non-empty string of at most 128 bytes"));
   id = req["id"];
   if (!req.contains("protocolVersion") || !req["protocolVersion"].is_number_integer())
-    return ProtocolError(id, "invalid_request", "protocolVersion must be a non-negative integer").dump();
+    return tagged(ProtocolError(id, "invalid_request", "protocolVersion must be a non-negative integer"));
   bool versionIsZero = false;
   if (req["protocolVersion"].is_number_unsigned())
     versionIsZero = req["protocolVersion"].get<std::uint64_t>() == ProtocolVersion;
   else {
     const auto version = req["protocolVersion"].get<std::int64_t>();
     if (version < 0)
-      return ProtocolError(id, "invalid_request", "protocolVersion must be non-negative").dump();
+      return tagged(ProtocolError(id, "invalid_request", "protocolVersion must be non-negative"));
     versionIsZero = static_cast<std::uint64_t>(version) == ProtocolVersion;
   }
   if (!versionIsZero)
-    return ProtocolError(id, "unsupported_protocol_version", "unsupported protocolVersion").dump();
+    return tagged(ProtocolError(id, "unsupported_protocol_version", "unsupported protocolVersion"));
   if (!req.contains("method") || !req["method"].is_string())
-    return ProtocolError(id, "invalid_request", "method must be a string").dump();
+    return tagged(ProtocolError(id, "invalid_request", "method must be a string"));
   const std::string method = req["method"].get<std::string>();
-  auto invalid = [&id](const std::string &err) { return ProtocolError(id, "invalid_request", err).dump(); };
+  if (requireSessionBinding_ && method != "hello" && method != "capabilities" && !req.contains("sessionId"))
+    return tagged(ProtocolError(id, "missing_session", "request must include sessionId returned by hello"));
+  const auto invalid = [&id, &tagged](const std::string &err) {
+    return tagged(ProtocolError(id, "invalid_request", err));
+  };
+  if (req.contains("sessionId")) {
+    if (!req["sessionId"].is_string() || req["sessionId"].get<std::string>().empty())
+      return invalid("sessionId must be a non-empty string when supplied");
+    if (req["sessionId"].get<std::string>() != sessionId_)
+      return tagged(ProtocolError(id, "stale_session", "request belongs to a different host session"));
+  }
   Json out;
   if (method == "hello" || method == "capabilities") {
     if (!Fields(req, {}, message))
@@ -529,12 +567,15 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     Json methods = Json::array();
     for (const char *name : {"hello", "capabilities", "catalog", "world", "explain", "advise", "poll", "events"})
       methods.push_back(Json{{"name", name}, {"roles", roles}});
-    for (const char *name : {"submit", "step", "shutdown"})
+    for (const char *name : {"submit", "step"})
       methods.push_back(Json{{"name", name}, {"roles", control}});
+    if (allowShutdown_)
+      methods.push_back(Json{{"name", "shutdown"}, {"roles", control}});
     Json actions = Json::array();
-    for (const auto action : api_.DiscoverCapabilities().actions)
+    for (const auto action : api_->DiscoverCapabilities().actions)
       actions.push_back(Action(action));
     out = Json{{"apiVersion", economy_api::ApiVersion},
+               {"sessionId", sessionId_},
                {"role", role_ == Role::Controller ? "controller" : "observer"},
                {"actions", actions},
                {"methods", methods},
@@ -556,14 +597,14 @@ std::string Dispatcher::HandleLine(std::string_view line) {
   } else if (method == "catalog") {
     if (!Fields(req, {}, message))
       return invalid(message);
-    out = Catalog(api_.DescribeCatalog());
+    out = Catalog(api_->DescribeCatalog());
   } else if (method == "world") {
     const bool paged =
         req.contains("revision") || req.contains("kind") || req.contains("offset") || req.contains("limit");
     if (!paged) {
       if (!Fields(req, {}, message))
         return invalid(message);
-      const auto q = api_.QueryWorld();
+      const auto q = api_->QueryWorld();
       out = Json{{"errorCode", Error(q.error)}, {"world", World(q.world)}};
     } else {
       if (!Fields(req, {"revision", "kind", "offset", "limit"}, message))
@@ -575,7 +616,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
           !Unsigned(req, "limit", economy_api::MaxEntityPageSize, limit, message))
         return invalid(message);
       const auto q =
-          api_.QueryWorld(revision, kind, static_cast<std::size_t>(offset), static_cast<std::size_t>(limit));
+          api_->QueryWorld(revision, kind, static_cast<std::size_t>(offset), static_cast<std::size_t>(limit));
       if (q.error != economy_api::ErrorCode::None) {
         out = Json{{"errorCode", Error(q.error)}};
       } else {
@@ -630,7 +671,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     std::uint64_t b{};
     if (!Unsigned(req, "buildingId", UINT32_MAX, b, message))
       return invalid(message);
-    const auto e = api_.Explain(static_cast<economy::BuildingId>(b));
+    const auto e = api_->Explain(static_cast<economy::BuildingId>(b));
     out = Json{{"errorCode", Error(e.error)},
                {"buildingId", b},
                {"reason", Stall(e.stall.reason)},
@@ -640,8 +681,8 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     // producers of that resource (nearest first) with a ready-to-submit create_haul_order command.
     if (!Fields(req, {}, message))
       return invalid(message);
-    const auto catalog = api_.DescribeCatalog();
-    const auto q = api_.QueryWorld();
+    const auto catalog = api_->DescribeCatalog();
+    const auto q = api_->QueryWorld();
     std::map<std::string, const economy_api::BuildingTypeInfo *> types;
     for (const auto &t : catalog.buildingTypes)
       types[t.name] = &t;
@@ -740,7 +781,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     std::uint64_t h{};
     if (!U64(req, "handle", h, message))
       return invalid(message);
-    const auto p = api_.PollCommand(h);
+    const auto p = api_->PollCommand(h);
     out = Json{{"errorCode", Error(p.error)},    {"handle", std::to_string(h)},
                {"state", State(p.result.state)}, {"failure", Failure(p.result.failure)},
                {"message", p.result.message},    {"buildingId", p.result.building},
@@ -751,7 +792,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     std::uint64_t n{};
     if (!Unsigned(req, "ticks", economy_api::MaxStepTicks, n, message))
       return invalid(message);
-    out = Json{{"errorCode", Error(api_.Step(static_cast<std::uint32_t>(n)))}};
+    out = Json{{"errorCode", Error(api_->Step(static_cast<std::uint32_t>(n)))}};
   } else if (method == "events") {
     if (!Fields(req, {"afterSequence", "limit"}, message))
       return invalid(message);
@@ -759,7 +800,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     if (!U64(req, "afterSequence", cursor, message) ||
         !Unsigned(req, "limit", economy_api::MaxEventPageSize, limit, message))
       return invalid(message);
-    const auto q = api_.ReadEvents(cursor, static_cast<std::size_t>(limit));
+    const auto q = api_->ReadEvents(cursor, static_cast<std::size_t>(limit));
     Json events = Json::array();
     for (const auto &e : q.page.events)
       events.push_back(Json{{"sequence", std::to_string(e.sequence)},
@@ -796,20 +837,20 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         return invalid(message);
       if (!String(c, "type", name, message) || !Int32(c, "x", x, message) || !Int32(c, "z", z, message))
         return invalid(message);
-      s = api_.PlaceBuilding(revision, name, {x, z});
+      s = api_->PlaceBuilding(revision, name, {x, z});
     } else if (kind == "remove_building" || kind == "set_building_enabled") {
       if (kind == "remove_building") {
         if (!NestedFields(c, {"kind", "buildingId"}, message))
           return invalid(message);
         if (!Unsigned(c, "buildingId", UINT32_MAX, id1, message))
           return invalid(message);
-        s = api_.RemoveBuilding(revision, static_cast<economy::BuildingId>(id1));
+        s = api_->RemoveBuilding(revision, static_cast<economy::BuildingId>(id1));
       } else {
         if (!NestedFields(c, {"kind", "buildingId", "enabled"}, message))
           return invalid(message);
         if (!Unsigned(c, "buildingId", UINT32_MAX, id1, message) || !c["enabled"].is_boolean())
           return invalid("buildingId or enabled has invalid type");
-        s = api_.SetBuildingEnabled(revision, static_cast<economy::BuildingId>(id1),
+        s = api_->SetBuildingEnabled(revision, static_cast<economy::BuildingId>(id1),
                                     c["enabled"].get<bool>());
       }
     } else if (kind == "build_road") {
@@ -818,13 +859,13 @@ std::string Dispatcher::HandleLine(std::string_view line) {
       if (!Int32(c, "ax", ax, message) || !Int32(c, "az", az, message) || !Int32(c, "bx", bx, message) ||
           !Int32(c, "bz", bz, message))
         return invalid(message);
-      s = api_.BuildRoad(revision, {ax, az}, {bx, bz});
+      s = api_->BuildRoad(revision, {ax, az}, {bx, bz});
     } else if (kind == "set_road_enabled") {
       if (!NestedFields(c, {"kind", "roadId", "enabled"}, message))
         return invalid(message);
       if (!Unsigned(c, "roadId", UINT32_MAX, id1, message) || !c["enabled"].is_boolean())
         return invalid("roadId or enabled has invalid type");
-      s = api_.SetRoadEnabled(revision, static_cast<economy::RoadId>(id1), c["enabled"].get<bool>());
+      s = api_->SetRoadEnabled(revision, static_cast<economy::RoadId>(id1), c["enabled"].get<bool>());
     } else if (kind == "create_haul_order") {
       if (!NestedFields(c, {"kind", "source", "destination", "resource", "vehicleType"}, message))
         return invalid(message);
@@ -832,14 +873,14 @@ std::string Dispatcher::HandleLine(std::string_view line) {
           !Unsigned(c, "destination", UINT32_MAX, id2, message) ||
           !String(c, "resource", resource, message) || !String(c, "vehicleType", vehicle, message))
         return invalid(message);
-      s = api_.CreateHaulOrder(revision, static_cast<economy::BuildingId>(id1),
+      s = api_->CreateHaulOrder(revision, static_cast<economy::BuildingId>(id1),
                                static_cast<economy::BuildingId>(id2), resource, vehicle);
     } else if (kind == "cancel_haul_order") {
       if (!NestedFields(c, {"kind", "orderId"}, message))
         return invalid(message);
       if (!Unsigned(c, "orderId", UINT32_MAX, id1, message))
         return invalid(message);
-      s = api_.CancelHaulOrder(revision, static_cast<economy::OrderId>(id1));
+      s = api_->CancelHaulOrder(revision, static_cast<economy::OrderId>(id1));
     } else
       return invalid("unknown command kind");
     out =
@@ -847,14 +888,14 @@ std::string Dispatcher::HandleLine(std::string_view line) {
   } else if (method == "shutdown") {
     if (!Fields(req, {}, message))
       return invalid(message);
-    if (role_ != Role::Controller)
+    if (role_ != Role::Controller || !allowShutdown_)
       out = Json{{"errorCode", "permission_denied"}};
     else {
       shutdown_ = true;
       out = Json{{"errorCode", "none"}};
     }
   } else
-    return ProtocolError(id, "method_not_found", "unknown method").dump();
-  return Result(id, std::move(out)).dump();
+    return tagged(ProtocolError(id, "method_not_found", "unknown method"));
+  return tagged(Result(id, std::move(out)));
 }
 } // namespace openrepublic::economy_host

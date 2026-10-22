@@ -90,6 +90,7 @@ def main():
     parser.add_argument("--host", required=True)
     parser.add_argument("--rounds", type=int, default=5)
     parser.add_argument("--ticks", type=int, default=500)
+    parser.add_argument("--json", action="store_true", help="print one JSON result line (controller vs idle baseline)")
     args, host_args = parser.parse_known_args()
     host_args = [a for a in host_args if a != "--"]
 
@@ -136,8 +137,23 @@ def main():
             print(f"  building {b['id']} {b['type']}: {b['stallReason']} [{held}]")
         for o in host.call("world")["world"]["orders"]:
             print(f"  order {o['id']} {o['source']}->{o['destination']} {o['resource']}: {o['state']}")
+        final_score = processed_units(world, raw)
+        final_tick = int(world["tick"])
+        orders = len(world["orders"])
     finally:
         host.close()
+    if args.json:
+        # Idle baseline: same world and tick count with no commands, so the score is attributable.
+        idle = Host(args.host, host_args)
+        try:
+            while int(idle.call("world")["world"]["tick"]) < final_tick:
+                idle.call("step", ticks=min(500, final_tick - int(idle.call("world")["world"]["tick"])))
+            idle_score = processed_units(idle.call("world")["world"], raw)
+        finally:
+            idle.close()
+        print(json.dumps({"benchmark": "stored_non_raw_units", "tick": final_tick, "controller": final_score,
+                          "idle": idle_score, "gain": final_score - idle_score, "orders": orders,
+                          "generatorsPlaced": sorted(placed)}))
     return 0
 
 
