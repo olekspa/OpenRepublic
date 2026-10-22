@@ -845,7 +845,7 @@ namespace openrepublic::preview
 					}
 					const float forest = ForestAmount(terrain, wx, wz);
 					const bool urban = dist < regionRadius * 1.25;
-					const float density = urban ? 0.16f + 0.5f * forest : 0.05f + 0.9f * forest;
+					const float density = urban ? 0.30f + 0.55f * forest : 0.08f + 0.92f * forest;
 					if (Hash01(gx, gz, 47) > density)
 					{
 						continue;
@@ -872,7 +872,7 @@ namespace openrepublic::preview
 						continue;
 					}
 					const float patch = Fbm(wx / 38.0, wz / 38.0, 3, 97);
-					if (Hash01(gx, gz, 95) < SmoothStep(0.52f, 0.72f, patch) * 0.55f)
+					if (Hash01(gx, gz, 95) < SmoothStep(0.48f, 0.68f, patch) * 0.8f)
 					{
 						shrubSpots.push_back({ wx, wz });
 					}
