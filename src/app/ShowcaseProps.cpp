@@ -1,5 +1,6 @@
 #include "ShowcaseProps.h"
 
+#include "RoadPaths.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/procgeo/props.h"
 #include "openrepublic/procgeo/vehicles.h"
@@ -178,7 +179,7 @@ namespace openrepublic::preview
 				{ static_cast<float>(bx - cx), static_cast<float>(by), static_cast<float>(bz - cz) }, sag, segments, thickness));
 		};
 
-		// ---- Roads: vehicles, poles, lamps.
+		// ---- Roads: vehicles, poles, lamps (following decoded curves where available).
 		std::size_t vehicles = 0;
 		std::size_t poles = 0;
 		std::size_t lamps = 0;
@@ -186,6 +187,9 @@ namespace openrepublic::preview
 		if (request.hasRoads)
 		{
 			const auto& nodes = request.roads.nodes;
+			const RoadPathIndex roadPaths(request.roads);
+			float weightSum = 0.0f;
+			for (float w : weightTable) { weightSum += w; }
 			for (std::size_t i = 0; i < nodes.size(); ++i)
 			{
 				for (const std::uint32_t j : nodes[i].neighbors)
@@ -197,28 +201,40 @@ namespace openrepublic::preview
 					const double ax = nodes[i].x, az = nodes[i].z, bx = nodes[j].x, bz = nodes[j].z;
 					const bool inside = (std::fabs(ax - cx) < limit && std::fabs(az - cz) < limit) ||
 						(std::fabs(bx - cx) < limit && std::fabs(bz - cz) < limit);
-					const double length = std::hypot(bx - ax, bz - az);
-					if (!inside || length < 14.0)
+					if (!inside)
 					{
 						continue;
 					}
-					const double dx = (bx - ax) / length;
-					const double dz = (bz - az) / length;
-					const double yaw = std::atan2(dx, dz);
+					const std::vector<RoadSample> samples = RoadPathIndex::Resample(
+						roadPaths.Path(static_cast<std::uint32_t>(i), j), 3.0);
+					if (samples.size() < 2)
+					{
+						continue;
+					}
+					const double length = samples.back().distance;
+					if (length < 14.0)
+					{
+						continue;
+					}
+					// Position/direction at arc length d (samples are ~3 m apart).
+					const auto at = [&](double d)
+					{
+						const std::size_t index = std::min(samples.size() - 1,
+							static_cast<std::size_t>(std::max(0.0, d) / length * (samples.size() - 1) + 0.5));
+						return samples[index];
+					};
 					const int seedA = static_cast<int>(i), seedB = static_cast<int>(j);
 					// Vehicles: roughly one per 55 m per segment, in the lane of its travel direction.
 					const int count = static_cast<int>(length / 55.0 + Hash01(seedA, seedB, 3));
 					for (int k = 0; k < count && vehicles < 260; ++k)
 					{
 						const double t = length * (0.12 + 0.76 * Hash01(seedA * 31 + k, seedB, 5));
+						const RoadSample s = at(t);
 						const bool forward = Hash01(seedA + k, seedB, 7) < 0.5f;
 						const double lane = forward ? -1.35 : 1.35;
-						const double x = ax + dx * t + dz * lane;
-						const double z = az + dz * t - dx * lane;
-						float pick = Hash01(seedA + k, seedB * 3, 11);
-						float sum = 0.0f;
-						for (float w : weightTable) { sum += w; }
-						pick *= sum;
+						const double x = s.x + s.dz * lane;
+						const double z = s.z - s.dx * lane;
+						float pick = Hash01(seedA + k, seedB * 3, 11) * weightSum;
 						std::size_t chosen = 0;
 						for (std::size_t w = 0; w < weightTable.size(); ++w)
 						{
@@ -230,6 +246,7 @@ namespace openrepublic::preview
 						{
 							continue;
 						}
+						const double yaw = std::atan2(s.dx, s.dz);
 						const Placement p = pose(x, z, forward ? yaw : yaw + 3.14159265, type.length, 0.3);
 						AddObject(scene, type.mesh, p, request, cx, cz, 1.0f, true);
 						++vehicles;
@@ -243,10 +260,11 @@ namespace openrepublic::preview
 						double previousTop = 0.0;
 						for (double t = 10.0; t < length - 8.0 && poles < 160; t += 38.0)
 						{
+							const RoadSample s = at(t);
 							const double side = 5.2;
-							const double x = ax + dx * t + dz * side;
-							const double z = az + dz * t - dx * side;
-							Placement p = pose(x, z, yaw, 0.0, -0.1);
+							const double x = s.x + s.dz * side;
+							const double z = s.z - s.dx * side;
+							Placement p = pose(x, z, std::atan2(s.dx, s.dz), 0.0, -0.1);
 							AddObject(scene, poleMesh, p, request, cx, cz, 1.0f, false);
 							++poles;
 							const double top = p.y + 9.2;
@@ -255,8 +273,8 @@ namespace openrepublic::preview
 								for (int line = 0; line < 3; ++line)
 								{
 									const double across = (line - 1) * 0.95;
-									addWire(previous.x + dz * across, previousTop - line * 0.05, previous.z - dx * across,
-										p.x + dz * across, top - line * 0.05, p.z - dx * across, 0.55f, 0.04f);
+									addWire(previous.x + s.dz * across, previousTop - line * 0.05, previous.z - s.dx * across,
+										p.x + s.dz * across, top - line * 0.05, p.z - s.dx * across, 0.55f, 0.04f);
 								}
 							}
 							previous = p;
@@ -268,10 +286,11 @@ namespace openrepublic::preview
 						{
 							for (double t = 18.0; t < length - 10.0 && lamps < 140; t += 50.0)
 							{
+								const RoadSample s = at(t);
 								const double side = -4.6;
-								const double x = ax + dx * t + dz * side;
-								const double z = az + dz * t - dx * side;
-								AddObject(scene, lampMesh, pose(x, z, yaw + 3.14159265 * 0.5, 0.0, -0.05), request, cx, cz, 1.0f, false);
+								const double x = s.x + s.dz * side;
+								const double z = s.z - s.dx * side;
+								AddObject(scene, lampMesh, pose(x, z, std::atan2(s.dx, s.dz) + 3.14159265 * 0.5, 0.0, -0.05), request, cx, cz, 1.0f, false);
 								++lamps;
 							}
 						}
