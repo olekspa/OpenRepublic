@@ -32,3 +32,7 @@ adding an explicitly evidenced importer. Original files were read-only and no
 original game was launched; the global game-development goal remains incomplete.
 
 VERIFIED - final Release regression passes67/67 client and66/66 headless.
+
+Follow-up: the [strict placement reader](DEVELOPMENT_REPORT_2026-10-22_EXACT_PLACEMENTS.md)
+now establishes exact source-table identities after a complete versioned record
+walk. Legacy scanner ordinals remain unverified; port semantics remain unknown.

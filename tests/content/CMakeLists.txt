@@ -103,6 +103,13 @@ target_link_libraries(OpenRepublicMapPlacementTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicMapPlacementTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicMapPlacementTests COMMAND OpenRepublicMapPlacementTests)
 
+add_executable(OpenRepublicBuildingRecordWalkTests building_record_walk_tests.cpp)
+target_link_libraries(OpenRepublicBuildingRecordWalkTests PRIVATE OpenRepublicContent)
+target_include_directories(OpenRepublicBuildingRecordWalkTests PRIVATE
+    "${PROJECT_SOURCE_DIR}/src/content")
+target_compile_features(OpenRepublicBuildingRecordWalkTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicBuildingRecordWalkTests COMMAND OpenRepublicBuildingRecordWalkTests)
+
 add_executable(OpenRepublicRoadNetworkTests
     road_network_tests.cpp
 )

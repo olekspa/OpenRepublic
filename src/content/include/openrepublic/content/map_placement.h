@@ -6,7 +6,9 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -20,6 +22,10 @@ struct PlacedBuilding {
     // Translation is elements 12..14 (x, y, z); y is the base height on the map.
     std::array<float, 16> matrix{};
     std::size_t recordOffset = 0;
+    // Present only after a complete version-gated sequential record walk.
+    // This is a slot in this exact source package, not a persistent world ID.
+    // The legacy candidate scanner leaves it unset.
+    std::optional<std::uint32_t> sourceBuildingTableIndex;
 
     double X() const { return matrix[12]; }
     double Y() const { return matrix[13]; }
@@ -47,6 +53,15 @@ constexpr std::size_t MaxPlacedBuildings = 65536;
 bool ExtractPlacedBuildings(std::string_view bytes, std::vector<PlacedBuilding>& output,
                             std::string* error = nullptr);
 
+// Strict sequential reader for observed save-format versions 121 and 124 in
+// the inspected build 23935965. Walks all fixed and variable record sections,
+// validates each placement at its exact record boundary and requires exact EOF.
+// Successful records carry their source building-table slot. Other versions,
+// malformed or unsupported fields fail without changing output; no scan recovery.
+bool ExtractPlacedBuildingsExact(std::string_view bytes, std::uint32_t formatVersion,
+                                std::vector<PlacedBuilding>& output,
+                                std::string* error = nullptr);
+
 // Builds the TerrainTransform for a map package from its parsed `script.ini`:
 // the horizontal extent is centred on the world position, the base height is
 // the world position's Y and the height scale is `$HEIGHTSCALE`. Raster
@@ -56,7 +71,11 @@ bool ExtractPlacedBuildings(std::string_view bytes, std::vector<PlacedBuilding>&
 TerrainTransform MakeMapTerrainTransform(const TerrainMetadata& metadata);
 
 // Reads and extracts `<map>/buildings_game.bin`. Fails like ExtractPlacedBuildings
-// or when the file is missing or larger than 64 MiB. On failure output is unchanged.
+// or when the file is missing or larger than 512 MiB. A supported version in
+// header.bin (or headerE.bin if absent) selects the strict reader; its failures
+// are not recovered by scanning. Missing/unsupported version metadata retains
+// candidate scanning with unset sourceBuildingTableIndex. A truncated present
+// package header fails. On failure output is unchanged.
 bool LoadMapPlacements(const std::filesystem::path& mapDirectory,
                        std::vector<PlacedBuilding>& output, std::string* error = nullptr);
 

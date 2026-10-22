@@ -2,7 +2,9 @@
 #include "openrepublic/content/terrain_preview.h"
 
 #include <cmath>
+#include <chrono>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -52,6 +54,117 @@ std::string MakeFile(std::uint32_t count, const std::string& tail) {
     bytes += MakeRecord("pylon2", -1.25f, 120.0f, 3.0f, 44.5f);
     bytes += tail;
     return bytes;
+}
+
+void PutU32(std::string& bytes, std::size_t offset, std::uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i) bytes[offset + i] = static_cast<char>((value >> (8 * i)) & 255);
+}
+
+std::string MakeExactFile(std::uint32_t version) {
+    auto record = MakeRecord("authored_factory", 0.5f, 12.0f, 3.0f, 18.0f);
+    PutU32(record, 0x514, 1);
+    std::string extension(400, '\0');
+    const std::uint32_t scalars = version == 121 ? 7 : 9;
+    PutU32(extension, 0x18, scalars);
+    std::string bytes(4, '\0');
+    PutU32(bytes, 0, 1);
+    return bytes + record + extension + std::string(128 + scalars * 4, '\0');
+}
+
+void TestExactExtractionAndLoad() {
+    std::vector<PlacedBuilding> found;
+    std::string error;
+    for (const auto version : {121u, 124u}) {
+        const bool parsed = ExtractPlacedBuildingsExact(MakeExactFile(version), version, found, &error);
+        Check(parsed, "strict versioned placement fixture parses: " + error);
+        if (!parsed || found.size() != 1) return;
+        Check(found.size() == 1 && found[0].sourceBuildingTableIndex == 0 &&
+                  found[0].recordOffset == 4 && found[0].typeName == "authored_factory" && found[0].X() == 12.0,
+              "exact placement exposes its source table slot and record offset");
+    }
+    auto firstRecord = MakeRecord("real_first", 0.0f, 1.0f, 2.0f, 3.0f);
+    PutU32(firstRecord, 0x400, 8);
+    PutU32(firstRecord, 0x514, 1);
+    std::string firstExtension(400, '\0');
+    PutU32(firstExtension, 0x18, 7);
+    auto opaqueTail = MakeRecord("plausible_tail", 0.0f, 4.0f, 5.0f, 6.0f);
+    opaqueTail.resize(8 * 188, '\0');
+    std::string decoyFile(4, '\0');
+    PutU32(decoyFile, 0, 2);
+    decoyFile += firstRecord + firstExtension + opaqueTail + std::string(128 + 7 * 4, '\0');
+    const auto secondRecordOffset = decoyFile.size();
+    decoyFile += MakeExactFile(121).substr(4);
+    Check(ExtractPlacedBuildings(decoyFile, found, &error) && found.size() == 2 &&
+              found[1].typeName == "plausible_tail" && !found[1].sourceBuildingTableIndex,
+          "a complete plausible tail decoy demonstrates the candidate scanner's identity limit");
+    Check(ExtractPlacedBuildingsExact(decoyFile, 121, found, &error) && found.size() == 2 &&
+              found[1].typeName == "authored_factory" && found[1].sourceBuildingTableIndex == 1 &&
+              found[1].recordOffset == secondRecordOffset,
+          "strict extraction ignores the complete tail decoy and identifies the actual second record");
+    if (!ExtractPlacedBuildingsExact(MakeExactFile(124), 124, found, &error) || found.size() != 1) {
+        Check(false, "restore strict fixture after decoy regression");
+        return;
+    }
+    const auto keep = found;
+    auto invalid = MakeExactFile(124);
+    PutFloat(invalid, 4 + 0x31c + 5 * 4, 1.5f);
+    Check(!ExtractPlacedBuildingsExact(invalid, 124, found, &error) && found.size() == keep.size() &&
+              found[0].sourceBuildingTableIndex == keep[0].sourceBuildingTableIndex,
+          "invalid transform at a strict boundary fails transactionally");
+    Check(!ExtractPlacedBuildingsExact(MakeExactFile(124), 125, found, &error),
+          "unknown version is not assigned a verified source identity");
+    Check(ExtractPlacedBuildings(MakeFile(2, ""), found, &error) && found.size() == 2 &&
+              !found[0].sourceBuildingTableIndex && !found[1].sourceBuildingTableIndex,
+          "candidate scanner never assigns native source table identity");
+
+    const auto tempBase = std::filesystem::temp_directory_path();
+    const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    std::filesystem::path root;
+    for (unsigned attempt = 0; attempt < 128; ++attempt) {
+        const auto path = tempBase / ("OpenRepublic-placement-header-tests-" +
+                                     std::to_string(nonce) + "-" + std::to_string(attempt));
+        std::error_code ec;
+        if (std::filesystem::create_directory(path, ec)) { root = path; break; }
+        if (ec && ec != std::errc::file_exists) break;
+    }
+    Check(!root.empty(), "create an exclusive placement test directory");
+    if (root.empty()) return;
+    const auto write = [&](const char* name, const std::string& bytes) {
+        std::ofstream stream(root / name, std::ios::binary);
+        stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        Check(static_cast<bool>(stream), "write authored placement fixture");
+    };
+    const auto header = [](std::uint32_t version) {
+        std::string bytes(0x20c, '\0');
+        PutU32(bytes, 0, version);
+        return bytes;
+    };
+    write("buildings_game.bin", MakeExactFile(124));
+    write("headerE.bin", header(124));
+    Check(LoadMapPlacements(root, found, &error) && found.size() == 1 &&
+              found[0].sourceBuildingTableIndex == 0,
+          "package headerE fallback selects strict extraction");
+    write("header.bin", header(121));
+    write("buildings_game.bin", MakeExactFile(121));
+    Check(LoadMapPlacements(root, found, &error) && found.size() == 1 &&
+              found[0].sourceBuildingTableIndex == 0,
+          "primary package header takes precedence over headerE");
+    write("buildings_game.bin", MakeExactFile(121) + "trailing");
+    Check(!LoadMapPlacements(root, found, &error) && found.size() == 1 &&
+              found[0].sourceBuildingTableIndex == 0,
+          "supported malformed profile cannot silently recover through candidate scanning");
+    write("header.bin", header(125));
+    Check(LoadMapPlacements(root, found, &error) && found.size() == 1 && !found[0].sourceBuildingTableIndex,
+          "unsupported package version retains explicitly unidentified candidate extraction");
+    write("header.bin", "short");
+    Check(!LoadMapPlacements(root, found, &error) && !found[0].sourceBuildingTableIndex,
+          "truncated primary header fails instead of falling through to headerE or scanning");
+    std::filesystem::remove(root / "header.bin");
+    std::filesystem::remove(root / "headerE.bin");
+    Check(LoadMapPlacements(root, found, &error) && found.size() == 1 && !found[0].sourceBuildingTableIndex,
+          "headerless authored legacy inputs retain candidate behavior");
+    std::filesystem::remove(root / "buildings_game.bin");
+    std::filesystem::remove(root);
 }
 
 void TestExtraction() {
@@ -133,6 +246,7 @@ void TestTransformAndRegion() {
 
 int main() {
     TestExtraction();
+    TestExactExtractionAndLoad();
     TestRegionSelection();
     TestTransformAndRegion();
     if (failures != 0) {

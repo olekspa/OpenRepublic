@@ -1,4 +1,5 @@
 #include "openrepublic/content/map_placement.h"
+#include "building_record_walk.h"
 
 #include <cmath>
 #include <cstring>
@@ -107,6 +108,24 @@ bool ExtractPlacedBuildings(std::string_view bytes, std::vector<PlacedBuilding>&
     return true;
 }
 
+bool ExtractPlacedBuildingsExact(std::string_view bytes, std::uint32_t formatVersion,
+                                std::vector<PlacedBuilding>& output, std::string* error) {
+    std::vector<std::size_t> offsets;
+    if (!detail::WalkBuildingRecordOffsets(bytes, formatVersion, offsets, error)) return false;
+    std::vector<PlacedBuilding> candidate;
+    candidate.reserve(offsets.size());
+    for (std::size_t index = 0; index < offsets.size(); ++index) {
+        PlacedBuilding record;
+        if (!TryRecord(bytes, offsets[index], record))
+            return Fail(error, "invalid placement at exact building record " + std::to_string(index));
+        record.sourceBuildingTableIndex = static_cast<std::uint32_t>(index);
+        candidate.push_back(std::move(record));
+    }
+    output = std::move(candidate);
+    if (error) error->clear();
+    return true;
+}
+
 TerrainTransform MakeMapTerrainTransform(const TerrainMetadata& metadata) {
     TerrainTransform transform;
     transform.sizeX = metadata.worldSizeX;
@@ -131,6 +150,28 @@ bool LoadMapPlacements(const std::filesystem::path& mapDirectory,
     in.read(data.data(), static_cast<std::streamsize>(data.size()));
     if (!in || in.gcount() != static_cast<std::streamsize>(data.size()))
         return Fail(error, "buildings_game.bin could not be read completely");
+
+    // The native package loader reads the first word of this fixed header
+    // prefix as its save-format version, preferring header.bin over headerE.bin.
+    auto headerPath = mapDirectory / "header.bin";
+    const bool hasHeader = std::filesystem::exists(headerPath, ec);
+    if (ec) return Fail(error, "package header status could not be read");
+    if (!hasHeader) headerPath = mapDirectory / "headerE.bin";
+    const bool hasVersionHeader = std::filesystem::exists(headerPath, ec);
+    if (ec) return Fail(error, "package header status could not be read");
+    if (hasVersionHeader) {
+        std::array<unsigned char, 0x20c> header{};
+        std::ifstream headerInput(headerPath, std::ios::binary);
+        headerInput.read(reinterpret_cast<char*>(header.data()), header.size());
+        if (!headerInput || headerInput.gcount() != static_cast<std::streamsize>(header.size()))
+            return Fail(error, "package header is unreadable or shorter than its fixed prefix");
+        const auto version = static_cast<std::uint32_t>(header[0]) |
+                             (static_cast<std::uint32_t>(header[1]) << 8) |
+                             (static_cast<std::uint32_t>(header[2]) << 16) |
+                             (static_cast<std::uint32_t>(header[3]) << 24);
+        if (version == 121 || version == 124)
+            return ExtractPlacedBuildingsExact(data, version, output, error);
+    }
     return ExtractPlacedBuildings(data, output, error);
 }
 
