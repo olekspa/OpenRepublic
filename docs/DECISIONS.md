@@ -73,3 +73,12 @@ Human UI, tests, Lua-facing tools, and future LLM or external controllers must r
 Expose the typed Agent API through a separate process that reads one versioned JSON request per stdin line and writes one JSON response per stdout line. The host owns a synthetic OpenRepublic simulation and reuses the existing API; it does not attach to WRSR or to the Wicked Engine process. The first controller is a Python stdlib example. The host uses the MIT-licensed nlohmann/json 3.12.0 header already present in the pinned Wicked Engine submodule and remains optional in configurations that do not have that header.
 
 **Consequence:** keep the host local and off the network. Its observer/controller switch selects permissions but does not authenticate callers. C# IPC, MCP, multi-client service, and WRSR control remain separate future work and need their own versioned contracts and security review.
+
+## D-008: The data-driven economy core is the target simulation; `src/sim` is a demo
+
+**Date:** 22 October 2026
+**Status:** Accepted
+
+An architecture review found `src/sim` (hard-coded Farm/Mill/Storage, grain/flour fields baked into the snapshot, API, save and UI) cannot host authentic content. A new standalone `src/economy` library (catalog, deterministic world, haul orders, explanations, save/load) with its own typed API and JSONL host (`src/economy_api`, `src/economy_host`) is the migration target. The old simulation, API and desktop UI remain until the economy has an equivalent human UI.
+
+**Consequence:** new gameplay work targets `src/economy*`; authentic content enters only through adapters (`src/compat`, local under D-005) that produce `economy::Catalog` data, never by adding resource types to `src/sim`. The desktop app's content preview code now lives in `ContentPreview.*` so presentation and content import stay separate from simulation.
