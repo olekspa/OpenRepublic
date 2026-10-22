@@ -102,5 +102,7 @@ namespace openrepublic::preview
 		std::vector<EconomyBuildingStatus> buildings_;
 		std::vector<std::pair<wi::ecs::Entity, std::uint64_t>> instanceBuildingIds_;
 		std::vector<wi::ecs::Entity> truckEntities_;
+		std::vector<std::array<double, 3>> truckPose_; // last x, z, yaw per truck
+		wi::ecs::Entity truckMesh_ = wi::ecs::INVALID_ENTITY;
 	};
 }

@@ -1,4 +1,6 @@
 #include "EconomyOverlay.h"
+#include "ShowcaseProps.h"
+#include "openrepublic/procgeo/vehicles.h"
 
 #include "json.hpp"
 
@@ -842,15 +844,31 @@ namespace openrepublic::preview
 
 		// Trucks: small markers at the vehicles' cells, draped on the terrain.
 		const Json vehicles = state.value("vehicles", Json::array());
+		if (truckMesh_ == wi::ecs::INVALID_ENTITY)
+		{
+			truckMesh_ = CreateProceduralMeshEntity(scene, "economy truck mesh",
+				openrepublic::procgeo::MakeVehicle(openrepublic::procgeo::VehicleKind::CargoTruck, 5), 0.5f, 0.1f);
+		}
 		while (truckEntities_.size() < vehicles.size())
 		{
-			const wi::ecs::Entity cube = scene.Entity_CreateCube("economy truck marker");
-			if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(cube))
+			wi::ecs::Entity truck = wi::ecs::INVALID_ENTITY;
+			if (truckMesh_ != wi::ecs::INVALID_ENTITY)
 			{
-				material->SetBaseColor(XMFLOAT4(1.0f, 0.2f, 0.1f, 1.0f));
-				material->CreateRenderData(true);
+				// A real (procedural) truck mesh instead of a debug cube.
+				truck = scene.Entity_CreateObject("economy truck");
+				scene.objects.GetComponent(truck)->meshID = truckMesh_;
 			}
-			truckEntities_.push_back(cube);
+			else
+			{
+				truck = scene.Entity_CreateCube("economy truck marker");
+				if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(truck))
+				{
+					material->SetBaseColor(XMFLOAT4(1.0f, 0.2f, 0.1f, 1.0f));
+					material->CreateRenderData(true);
+				}
+			}
+			truckEntities_.push_back(truck);
+			truckPose_.push_back({ 0.0, 0.0, 0.0 });
 		}
 		for (std::size_t i = 0; i < truckEntities_.size(); ++i)
 		{
@@ -873,9 +891,25 @@ namespace openrepublic::preview
 				std::min(std::max(wx, transform.originX), transform.originX + transform.sizeX),
 				std::min(std::max(wz, transform.originZ), transform.originZ + transform.sizeZ), height, nullptr);
 			transformComponent->ClearTransform();
-			transformComponent->Scale(XMFLOAT3(3.0f, 3.0f, 3.0f));
-			transformComponent->Translate(XMFLOAT3(static_cast<float>(wx - center.X()),
-				static_cast<float>(height) + 3.0f, static_cast<float>(wz - center.Z())));
+			if (truckMesh_ != wi::ecs::INVALID_ENTITY)
+			{
+				auto& last = truckPose_[i];
+				if (std::hypot(wx - last[0], wz - last[1]) > 0.5 && (last[0] != 0.0 || last[1] != 0.0))
+				{
+					last[2] = std::atan2(wx - last[0], wz - last[1]);
+				}
+				last[0] = wx;
+				last[1] = wz;
+				transformComponent->RotateRollPitchYaw(XMFLOAT3(0.0f, static_cast<float>(last[2]), 0.0f));
+				transformComponent->Translate(XMFLOAT3(static_cast<float>(wx - center.X()),
+					static_cast<float>(height) + 0.35f, static_cast<float>(wz - center.Z())));
+			}
+			else
+			{
+				transformComponent->Scale(XMFLOAT3(3.0f, 3.0f, 3.0f));
+				transformComponent->Translate(XMFLOAT3(static_cast<float>(wx - center.X()),
+					static_cast<float>(height) + 3.0f, static_cast<float>(wz - center.Z())));
+			}
 			transformComponent->UpdateTransform();
 		}
 
