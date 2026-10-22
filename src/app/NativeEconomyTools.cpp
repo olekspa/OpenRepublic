@@ -180,8 +180,7 @@ namespace openrepublic::preview
 		vehicleType_.SetInvalidSelectionText("No vehicle types available");
 		for (const economy::VehicleTypeDef& type : catalog.VehicleTypes())
 		{
-			vehicleType_.AddItem(type.name + " (capacity " + std::to_string(type.capacity) +
-				", " + std::to_string(type.cellsPerTick) + " cells/tick)", type.id);
+			vehicleType_.AddItem(type.name, type.id);
 		}
 		StyleCombo(vehicleType_);
 		if (vehicleType_.GetItemCount() != 0) vehicleType_.SetSelectedWithoutCallback(0);
@@ -428,6 +427,10 @@ namespace openrepublic::preview
 		const economy::Catalog& catalog, std::optional<economy::BuildingId> source,
 		std::optional<economy::BuildingId> destination)
 	{
+		if (const auto* vehicle = catalog.VehicleType(SelectedVehicleType()))
+			vehicleType_.SetTooltip(vehicle->name + ": capacity " + std::to_string(vehicle->capacity) +
+				" catalog units, " + std::to_string(vehicle->cellsPerTick) + " cells/tick.");
+		else vehicleType_.SetTooltip("Choose the vehicle type for the haul order.");
 		std::vector<economy::ResourceId> resources;
 		std::string emptyText;
 		if (!source || !destination || *source == 0 || *destination == 0 || *source == *destination)

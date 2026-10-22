@@ -1,5 +1,7 @@
 # OpenRepublic project plan
 
+**Real-content follow-up:** the integrated region toolbar now has a live exact-binding/iron-haul acceptance check on one real-content region. The independent order waits for missing source stock; original production-state import and gameplay parity remain open. Vehicle labels stay readable with detailed values in tooltips. See the [real-region evidence](DEVELOPMENT_REPORT_2026-10-22_REAL_REGION.md).
+
 **Reviewed local milestone (22 October 2026):** native construction/resource flow, Run/Pause, order/road repair, strict persistence, bounded command history and app-owned region logistics are integrated. The milestone review repairs API handle exhaustion before command admission. Full Windows Release checks pass57/57 headless and58/58 client. See the [milestone review](DEVELOPMENT_REPORT_2026-10-22_MILESTONE_REVIEW.md) and [region-logistics evidence](DEVELOPMENT_REPORT_2026-10-22_REGION_LOGISTICS.md). Historical uncommitted/pause statements below describe earlier checkpoints. The global game goal remains incomplete; real-content and remaining save/load acceptance are open.
 
 ## Earlier continuation receipts

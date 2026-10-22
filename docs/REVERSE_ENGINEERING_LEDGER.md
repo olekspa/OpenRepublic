@@ -417,3 +417,6 @@ checkpoint workflows and matched scale profiling.
 
 
 - **2026-10-22 milestone review:** independent core/client/API integration reviews; API handle exhaustion found/fixed before all8 World enqueue calls. Tests prove0/MAX refusals preserve canonical world/revision/events and last usable handle polls. Re-review passes. Full Release builds and CTest57/57 headless,58/58 client. Authored source/tests/tools/docs only; bytecode/build outputs excluded. [Milestone scope and known gaps](DEVELOPMENT_REPORT_2026-10-22_MILESTONE_REVIEW.md). No GUI/original-game run in this review; global goal incomplete.
+
+
+- **2026-10-22 real-content region follow-up:** OBSERVED imported industrial world and explicit iron/truck GUI haul; actual pipe VERIFIED exact endpoints/resource and source_empty at tick7. Four accepted buildings/710 native roads; rendered infrastructure is separate. Build23935965 REPORTED by earlier same-input receipt; exact identities/fingerprints/snapshots remain private. Five selected original inputs unchanged. Fixed clipped vehicle name by names-only menu/current-value tooltip; Release rebuild and authored startup confirm readable name. No original-game launch, delivery/parity or restored stock claim; clients closed. [Evidence](DEVELOPMENT_REPORT_2026-10-22_REAL_REGION.md).
