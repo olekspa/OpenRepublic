@@ -6,7 +6,12 @@
 ## DLSS 4.x / frame generation (planned, not integrated)
 Wicked Engine ships FSR2 and hardware ray tracing but no NVIDIA upscaler. DLSS super resolution, ray reconstruction and multi-frame generation require the NVIDIA Streamline SDK (DX12 proxy swap chain, motion vectors, depth, exposure and UI-excluded colour inputs). Plan: keep `runtime::Upscaler` as the neutral interface; add a Streamline-backed implementation behind it once the SDK terms are accepted and the renderer exposes motion vectors/jitter; `upscaler=dlss` already parses and reports "unavailable" until then. Neural-rendering features beyond what Streamline exposes publicly are out of scope until an SDK exists.
 
+Integration points found in the pinned Wicked Engine (OBSERVED by reading the source, nothing built yet):
+- Device/swap chain: `GraphicsDevice_DX12` loads `D3D12CreateDevice` at `wiGraphicsDevice_DX12.cpp:2278` and creates the swap chain in `CreateSwapChain` (`:3096`, `CreateSwapChainForHwnd` at `:3201`). Streamline needs its interposer loaded before device creation and a proxy swap chain, so this is a vendored-engine change (patch or fork), not an app-side one.
+- Upscaler inputs already exist for FSR2 in `RenderPath3D`: camera jitter (`camera->jitter = fsr2Resources.GetJitter()`, `wiRenderPath3D.cpp:424`), `rtVelocity` motion vectors, `depthBuffer_Copy`, and the call site `wi::renderer::Postprocess_FSR2(...)` (`:2352`). A DLSS evaluation would replace that call with the same inputs plus an exposure texture.
+- UNKNOWN: whether Streamline's licence/redistribution terms fit this MIT repository (the SDK binaries must not be committed); Frame Generation additionally needs UI-free colour and HUD-less buffers that this renderer does not separate yet.
+
 ## Performance (planned)
-- Simulation: the economy core is deterministic and single-threaded. Production is independent per building within a tick; the plan is a two-phase tick (parallel read-only evaluation into per-building deltas, ordered single-thread merge) so multithreading cannot change results, verified by state-hash equality against the serial path.
+- Simulation: the economy production phase runs on worker threads for worlds of 1024+ buildings (`economy::SetProductionThreads`); a test checks the state hash equals the serial path. Haul movement (which couples buildings) is still serial; no speedup has been measured.
 - Rendering: instancing is already used for placed buildings (one mesh per type). Next: LOD selection from the building definitions' LOD fields (loader defaults 1000/2000), frustum/occlusion handled by Wicked, texture streaming for large maps.
 - Compute offload candidates: terrain tessellation/normal generation, vehicle/path queries, road graph rasterization.
