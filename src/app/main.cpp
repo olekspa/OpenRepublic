@@ -405,6 +405,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				mapShowcaseCameraElevationDegrees = static_cast<float>(camera[1]);
 				mapShowcaseCameraDistanceScale = static_cast<float>(camera[2]);
 			}
+			else if (std::wstring_view(arguments[i]) == L"--modern")
+			{
+				// Interactive next-generation look for the region view (same preset as the showcase
+				// captures: physically based sky, lake, relief, trees, props, post effects).
+				mapShowcaseEnhancedLook = true;
+				if (!std::isfinite(mapShowcaseSunElevationDegrees))
+				{
+					mapShowcaseSunElevationDegrees = 17.0f;
+					mapShowcaseSunYawOffsetDegrees = 45.0f;
+				}
+			}
 			else if (std::wstring_view(arguments[i]) == L"--showcase-sun")
 			{
 				// --showcase-sun <elevation 2..80> <yaw offset from the camera direction -180..180>

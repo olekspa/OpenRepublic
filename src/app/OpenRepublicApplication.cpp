@@ -1085,7 +1085,7 @@ namespace openrepublic
 		renderPath->scene = &previewWorld;
 		renderPath->setBloomEnabled(false);
 		renderPath->setDepthOfFieldEnabled(false);
-		if (mapShowcaseCaptureMode && mapShowcaseEnhancedLook)
+		if (mapShowcaseEnhancedLook && mapRegionPreview)
 		{
 			// Showcase defaults; an explicit --graphics string overrides them below.
 			const bool rayTracing = wi::graphics::GetDevice() != nullptr &&
@@ -1316,6 +1316,11 @@ namespace openrepublic
 			}
 			cameraTransform.UpdateTransform();
 			renderPath->camera->TransformCamera(cameraTransform);
+			if (mapShowcaseEnhancedLook && mapRegionPreview)
+			{
+				renderPath->camera->zNearP = 0.5f;
+				renderPath->camera->zFarP = 40000.0f;
+			}
 			renderPath->camera->UpdateCamera();
 		}
 
