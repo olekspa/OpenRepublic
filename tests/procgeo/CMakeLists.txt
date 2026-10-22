@@ -1,0 +1,5 @@
+foreach(name mesh vehicles props)
+    add_executable(OpenRepublicProcGeo_${name}_tests ${name}_tests.cpp)
+    target_link_libraries(OpenRepublicProcGeo_${name}_tests PRIVATE OpenRepublicProcGeo)
+    add_test(NAME ProcGeo_${name} COMMAND OpenRepublicProcGeo_${name}_tests)
+endforeach()
