@@ -134,3 +134,6 @@ build/openrepublic-vs2022/src/app/Release/OpenRepublic.exe `
 The output directory must exist; the helper refuses to overwrite a checkpoint.
 All scenario content is OpenRepublic-authored. Native construction and existing
 Run/Pause, haul, road and checkpoint controls remain available after restore.
+
+Linked grids with no utility recipes still publish measured zero flow after a
+tick. With no utility recipes and no remaining links, measurements are unavailable.

@@ -32,4 +32,3 @@ adding an explicitly evidenced importer. Original files were read-only and no
 original game was launched; the global game-development goal remains incomplete.
 
 VERIFIED - final Release regression passes67/67 client and66/66 headless.
-

@@ -296,6 +296,59 @@ void ObservationLifecycle() {
     Check(!materialWorld.QueryUtilityDiagnostics().available,
           "material-only world never publishes utility receipt");
 }
+
+void LinkedGridWithoutUtilityRecipes() {
+    CatalogBuilder builder;
+    CatalogErrorInfo error;
+    ResourceId power{}, grain{};
+    BuildingTypeId warehouse{}, relay{}, farm{};
+    Catalog catalog;
+    const bool ok = builder.AddUtilityResource("power", &power, error) &&
+                    builder.AddResource("grain", &grain, error) &&
+                    builder.AddBuildingType("warehouse", 1, 1, &warehouse, error) &&
+                    builder.AddBuildingType("relay", 1, 1, &relay, error) &&
+                    builder.AddBuildingType("farm", 1, 1, &farm, error) &&
+                    builder.AddStorage(farm, grain, 4, error) &&
+                    builder.AddRecipe(farm, {"grow", 1, {}, {{grain, 1}}}, error) &&
+                    builder.Build(catalog, error);
+    Check(ok, "recipe-free linked utility fixture catalog builds");
+    if (!ok)
+        return;
+
+    World world(catalog, 12, 8);
+    world.PlaceBuilding(warehouse, {1, 1});
+    world.PlaceBuilding(relay, {4, 1});
+    world.PlaceBuilding(farm, {7, 1});
+    const auto connection = world.ConnectUtility(power, 1, 2);
+    Check(connection != 0, "recipe-free utility buildings accept a grid link");
+    Check(world.Step().accepted, "recipe-free linked grid advances");
+
+    const auto receipt = world.QueryUtilityDiagnostics();
+    const auto *network = Network(receipt, power, 1);
+    Check(receipt.available && receipt.tick == 1 && receipt.networks.size() == 1 && network &&
+              network->members == std::vector<BuildingId>({1, 2}) && Is(network->generated, 0) &&
+              Is(network->requested, 0) && Is(network->consumed, 0) && Is(network->unused, 0) &&
+              network->starvedRecipes == 0,
+          "linked recipe-free utility grid publishes measured zero flow and both members");
+
+    const auto snapshot = world.Snapshot();
+    const BuildingSnapshot *farmSnapshot = nullptr;
+    for (const auto &building : snapshot.buildings)
+        if (building.id == 3)
+            farmSnapshot = &building;
+    std::uint64_t grainStock = 0;
+    if (farmSnapshot)
+        for (const auto &slot : farmSnapshot->inventory)
+            if (slot.resource == grain)
+                grainStock = slot.amount;
+    Check(grainStock == 1, "ordinary material production still advances with recipe-free grid diagnostics");
+
+    const auto disconnection = world.DisconnectUtility(power, 1, 2);
+    const auto disconnectStep = world.Step();
+    Check(disconnectStep.accepted && world.GetCommandResult(disconnection).state == CommandState::Accepted &&
+              !world.QueryUtilityDiagnostics().available,
+          "removing the last link restores unavailable diagnostics when no utility recipes exist");
+}
 } // namespace
 
 int main() {
@@ -305,6 +358,7 @@ int main() {
     EligibilityAndAtomicShortage();
     DisabledFuelStarvationAndRelays();
     ObservationLifecycle();
+    LinkedGridWithoutUtilityRecipes();
     if (failures) {
         std::cerr << failures << " utility diagnostics test(s) failed\n";
         return EXIT_FAILURE;

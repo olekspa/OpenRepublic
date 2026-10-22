@@ -933,8 +933,8 @@ UtilityAmount AddUtilityAmount(UtilityAmount left, UtilityAmount right) noexcept
     const auto carry = low < left.low ? std::uint64_t{1} : std::uint64_t{0};
     return {low, left.high + right.high + carry};
 }
-std::map<ResourceId, std::map<BuildingId, BuildingId>> UtilityComponents(const State &s);
 UtilityDiagnostics MakeUtilityDiagnostics(const State &s,
+                                           const std::map<ResourceId, std::map<BuildingId, BuildingId>> &components,
                                            const std::map<UtilityBudgetKey, UtilityBudget> &budget,
                                            const std::map<UtilityBudgetKey, UtilityAmount> &requested,
                                            const std::map<UtilityBudgetKey, UtilityAmount> &consumed,
@@ -943,7 +943,6 @@ UtilityDiagnostics MakeUtilityDiagnostics(const State &s,
     receipt.available = true;
     receipt.tick = s.tick + 1;
 
-    const auto components = UtilityComponents(s);
     std::map<UtilityBudgetKey, std::vector<BuildingId>> membersByComponent;
     for (const auto &resource : components)
         for (const auto &entry : resource.second)
@@ -1215,7 +1214,7 @@ UtilityDiagnostics UtilityProductionPhase(State &s) {
         else
             building.stall = {building.id, StallReason::Running, InvalidResourceId, 0};
     }
-    return MakeUtilityDiagnostics(s, budget, requested, consumed, starved);
+    return MakeUtilityDiagnostics(s, components, budget, requested, consumed, starved);
 }
 UtilityDiagnostics AdvanceTick(State &s) {
     auto pending = std::move(s.pending);
@@ -1234,8 +1233,13 @@ UtilityDiagnostics AdvanceTick(State &s) {
     UtilityDiagnostics receipt;
     if (hasUtilityRecipes)
         receipt = UtilityProductionPhase(s);
-    else
+    else {
         ProductionPhase(s);
+        if (!s.utilityConnections.empty()) {
+            const auto components = UtilityComponents(s);
+            receipt = MakeUtilityDiagnostics(s, components, {}, {}, {}, {});
+        }
+    }
     std::sort(s.orders.begin(), s.orders.end(), [](const Order &a, const Order &b) { return a.id < b.id; });
     for (auto &o : s.orders)
         Haul(s, o);

@@ -47,3 +47,10 @@ Both full builds succeeded. The client content test was rebuilt after a syntheti
 fixture correction; parse-failure guards now stop before dependent test accesses.
 Independent final source review found no remaining blocker in these changes.
 
+Follow-up: VERIFIED linked utility grids without utility recipes now publish
+measured zero flow after a tick, rather than remaining unavailable forever.
+Ordinary material production keeps its existing production path; after removing
+the last link, a world without utility recipes again has no measurement.
+Diagnostics also reuse the production phase's immutable component map, avoiding
+a second graph construction. No benchmark speedup is claimed. Both full Release
+builds succeed; the six utility/core/API/protocol tests pass in each build tree.
