@@ -565,7 +565,7 @@ namespace openrepublic::preview
 							{
 								const double lateral = (w - (wires - 1) * 0.5) * wireSpacing;
 								addWire(px + nx * lateral, py + supportHeight - (w % 2) * 1.2, pz + nz * lateral,
-									sample.x + nx * lateral, h + supportHeight - (w % 2) * 1.2, sample.z + nz * lateral, sag, 0.08f);
+									sample.x + nx * lateral, h + supportHeight - (w % 2) * 1.2, sample.z + nz * lateral, sag, wires > 3 ? 0.16f : 0.10f);
 							}
 						}
 						px = sample.x; pz = sample.z; py = h; havePrev = true;
