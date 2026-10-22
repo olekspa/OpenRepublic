@@ -1,0 +1,122 @@
+From 2d10493c490141fdc9800f316e9f92c3ed4a975f Mon Sep 17 00:00:00 2001
+From: OpenRepublic Patch Builder <patch-builder@openrepublic.invalid>
+Date: Thu, 22 Oct 2026 09:31:52 -0400
+Subject: [PATCH] Defer DLSS setup and track render-size changes
+
+---
+ WickedEngine/wiRenderPath3D.cpp | 34 ++++++++++++++++++++++++++++-----
+ WickedEngine/wiRenderPath3D.h   |  1 +
+ 2 files changed, 30 insertions(+), 5 deletions(-)
+
+diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
+index 90de5e8c..46848517 100644
+--- a/WickedEngine/wiRenderPath3D.cpp
++++ b/WickedEngine/wiRenderPath3D.cpp
+@@ -462,7 +462,7 @@ namespace wi
+ 		setRaytracedDiffuseEnabled(raytracedDiffuseEnabled);
+ 		setFSREnabled(fsrEnabled);
+ 		setFSR2Enabled(fsr2Enabled);
+-		setDLSSEnabled(dlssEnabled);
++		setDLSSEnabled(dlssRequested || dlssEnabled);
+ 		setEyeAdaptionEnabled(eyeAdaptionEnabled);
+ 		setReflectionsEnabled(reflectionsEnabled);
+ 		setBloomEnabled(bloomEnabled);
+@@ -485,6 +485,14 @@ namespace wi
+ 
+ 		RenderPath2D::Update(dt);
+ 
++#if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
++		if (dlssRequested && GetPhysicalWidth() > 0 && GetPhysicalHeight() > 0 &&
++			(!dlssEnabled || !rtFSR[0].IsValid() || rtFSR[0].desc.width != GetPhysicalWidth() || rtFSR[0].desc.height != GetPhysicalHeight()))
++		{
++			setDLSSEnabled(true);
++		}
++#endif
++
+ 		wi::renderer::SetShadowsEnabled(getShadowsEnabled());
+ 
+ 		const bool hw_raytrace = device->CheckCapability(GraphicsDeviceCapability::RAYTRACING);
+@@ -729,6 +737,7 @@ namespace wi
+ 			getAO() == AO::AO_RTAO ||
+ 			wi::renderer::GetVariableRateShadingClassification() ||
+ 			getFSR2Enabled() ||
++			getDLSSEnabled() ||
+ 			reprojectedDepth.IsValid()
+ 			)
+ 		{
+@@ -2481,6 +2490,11 @@ namespace wi
+ 		// 1.) HDR post process chain
+ 		{
+ #if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
++			if (dlssRequested && GetPhysicalWidth() > 0 && GetPhysicalHeight() > 0 &&
++				(!dlssEnabled || !rtFSR[0].IsValid() || rtFSR[0].desc.width != GetPhysicalWidth() || rtFSR[0].desc.height != GetPhysicalHeight()))
++			{
++				const_cast<RenderPath3D*>(this)->setDLSSEnabled(true);
++			}
+ 			if (getDLSSEnabled() && rtFSR[0].IsValid() && EvaluateStreamlineDLSS(*camera, camera_previous, *rt_read, depthBuffer_Copy, rtVelocity, rtFSR[0], cmd, GetPhysicalWidth(), GetPhysicalHeight(), first_frame))
+ 			{
+ 				// Streamline may change command-list state; restore Wicked's bindings before later passes.
+@@ -3145,7 +3159,7 @@ namespace wi
+ 	void RenderPath3D::setFSR2Enabled(bool value)
+ 	{
+ 		fsr2Enabled = value;
+-		if (value) dlssEnabled = false;
++		if (value) { dlssRequested = false; dlssEnabled = false; }
+ 
+ 		if (fsr2Enabled)
+ 		{
+@@ -3190,15 +3204,23 @@ namespace wi
+ #if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
+ 		if (!value)
+ 		{
++			dlssRequested = false;
+ 			dlssEnabled = false;
+ 			if (!getFSREnabled()) { rtFSR[0] = {}; rtFSR[1] = {}; }
+ 			return;
+ 		}
++		dlssRequested = true;
++		if (GetPhysicalWidth() == 0 || GetPhysicalHeight() == 0)
++		{
++			// Keep the request pending; Update/ResizeBuffers retries once display size is known.
++			dlssEnabled = false;
++			return;
++		}
+ 		HMODULE module = GetModuleHandleW(L"sl.interposer.dll");
+ 		auto getFeatureFunction = module ? reinterpret_cast<PFun_slGetFeatureFunction*>(GetProcAddress(module, "slGetFeatureFunction")) : nullptr;
+-		if (!getFeatureFunction) { dlssEnabled = false; return; }
++		if (!getFeatureFunction) { dlssRequested = false; dlssEnabled = false; return; }
+ 		void* function = nullptr;
+-		if (getFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", function) != sl::Result::eOk || !function) { dlssEnabled = false; return; }
++		if (getFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", function) != sl::Result::eOk || !function) { dlssRequested = false; dlssEnabled = false; return; }
+ 		auto getOptimal = reinterpret_cast<PFun_slDLSSGetOptimalSettings*>(function);
+ 		sl::DLSSOptions options{};
+ 		options.mode = sl::DLSSMode::eBalanced;
+@@ -3209,10 +3231,12 @@ namespace wi
+ 		sl::DLSSOptimalSettings optimal{};
+ 		if (GetPhysicalWidth() == 0 || GetPhysicalHeight() == 0 || getOptimal(options, optimal) != sl::Result::eOk || optimal.optimalRenderWidth == 0 || optimal.optimalRenderHeight == 0)
+ 		{
++			dlssRequested = false;
+ 			dlssEnabled = false;
+ 			return;
+ 		}
+-		const float targetScale = std::min(float(optimal.optimalRenderWidth) / float(GetPhysicalWidth()), float(optimal.optimalRenderHeight) / float(GetPhysicalHeight()));
++		// Use max so truncating internal-size conversion does not land one pixel below either optimal dimension.
++		const float targetScale = std::max(float(optimal.optimalRenderWidth) / float(GetPhysicalWidth()), float(optimal.optimalRenderHeight) / float(GetPhysicalHeight()));
+ 		fsr2Enabled = false;
+ 		fsr2Resources = {};
+ 		dlssEnabled = true;
+diff --git a/WickedEngine/wiRenderPath3D.h b/WickedEngine/wiRenderPath3D.h
+index 1a58614e..ded36d92 100644
+--- a/WickedEngine/wiRenderPath3D.h
++++ b/WickedEngine/wiRenderPath3D.h
+@@ -90,6 +90,7 @@ namespace wi
+ 		bool fsrEnabled = false;
+ 		bool fsr2Enabled = false;
+ 		bool dlssEnabled = false;
++		bool dlssRequested = false; // Keep user request pending until a non-zero display size exists
+ 		bool mesh_blend = true;
+ 		bool crtFilterEnabled = false;
+ 
+-- 
+2.47.1.windows.2
+
