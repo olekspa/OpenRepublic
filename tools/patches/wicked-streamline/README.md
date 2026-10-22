@@ -2,13 +2,15 @@
 
 Base submodule revision: `4f93f3fd4f337aeb38dbfe410701b83024ccdd42`.
 
-`0001-streamline-sdk-build-boundary.patch` adds an OFF-by-default CMake option and validates the user-supplied `OPENREPUBLIC_STREAMLINE_DIR` before exposing the SDK include directory/compile definition to the WickedEngine target. It does not copy SDK files or add calls into engine runtime. See [the integration plan](../../../docs/DLSS_INTEGRATION_PLAN.md) for the concrete SR/FG implementation sequence, resource contract, license findings and remaining acceptance gates.
-
-Apply from a clean checkout of the pinned submodule root:
+Apply the patches in order to a clean checkout of that pinned revision:
 
 ```powershell
 git apply --check path\to\0001-streamline-sdk-build-boundary.patch
 git apply path\to\0001-streamline-sdk-build-boundary.patch
+git apply --check path\to\0002-streamline-dlss-runtime.patch
+git apply path\to\0002-streamline-dlss-runtime.patch
 ```
 
-Default configuration remains `OPENREPUBLIC_STREAMLINE_DIR=OFF`. When enabled for SDK header development, configure the Wicked Engine project with `-DOPENREPUBLIC_STREAMLINE_DIR=ON` and `-DOPENREPUBLIC_STREAMLINE_SDK_ROOT=<local NVIDIA SDK directory>`. This option currently exposes headers only; it does not enable DLSS at runtime. Never commit SDK files or build/download them into a public artifact without a release-specific license and packaging review.
+Patch 0001 adds the OFF-by-default `OPENREPUBLIC_STREAMLINE_DIR` CMake option and consumes headers from the local `OPENREPUBLIC_STREAMLINE_SDK_ROOT`. Patch 0002 adds an opt-in Windows/D3D12 DLSS Super Resolution path, native device/resource/command-list accessors, interposer initialization, per-frame tags and evaluation, and Balanced-mode optimal sizing. It does not implement DLSS Frame Generation, Reflex markers, application settings wiring, or a production-ready DLL deployment flow. See [the integration plan](../../../docs/DLSS_INTEGRATION_PLAN.md) for its contract, validation evidence, license findings and remaining acceptance gates.
+
+For an opted-in build, obtain Streamline source/SDK from the public [NVIDIA-RTX/Streamline repository](https://github.com/NVIDIA-RTX/Streamline) or a versioned package from its [releases page](https://github.com/NVIDIA-RTX/Streamline/releases), and keep those files outside Git. Configure with `-DOPENREPUBLIC_STREAMLINE_DIR=ON -DOPENREPUBLIC_STREAMLINE_SDK_ROOT=<local NVIDIA SDK directory>`. Default builds remain unchanged. Do not commit SDK files or package runtime binaries until the exact release payload and redistribution terms have been reviewed.
