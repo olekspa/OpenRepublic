@@ -143,3 +143,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-22 ~07:00 EDT** Headless CTest after merging ELECTRO: 35/35 passed (read from the output). Power-line wires thickened (0.10 m low, 0.16 m high voltage) so they register at hero distance; hero view re-captured fine (hero4-enhanced.png in the private captures folder).
 
 - **2026-10-22 ~11:00 EDT (after usage-limit pause)** Heartbeat: all 13 workers completed and merged, tree clean at 1544336. Reliability check: three consecutive fresh launches of the interactive `--modern` view each stayed alive for 40 s at ~103 fps (RTX 5070 Ti, default window); no flooding observed in the log-level check (no pixel inspection this time).
+
+- **2026-10-22 ~11:15 EDT** Worker SCENE-CTL started (luna/scenectl): engine-independent scene-look/camera state with a versioned JSON command layer (look.get/set/preset, camera.set, capabilities) so an LLM or Lua can control time of day and camera at runtime; I will integrate it into the app (polling ConsumeDirty each frame) when it merges.
