@@ -78,6 +78,7 @@ namespace openrepublic
 		std::optional<openrepublic::content::MapPlacementRequest> mapPlacement;
 		double mapRadiusMeters = 0.0;
 		bool mapRegionPreview = false;
+		float cameraSpeedScale = 1.0f;
 		std::filesystem::path mapContentRoot;
 		bool nmfUnlitPreview = false;
 		bool nmfMaterialUnlitPreview = false;

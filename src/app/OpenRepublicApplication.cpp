@@ -763,9 +763,21 @@ namespace openrepublic
 		if (!capturePreview)
 		{
 			wi::scene::TransformComponent cameraTransform;
-			cameraTransform.Translate(terrainPreviewLoaded ? XMFLOAT3(0, 18.0f, -27.0f) :
-				(nmfPreviewLoaded ? XMFLOAT3(8.0f, 8.0f, -17.0f) : XMFLOAT3(0, 6.5f, -11.5f)));
-			cameraTransform.RotateRollPitchYaw(XMFLOAT3(terrainPreviewLoaded ? 0.52f : (nmfPreviewLoaded ? 0.38f : 0.43f), 0, 0));
+			if (mapRegionPreview && nmfPreviewLoaded)
+			{
+				// Metre-scale region: frame it from above and scale fly speed with its size.
+				cameraTransform.Translate(XMFLOAT3(nmfPreviewCameraTarget.x,
+					nmfPreviewCameraTarget.y + nmfPreviewCameraDistance * 0.55f,
+					nmfPreviewCameraTarget.z - nmfPreviewCameraDistance * 0.85f));
+				cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.6f, 0, 0));
+				cameraSpeedScale = std::max(1.0f, nmfPreviewCameraDistance / 15.0f);
+			}
+			else
+			{
+				cameraTransform.Translate(terrainPreviewLoaded ? XMFLOAT3(0, 18.0f, -27.0f) :
+					(nmfPreviewLoaded ? XMFLOAT3(8.0f, 8.0f, -17.0f) : XMFLOAT3(0, 6.5f, -11.5f)));
+				cameraTransform.RotateRollPitchYaw(XMFLOAT3(terrainPreviewLoaded ? 0.52f : (nmfPreviewLoaded ? 0.38f : 0.43f), 0, 0));
+			}
 			cameraTransform.UpdateTransform();
 			renderPath->camera->TransformCamera(cameraTransform);
 			renderPath->camera->UpdateCamera();
@@ -863,13 +875,13 @@ namespace openrepublic
 			const XMVECTOR eye = XMLoadFloat3(&camera.Eye);
 			// Keep movement in world-units per second and bound catch-up after a stalled frame.
 			const float movementDelta = std::clamp(dt, 0.0f, kMaxCameraMoveDeltaSeconds);
-			XMStoreFloat3(&camera.Eye, XMVectorAdd(eye, XMVectorScale(movement, kCameraMoveSpeed * movementDelta)));
+			XMStoreFloat3(&camera.Eye, XMVectorAdd(eye, XMVectorScale(movement, kCameraMoveSpeed * cameraSpeedScale * movementDelta)));
 			cameraMoved = true;
 		}
 		if (pointer.z != 0)
 		{
 			const XMVECTOR eye = XMLoadFloat3(&camera.Eye);
-			XMStoreFloat3(&camera.Eye, XMVectorAdd(eye, XMVectorScale(forward, pointer.z * kWheelZoomSpeed)));
+			XMStoreFloat3(&camera.Eye, XMVectorAdd(eye, XMVectorScale(forward, pointer.z * kWheelZoomSpeed * cameraSpeedScale)));
 			cameraMoved = true;
 		}
 		if (cameraMoved)
