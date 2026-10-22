@@ -1,5 +1,8 @@
 add_executable(OpenRepublic WIN32
     main.cpp
+    ContentPreview.cpp
+    ContentPreview.h
+    NmfPreviewCapture.h
     OpenRepublicApplication.cpp
     OpenRepublicApplication.h
     "${WICKED_ROOT_DIR}/Editor/ModelImporter_GLTF.cpp"
