@@ -367,6 +367,8 @@ std::string EventType(economy_api::EventType t) {
     return "delivery_completed";
   case T::TickAdvanced:
     return "tick_advanced";
+  case T::RulesReloaded:
+    return "rules_reloaded";
   }
   return "unknown";
 }

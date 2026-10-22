@@ -336,6 +336,7 @@ ErrorCode EconomyApi::ReplaceCatalog(const economy::Catalog& catalog, std::strin
         return ErrorCode::InvalidArgument;
     }
     catalog_ = &catalog;
+    Record({0, EventType::RulesReloaded, world_->Tick()});
     return ErrorCode::None;
 }
 ErrorCode EconomyApi::Step(std::uint32_t ticks) {

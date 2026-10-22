@@ -146,7 +146,7 @@ struct Explanation {
 // CommandAccepted reports queue admission; execution may later emit CommandRejected.
 enum class EventType : std::uint8_t {
     CommandAccepted = 1, CommandRejected, BuildingStalled, BuildingUnstalled,
-    DeliveryCompleted, TickAdvanced
+    DeliveryCompleted, TickAdvanced, RulesReloaded
 };
 struct Event {
     std::uint64_t sequence{};

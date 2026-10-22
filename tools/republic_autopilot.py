@@ -47,12 +47,15 @@ def raw_producer_type(catalog, resource):
     return None
 
 
-def raw_resources(catalog):
+def raw_resources(catalog, count_generated=False):
+    """Resources made from nothing. With count_generated, ones that buildings also consume (for example
+    electricity) are scored too; pure extraction outputs stay excluded."""
+    consumed = {a["resource"] for b in catalog["buildingTypes"] for r in b["recipes"] for a in r["inputs"]}
     raw = set()
     for building in catalog["buildingTypes"]:
         for recipe in building["recipes"]:
             if not recipe["inputs"]:
-                raw.update(o["resource"] for o in recipe["outputs"])
+                raw.update(o["resource"] for o in recipe["outputs"] if not (count_generated and o["resource"] in consumed and building["name"].startswith("powerplant")))
     return raw
 
 
@@ -90,6 +93,8 @@ def main():
     parser.add_argument("--host", required=True)
     parser.add_argument("--rounds", type=int, default=5)
     parser.add_argument("--ticks", type=int, default=500)
+    parser.add_argument("--count-electricity", action="store_true",
+                        help="also score stored output of power plants (comparable with REPUBLIC-1's definition)")
     parser.add_argument("--json", action="store_true", help="print one JSON result line (controller vs idle baseline)")
     args, host_args = parser.parse_known_args()
     host_args = [a for a in host_args if a != "--"]
@@ -98,7 +103,7 @@ def main():
     ordered = set()
     catalog = host.call("catalog")
     placed = set()
-    raw = raw_resources(catalog)
+    raw = raw_resources(catalog, args.count_electricity)
     try:
         for round_number in range(1, args.rounds + 1):
             plan = host.call("advise")
