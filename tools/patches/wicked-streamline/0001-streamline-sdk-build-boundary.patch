@@ -1,0 +1,51 @@
+﻿From 2b4723eaeff7ad2cb489778e59a4a6438a4f093d Mon Sep17 00:00:00 2001
+From: OpenRepublic contributors <dev@openrepublic.invalid>
+Date: Thu, 22 Oct 2026 13:00:00 +0000
+Subject: [PATCH] cmake: add opt-in Streamline SDK include boundary
+
+Base: turanszkij/WickedEngine 4f93f3fd4f337aeb38dbfe410701b83024ccdd42
+
+This adds an OFF-by-default Windows-only SDK path and compile definition. It
+
+does not vendor or copy NVIDIA files and leaves default builds unchanged.
+
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 62e92554..de083bb0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -27,6 +27,8 @@ option(USE_LIBCXX "Link WickedEngine to llvm libc++ library - only available wit
+ option(WICKED_EDITOR "Build WickedEngine editor" ON)
+ option(WICKED_TESTS "Build WickedEngine tests" ON)
+ option(WICKED_IMGUI_EXAMPLE "Build WickedEngine imgui example" ON)
++option(OPENREPUBLIC_STREAMLINE_DIR "Enable OpenRepublic's opt-in Streamline SDK integration" OFF)
++set(OPENREPUBLIC_STREAMLINE_SDK_ROOT "" CACHE PATH "Path to a locally obtained NVIDIA Streamline SDK checkout or release package")
+ option(WICKED_ENABLE_IPO "Enable IPO/LTO in non-debug builds" NO)
+ option(WICKED_EMBED_SHADERS "Embed shaders into the library" NO)
+ option(WICKED_ENABLE_RTTI "Enable RTTI" NO)
+diff --git a/WickedEngine/CMakeLists.txt b/WickedEngine/CMakeLists.txt
+index 19ecbfdf..71c9ab0f 100644
+--- a/WickedEngine/CMakeLists.txt
++++ b/WickedEngine/CMakeLists.txt
+@@ -172,6 +172,21 @@ target_include_directories(WickedEngine_common SYSTEM PUBLIC
+     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/WickedEngine>
+ )
+ 
++# OpenRepublic's optional Streamline integration consumes the SDK in place.
++# No SDK files are copied into this source tree or the build output by CMake.
++if (OPENREPUBLIC_STREAMLINE_DIR)
++    if (NOT WIN32)
++        message(FATAL_ERROR "OPENREPUBLIC_STREAMLINE is currently supported only on Windows/D3D12")
++    endif()
++    if (NOT OPENREPUBLIC_STREAMLINE_SDK_ROOT OR NOT EXISTS "${OPENREPUBLIC_STREAMLINE_SDK_ROOT}/include/sl.h")
++        message(FATAL_ERROR "OPENREPUBLIC_STREAMLINE_DIR=ON requires OPENREPUBLIC_STREAMLINE_SDK_ROOT to point to a Streamline SDK containing include/sl.h")
++    endif()
++    target_include_directories(WickedEngine_common SYSTEM PUBLIC
++        "${OPENREPUBLIC_STREAMLINE_SDK_ROOT}/include"
++    )
++    target_compile_definitions(WickedEngine_common PUBLIC OPENREPUBLIC_STREAMLINE=1)
++endif()
++
+ set(WICKEDENGINE_STATIC_LIBRARIES
+     Jolt
+     LUA
