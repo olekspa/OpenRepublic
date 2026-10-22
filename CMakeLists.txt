@@ -13,6 +13,7 @@ option(OPENREPUBLIC_BUILD_TESTS "Build OpenRepublic simulation verification targ
 add_subdirectory(src/sim)
 add_subdirectory(src/agent_api)
 add_subdirectory(src/content)
+add_subdirectory(src/economy)
 
 # The stdio Agent API adapter reuses the same MIT-licensed JSON header pinned
 # with Wicked Engine's Editor importer. The authoritative API/simulation remain
@@ -60,6 +61,7 @@ if(OPENREPUBLIC_BUILD_TESTS)
     add_subdirectory(tests/sim)
     add_subdirectory(tests/agent_api)
     add_subdirectory(tests/content)
+    add_subdirectory(tests/economy)
 
     if(OPENREPUBLIC_AGENT_HOST_AVAILABLE)
         add_subdirectory(tests/agent_host)
