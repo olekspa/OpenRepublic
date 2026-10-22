@@ -24,6 +24,8 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 
 - **~05:00 EDT [09:00 UTC]** Merged ECON-IMPORT (88 real building types / 54 resources from the install; catalog drives the economy host), started ECON-REGION. Decoded the road node layout (66 files validated), roads drawn in the region view. Granted computer-use access to the running app (see operating notes).
 
+- **~05:40 EDT [09:40 UTC]** Merged ECON-REGION (`ImportRegionIntoWorld`): a map region of placements can become an economy World. Client CTest 26/26. Roads are not yet imported into the economy world (graph decoded, rasterization pending).
+
 ## Operating notes
 
 - Launching the game: `steam.exe -applaunch 784150` works; running the game launcher exe directly or `steam://rungameid` fails (reported by the project owner on 2026-10-21). The game and saves remain read-only research sources per `AGENTS.md`.
