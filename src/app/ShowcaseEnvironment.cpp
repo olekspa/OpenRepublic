@@ -483,15 +483,15 @@ namespace openrepublic::preview
 		XMFLOAT3 color = Mix(lush, meadow, SmoothStep(0.3f, 0.7f, broad));
 		color = Mix(color, dry, std::clamp((broad - 0.55f) * 2.0f, 0.0f, 0.55f) * (1.0f - elevation));
 		color = Mix(color, forestFloor, forest * 0.9f);
-		const float rockMask = std::max(SmoothStep(0.30f, 0.70f, slope), SmoothStep(0.36f, 0.62f, elevation + (fine - 0.5f) * 0.1f));
+		const float rockMask = std::max(SmoothStep(0.30f, 0.70f, slope), SmoothStep(0.36f, 0.62f, elevation));
 		color = Mix(color, rock, rockMask);
-		color = Mix(color, snow, SmoothStep(0.80f, 0.95f, elevation + (fine - 0.5f) * 0.05f) * (1.0f - SmoothStep(0.5f, 0.9f, slope)));
+		color = Mix(color, snow, SmoothStep(0.80f, 0.95f, elevation) * (1.0f - SmoothStep(0.5f, 0.9f, slope)));
 		if (data.hasWater)
 		{
 			color = Mix(color, sand, 1.0f - SmoothStep(data.waterLevel + 0.3f, data.waterLevel + 2.6f, height));
 		}
 		// The real WRSR ground tile is much darker on average than the procedural one.
-		const float detail = (0.95f + fine * 0.1f) * (RealGroundAlbedoValid() ? 3.2f - 0.9f * rockMask : 1.45f);
+		const float detail = (0.97f + fine * 0.04f) * (RealGroundAlbedoValid() ? 3.2f - 0.9f * rockMask : 1.45f);
 		return XMFLOAT3(color.x * detail, color.y * detail, color.z * detail);
 	}
 
@@ -677,7 +677,10 @@ namespace openrepublic::preview
 					height -= 2.5f * SmoothStep(0.0f, 70.0f, static_cast<float>(inside));
 				}
 				positions.emplace_back(static_cast<float>(wx - center.X()), height, static_cast<float>(wz - center.Z()));
-				uvs.emplace_back(static_cast<float>(wx / 22.0), static_cast<float>(wz / 22.0));
+				// A slow warp of the tile coordinates hides the straight-line repetition of the ground tile.
+				const float warpU = (Fbm(wx / 140.0, wz / 140.0, 2, 83) - 0.5f) * 2.2f;
+				const float warpV = (Fbm(wx / 140.0 + 40.0, wz / 140.0 - 17.0, 2, 89) - 0.5f) * 2.2f;
+				uvs.emplace_back(static_cast<float>(wx / 22.0) + warpU, static_cast<float>(wz / 22.0) + warpV);
 			}
 		}
 		std::vector<std::uint32_t> indices;
@@ -701,6 +704,26 @@ namespace openrepublic::preview
 		{
 			error = "Wicked Engine did not create the far landscape components";
 			return false;
+		}
+		// Height-field normals from central differences: the engine's averaged face normals alternate with
+		// the grid's diagonals and showed up as a checker pattern on steep slopes.
+		farMesh->vertex_normals.resize(positions.size());
+		for (std::uint32_t z = 0; z < samples; ++z)
+		{
+			for (std::uint32_t x = 0; x < samples; ++x)
+			{
+				const std::uint32_t left = x == 0 ? x : x - 1;
+				const std::uint32_t right = std::min(x + 1, samples - 1);
+				const std::uint32_t down = z == 0 ? z : z - 1;
+				const std::uint32_t up = std::min(z + 1, samples - 1);
+				const float dx = static_cast<float>(grid.worldXCoordinates[right] - grid.worldXCoordinates[left]);
+				const float dz = static_cast<float>(grid.worldZCoordinates[up] - grid.worldZCoordinates[down]);
+				const float hx = positions[static_cast<std::size_t>(z) * samples + right].y - positions[static_cast<std::size_t>(z) * samples + left].y;
+				const float hz = positions[static_cast<std::size_t>(up) * samples + x].y - positions[static_cast<std::size_t>(down) * samples + x].y;
+				XMFLOAT3 normal(-hx / std::max(dx, 0.001f), 1.0f, -hz / std::max(dz, 0.001f));
+				const float length = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+				farMesh->vertex_normals[static_cast<std::size_t>(z) * samples + x] = XMFLOAT3(normal.x / length, normal.y / length, normal.z / length);
+			}
 		}
 		farMesh->vertex_colors = std::move(colors);
 		farMesh->vertex_uvset_0 = std::move(uvs);
