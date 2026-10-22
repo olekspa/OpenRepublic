@@ -480,9 +480,9 @@ namespace openrepublic::preview
 		const XMFLOAT3 sand(0.40f, 0.35f, 0.24f);
 
 		XMFLOAT3 color = Mix(lush, meadow, SmoothStep(0.3f, 0.7f, broad));
-		color = Mix(color, dry, std::clamp((broad - 0.55f) * 2.0f + elevation * 0.3f, 0.0f, 0.55f));
+		color = Mix(color, dry, std::clamp((broad - 0.55f) * 2.0f, 0.0f, 0.55f) * (1.0f - elevation));
 		color = Mix(color, forestFloor, forest * 0.9f);
-		const float rockMask = std::max(SmoothStep(0.42f, 0.85f, slope), SmoothStep(0.46f, 0.72f, elevation + (fine - 0.5f) * 0.1f));
+		const float rockMask = std::max(SmoothStep(0.30f, 0.70f, slope), SmoothStep(0.36f, 0.62f, elevation + (fine - 0.5f) * 0.1f));
 		color = Mix(color, rock, rockMask);
 		color = Mix(color, snow, SmoothStep(0.80f, 0.95f, elevation + (fine - 0.5f) * 0.05f) * (1.0f - SmoothStep(0.5f, 0.9f, slope)));
 		if (data.hasWater)
@@ -490,7 +490,7 @@ namespace openrepublic::preview
 			color = Mix(color, sand, 1.0f - SmoothStep(data.waterLevel + 0.3f, data.waterLevel + 2.6f, height));
 		}
 		// The real WRSR ground tile is much darker on average than the procedural one.
-		const float detail = (0.9f + fine * 0.2f) * (RealGroundAlbedoValid() ? 3.2f : 1.45f);
+		const float detail = (0.95f + fine * 0.1f) * (RealGroundAlbedoValid() ? 3.2f : 1.45f);
 		return XMFLOAT3(color.x * detail, color.y * detail, color.z * detail);
 	}
 
@@ -601,12 +601,12 @@ namespace openrepublic::preview
 		return resource;
 	}
 
-	void ApplyShowcaseGrass(wi::scene::MaterialComponent& material)
+	void ApplyShowcaseGrass(wi::scene::MaterialComponent& material, bool withNormalMap)
 	{
 		const bool real = RealGroundAlbedo().IsValid();
 		material.textures[wi::scene::MaterialComponent::BASECOLORMAP].resource = real ? RealGroundAlbedo() : ShowcaseGrassTexture();
 		material.textures[wi::scene::MaterialComponent::BASECOLORMAP].uvset = 0;
-		if (real && RealGroundNormal().IsValid())
+		if (real && withNormalMap && RealGroundNormal().IsValid())
 		{
 			material.textures[wi::scene::MaterialComponent::NORMALMAP].resource = RealGroundNormal();
 			material.textures[wi::scene::MaterialComponent::NORMALMAP].uvset = 0;
@@ -676,7 +676,7 @@ namespace openrepublic::preview
 					height -= 2.5f * SmoothStep(0.0f, 70.0f, static_cast<float>(inside));
 				}
 				positions.emplace_back(static_cast<float>(wx - center.X()), height, static_cast<float>(wz - center.Z()));
-				uvs.emplace_back(static_cast<float>(wx / 12.0), static_cast<float>(wz / 12.0));
+				uvs.emplace_back(static_cast<float>(wx / 22.0), static_cast<float>(wz / 22.0));
 			}
 		}
 		std::vector<std::uint32_t> indices;
@@ -708,7 +708,7 @@ namespace openrepublic::preview
 		farMaterial->SetBaseColor(XMFLOAT4(1, 1, 1, 1));
 		farMaterial->SetRoughness(0.96f);
 		farMaterial->SetReflectance(0.02f);
-		ApplyShowcaseGrass(*farMaterial);
+		ApplyShowcaseGrass(*farMaterial, false); // the coarse mesh shows the normal map as a grid on steep slopes
 		farMaterial->CreateRenderData(true);
 		if (wi::scene::ObjectComponent* object = scene.objects.GetComponent(farEntity))
 		{

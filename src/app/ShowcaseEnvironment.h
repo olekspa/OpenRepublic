@@ -76,7 +76,7 @@ namespace openrepublic::preview
 
 	// Gives a terrain material the grass detail texture (UV 0 = world metres / 12). When `realGround`
 	// is valid (a texture decoded from a local WRSR install) it replaces the procedural one.
-	void ApplyShowcaseGrass(wi::scene::MaterialComponent& material);
+	void ApplyShowcaseGrass(wi::scene::MaterialComponent& material, bool withNormalMap = true);
 	void SetShowcaseRealGroundTexture(const wi::Resource& albedo, const wi::Resource& normal);
 
 	// Builds the far landscape mesh, the lake level and the trees. `instances` are the placed

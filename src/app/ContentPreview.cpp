@@ -1446,7 +1446,7 @@ namespace openrepublic::preview
 					const double worldZ = grid.worldZCoordinates[z];
 					const XMFLOAT3 color = ShadeShowcaseTerrain(showcaseTerrain, worldX, worldZ, gridHeight(x, z), slope);
 					terrainMesh->vertex_colors.push_back(wi::Color::fromFloat4(XMFLOAT4(color.x, color.y, color.z, 1.0f)).rgba);
-					terrainMesh->vertex_uvset_0.emplace_back(static_cast<float>(worldX / 12.0), static_cast<float>(worldZ / 12.0));
+					terrainMesh->vertex_uvset_0.emplace_back(static_cast<float>(worldX / 22.0), static_cast<float>(worldZ / 22.0));
 				}
 			}
 			terrainMaterial->SetUseVertexColors(true);
