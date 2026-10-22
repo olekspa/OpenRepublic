@@ -12,6 +12,7 @@
 #include "openrepublic/sim/simulation.h"
 #include "../economy_host/economy_protocol.h"
 #include "LocalEconomyPipeEndpoint.h"
+#include "openrepublic/scene_control.h"
 
 #include <filesystem>
 #include <limits>
@@ -40,6 +41,7 @@ namespace openrepublic
 			bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel);
 		void SetSyntheticRegionFixture();
 		void SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees);
+		void SetScenePipeName(std::wstring name);
 		void SetMapShowcaseCapture(std::filesystem::path outputPath, bool enhancedLook,
 			float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale);
 		void SetNmfUnlitPreview(bool enabled);
@@ -134,6 +136,17 @@ namespace openrepublic
 		float mapShowcaseSunElevationDegrees = std::numeric_limits<float>::quiet_NaN();
 		float mapShowcaseSunYawOffsetDegrees = 0.0f;
 		preview::ShowcaseEnvironmentInfo showcaseEnvironment;
+		// Runtime look/camera control (versioned JSON over a local named pipe; see docs/SCENE_CONTROL.md).
+		std::wstring scenePipeName;
+		std::unique_ptr<openrepublic::scenectl::SceneControlState> sceneControl;
+		std::unique_ptr<openrepublic::economy_host::LocalEconomyPipeEndpoint> sceneEndpoint;
+		wi::ecs::Entity showcaseSunEntity = wi::ecs::INVALID_ENTITY;
+		wi::ecs::Entity showcaseWeatherEntity = wi::ecs::INVALID_ENTITY;
+		XMFLOAT3 sceneCameraTarget{};
+		float sceneCameraDistance = 1.0f;
+		bool sceneCameraKnown = false;
+		void UpdateSceneControl();
+		void ApplySceneLook(const openrepublic::scenectl::SceneLook& look);
 		float cameraSpeedScale = 1.0f;
 		std::string economyHost;
 		int economyPort = 0;

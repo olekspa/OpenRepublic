@@ -177,6 +177,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	float mapShowcaseCameraDistanceScale = 1.5f;
 	bool mapShowcaseCameraArgumentSeen = false;
 	float mapShowcaseSunElevationDegrees = std::numeric_limits<float>::quiet_NaN();
+	std::wstring scenePipeName;
 	float mapShowcaseSunYawOffsetDegrees = 0.0f;
 	double nmfCaptureZoom = 1.0;
 	bool nmfCaptureZoomArgumentSeen = false;
@@ -404,6 +405,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				mapShowcaseCameraYawDegrees = static_cast<float>(camera[0]);
 				mapShowcaseCameraElevationDegrees = static_cast<float>(camera[1]);
 				mapShowcaseCameraDistanceScale = static_cast<float>(camera[2]);
+			}
+			else if (std::wstring_view(arguments[i]) == L"--scene-pipe-name" && i + 1 < argumentCount)
+			{
+				// Runtime look/camera control pipe (requires --modern or an enhanced region view).
+				scenePipeName = arguments[++i];
+				const bool validName = !scenePipeName.empty() && scenePipeName.size() <= 64 &&
+					std::all_of(scenePipeName.begin(), scenePipeName.end(), [](wchar_t value) {
+						return (value >= L'a' && value <= L'z') || (value >= L'A' && value <= L'Z') ||
+							(value >= L'0' && value <= L'9') || value == L'.' || value == L'_' || value == L'-';
+					});
+				if (!validName)
+				{
+					scenePipeName.clear();
+					nmfCaptureArgumentError = "--scene-pipe-name requires 1-64 ASCII letters, digits, '.', '_' or '-'";
+				}
 			}
 			else if (std::wstring_view(arguments[i]) == L"--modern")
 			{
@@ -958,6 +974,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	const bool mapShowcaseCaptureMode = !mapShowcaseCapturePath.empty();
 	application.SetNmfCapturePaths(std::move(nmfCapturePaths));
 	application.SetMapShowcaseSun(mapShowcaseSunElevationDegrees, mapShowcaseSunYawOffsetDegrees);
+	application.SetScenePipeName(scenePipeName);
 	application.SetMapShowcaseCapture(std::move(mapShowcaseCapturePath), mapShowcaseEnhancedLook,
 		mapShowcaseCameraYawDegrees, mapShowcaseCameraElevationDegrees, mapShowcaseCameraDistanceScale);
 	application.SetTerrainProbePath(std::move(terrainProbePath));

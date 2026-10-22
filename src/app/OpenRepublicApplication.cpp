@@ -439,6 +439,115 @@ namespace openrepublic
 		localEconomyPipeName = std::move(name);
 	}
 
+	void OpenRepublicApplication::SetScenePipeName(std::wstring name)
+	{
+		scenePipeName = std::move(name);
+	}
+
+	void OpenRepublicApplication::ApplySceneLook(const openrepublic::scenectl::SceneLook& look)
+	{
+		constexpr float degreesToRadians = XM_PI / 180.0f;
+		const float cameraYawDegrees = static_cast<float>(look.camera.yawDegrees);
+		// Sun: same construction as the initial setup (direction from the scene toward the sun).
+		const float elevation = static_cast<float>(look.sunElevationDegrees) * degreesToRadians;
+		const float yaw = (cameraYawDegrees + static_cast<float>(look.sunYawOffsetDegrees)) * degreesToRadians;
+		const XMFLOAT3 sunDirection(std::sin(yaw) * std::cos(elevation), std::sin(elevation), std::cos(yaw) * std::cos(elevation));
+		const float warmth = std::clamp((static_cast<float>(look.sunElevationDegrees) - 4.0f) / 46.0f, 0.0f, 1.0f);
+		const XMFLOAT3 sunColor(1.0f, 0.66f + 0.30f * warmth, 0.46f + 0.46f * warmth);
+		if (wi::scene::TransformComponent* sunTransform = previewWorld.transforms.GetComponent(showcaseSunEntity))
+		{
+			sunTransform->ClearTransform();
+			const XMVECTOR worldUp = XMVectorSet(0, 1, 0, 0);
+			const XMVECTOR target = XMLoadFloat3(&sunDirection);
+			const XMVECTOR axis = XMVector3Normalize(XMVector3Cross(worldUp, target));
+			const float angle = std::acos(std::clamp(sunDirection.y, -1.0f, 1.0f));
+			sunTransform->Rotate(XMQuaternionRotationAxis(axis, angle));
+			sunTransform->UpdateTransform();
+		}
+		if (wi::scene::LightComponent* sun = previewWorld.lights.GetComponent(showcaseSunEntity))
+		{
+			sun->color = sunColor;
+			sun->SetCastShadow(look.shadowsEnabled);
+		}
+		if (wi::scene::WeatherComponent* weather = previewWorld.weathers.GetComponent(showcaseWeatherEntity))
+		{
+			weather->sunColor = sunColor;
+			weather->sunDirection = sunDirection;
+			weather->SetOceanEnabled(look.oceanEnabled && showcaseEnvironment.hasWater);
+			weather->volumetricCloudParameters.layerFirst.coverageAmount = static_cast<float>(0.15 + 0.7 * look.cloudCoverage);
+			weather->fogDensity = static_cast<float>(0.00035 + 0.003 * look.fogDensity);
+		}
+		renderPath->setExposure(static_cast<float>(look.exposure));
+		renderPath->setBloomEnabled(look.bloomEnabled);
+		renderPath->setAO(look.rtaoEnabled ? wi::RenderPath3D::AO_RTAO : (look.ssaoEnabled ? wi::RenderPath3D::AO_HBAO : wi::RenderPath3D::AO_DISABLED));
+		renderPath->setRaytracedReflectionsEnabled(look.rayTracedReflectionsEnabled);
+
+		// Camera: orbit the region centre like the showcase capture camera.
+		const float cameraElevation = static_cast<float>(look.camera.elevationDegrees) * degreesToRadians;
+		const float cameraYaw = cameraYawDegrees * degreesToRadians;
+		const float distance = sceneCameraDistance * static_cast<float>(look.camera.distanceFactor);
+		const XMFLOAT3 direction(std::sin(cameraYaw) * std::cos(cameraElevation), std::sin(cameraElevation), std::cos(cameraYaw) * std::cos(cameraElevation));
+		wi::scene::TransformComponent cameraTransform;
+		cameraTransform.Translate(XMFLOAT3(sceneCameraTarget.x + distance * direction.x,
+			sceneCameraTarget.y + distance * direction.y, sceneCameraTarget.z + distance * direction.z));
+		cameraTransform.RotateRollPitchYaw(XMFLOAT3(cameraElevation, std::atan2(-direction.x, -direction.z), 0.0f));
+		cameraTransform.UpdateTransform();
+		renderPath->camera->TransformCamera(cameraTransform);
+		renderPath->camera->UpdateCamera();
+	}
+
+	void OpenRepublicApplication::UpdateSceneControl()
+	{
+		if (scenePipeName.empty() || !mapRegionPreview || !sceneCameraKnown || renderPath == nullptr)
+		{
+			return;
+		}
+		if (!sceneEndpoint)
+		{
+			openrepublic::scenectl::SceneLook initial;
+			if (std::isfinite(mapShowcaseSunElevationDegrees))
+			{
+				initial.sunElevationDegrees = mapShowcaseSunElevationDegrees;
+				initial.sunYawOffsetDegrees = mapShowcaseSunYawOffsetDegrees;
+			}
+			initial.camera.yawDegrees = mapShowcaseCameraYawDegrees;
+			initial.camera.elevationDegrees = mapShowcaseCameraElevationDegrees;
+			initial.camera.distanceFactor = 1.0;
+			initial.exposure = renderPath->getExposure();
+			sceneControl = std::make_unique<openrepublic::scenectl::SceneControlState>(initial);
+			sceneEndpoint = std::make_unique<openrepublic::economy_host::LocalEconomyPipeEndpoint>(scenePipeName);
+			std::string endpointError;
+			if (!sceneEndpoint->Start(endpointError))
+			{
+				wilog("[OpenRepublic] Scene control endpoint failed: %s", endpointError.c_str());
+				sceneEndpoint.reset();
+				scenePipeName.clear();
+				return;
+			}
+			wilog("[OpenRepublic] Scene control endpoint listening (JSONL protocol v%u).", static_cast<unsigned>(openrepublic::scenectl::ProtocolVersion));
+		}
+		for (int handled = 0; handled < 8; ++handled)
+		{
+			openrepublic::economy_host::LocalEconomyPipeEndpoint::Request request;
+			if (!sceneEndpoint->TryPop(request))
+			{
+				break;
+			}
+			try
+			{
+				sceneEndpoint->Complete(request.token, sceneControl->Apply(request.line));
+			}
+			catch (...)
+			{
+				sceneEndpoint->Complete(request.token, {});
+			}
+		}
+		if (sceneControl->ConsumeDirty())
+		{
+			ApplySceneLook(sceneControl->CurrentLook());
+		}
+	}
+
 	void OpenRepublicApplication::SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees)
 	{
 		mapShowcaseSunElevationDegrees = elevationDegrees;
@@ -586,6 +695,7 @@ namespace openrepublic
 		const wi::ecs::Entity sun = previewWorld.Entity_CreateLight(
 			"OpenRepublic preview light", XMFLOAT3(0, 0, 0), previewSunColor,
 			4.0f, 100.0f, wi::scene::LightComponent::DIRECTIONAL);
+		showcaseSunEntity = sun;
 		if (wi::scene::TransformComponent* transform = previewWorld.transforms.GetComponent(sun))
 		{
 			if (mapShowcaseEnhancedLook)
@@ -802,6 +912,9 @@ namespace openrepublic
 				if (created)
 				{
 					nmfPreviewLoaded = true;
+					sceneCameraTarget = nmfPreviewCameraTarget;
+					sceneCameraDistance = nmfPreviewCameraDistance;
+					sceneCameraKnown = true;
 					uiNotice = description;
 					if (mapRegionPreview)
 					{
@@ -891,6 +1004,7 @@ namespace openrepublic
 					// synthetic scene keeps Wicked's default weather.
 					const wi::ecs::Entity weatherEntity = wi::ecs::CreateEntity();
 					previewWorld.names.Create(weatherEntity) = "OpenRepublic NMF preview weather";
+					showcaseWeatherEntity = weatherEntity;
 					wi::scene::WeatherComponent& weather = previewWorld.weathers.Create(weatherEntity);
 					weather.ambient = XMFLOAT3(0.55f, 0.55f, 0.6f);
 					weather.horizon = XMFLOAT3(0.55f, 0.6f, 0.7f);
@@ -1400,6 +1514,7 @@ namespace openrepublic
 		{
 			return;
 		}
+		UpdateSceneControl();
 		if (mapShowcaseEnhancedLook && mapRegionPreview)
 		{
 			// Frame-time telemetry for the modern look (logged every ~5 s of wall time).
