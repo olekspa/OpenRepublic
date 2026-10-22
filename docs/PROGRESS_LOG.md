@@ -26,6 +26,8 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 
 - **~05:40 EDT [09:40 UTC]** Merged ECON-REGION (`ImportRegionIntoWorld`): a map region of placements can become an economy World. Client CTest 26/26. Roads are not yet imported into the economy world (graph decoded, rasterization pending).
 
+- **~06:30 EDT [10:30 UTC]** `ImportRoadsIntoWorld` (4-connected raster of the decoded road graph + BFS connectors): on a real save region all 10 catalog-known buildings connect and a haul order mine -> processing plant delivers on the real layout.
+
 ## Operating notes
 
 - Launching the game: `steam.exe -applaunch 784150` works; running the game launcher exe directly or `steam://rungameid` fails (reported by the project owner on 2026-10-21). The game and saves remain read-only research sources per `AGENTS.md`.

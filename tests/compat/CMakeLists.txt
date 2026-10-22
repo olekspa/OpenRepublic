@@ -7,3 +7,8 @@ add_executable(OpenRepublicRegionImportTests region_import_tests.cpp)
 target_link_libraries(OpenRepublicRegionImportTests PRIVATE OpenRepublicCompat)
 target_compile_features(OpenRepublicRegionImportTests PRIVATE cxx_std_17)
 add_test(NAME CompatRegionImport COMMAND OpenRepublicRegionImportTests)
+
+add_executable(OpenRepublicRegionRoadsTests region_roads_tests.cpp)
+target_link_libraries(OpenRepublicRegionRoadsTests PRIVATE OpenRepublicCompat)
+target_compile_features(OpenRepublicRegionRoadsTests PRIVATE cxx_std_17)
+add_test(NAME CompatRegionRoads COMMAND OpenRepublicRegionRoadsTests)
