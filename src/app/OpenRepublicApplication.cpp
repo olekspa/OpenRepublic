@@ -1617,7 +1617,9 @@ namespace openrepublic
 						[this] { QueueNativeRemoval(); },
 						[this] { QueueNativeOrderChange(true); },
 						[this] { QueueNativeOrderChange(false); },
-						[this] { QueueNativeRoadToggle(); } });
+						[this] { QueueNativeRoadToggle(); },
+						[this] { QueueNativeUtilityConnection(true); },
+						[this] { QueueNativeUtilityConnection(false); } });
 					nativeToolsReady = true;
 					RefreshNativeHaulChoices();
 				}
@@ -1636,7 +1638,9 @@ namespace openrepublic
 					nativeEconomyTools.Create(gui, regionEconomyWorld->GetCatalog(), {
 						{}, {}, {}, {},
 						[this] { QueueNativeOrderChange(true); },
-						[this] { QueueNativeOrderChange(false); }, {} }, false);
+						[this] { QueueNativeOrderChange(false); }, {},
+						[this] { QueueNativeUtilityConnection(true); },
+						[this] { QueueNativeUtilityConnection(false); } }, false);
 					nativeToolsReady = true;
 					RefreshNativeHaulChoices();
 				}
@@ -2125,6 +2129,7 @@ namespace openrepublic
 			if (!uiNotice.empty()) compact << uiNotice << "\n";
 			compact << "Tick " << snapshot.tick << " | " << snapshot.buildings.size() << " buildings | "
 				<< snapshot.roads.size() << " roads | " << snapshot.orders.size() << " hauls";
+			if (!snapshot.utilityConnections.empty()) compact << " | " << snapshot.utilityConnections.size() << " utility links";
 			if (nativeEconomyCheckpointMode) compact << (nativeEconomyRunning ? " | running" : " | paused");
 			if (selectedRegionBuildingEntity != wi::ecs::INVALID_ENTITY)
 			{
@@ -2276,7 +2281,8 @@ namespace openrepublic
 		status << regionEconomyDescription << "\nApp-owned economy: tick "
 			<< regionEconomySnapshot->tick << ", " << running << "/"
 			<< regionEconomySnapshot->buildings.size() << " buildings running, "
-			<< regionEconomySnapshot->vehicles.size() << " trucks";
+			<< regionEconomySnapshot->vehicles.size() << " trucks, "
+			<< regionEconomySnapshot->utilityConnections.size() << " utility links";
 		if (!nativeEconomyCheckpointMode)
 			status << ", " << regionEconomyImport.placedSourceBuildings.size() << " exact placement bindings";
 		regionWorldStatus = status.str();
@@ -2566,6 +2572,28 @@ namespace openrepublic
 		}
 		TrackNativeSubmission(regionEconomyApi->SetRoadEnabled(snapshot.revision, id, !road->enabled),
 			std::string(road->enabled ? "disable road #" : "enable road #") + std::to_string(id));
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::QueueNativeUtilityConnection(bool connect)
+	{
+		auto* world = ActiveOwnedEconomyWorld();
+		if (!world || !CanQueueNativeCommand()) return;
+		const auto* resource = world->GetCatalog().Resource(nativeEconomyTools.SelectedUtilityResource());
+		if (!regionHaulSourceId || !selectedRegionBuildingId ||
+			*regionHaulSourceId == *selectedRegionBuildingId || !resource || !resource->utility)
+		{
+			uiNotice = "Set a source, select a different building, and choose a utility resource.";
+			UpdateRegionStatus();
+			return;
+		}
+		const auto snapshot = world->Snapshot();
+		const auto source = static_cast<economy::BuildingId>(*regionHaulSourceId);
+		const auto destination = static_cast<economy::BuildingId>(*selectedRegionBuildingId);
+		TrackNativeSubmission(connect
+			? regionEconomyApi->ConnectUtility(snapshot.revision, resource->name, source, destination)
+			: regionEconomyApi->DisconnectUtility(snapshot.revision, resource->name, source, destination),
+			std::string(connect ? "connect " : "disconnect ") + resource->name + " utility");
 		UpdateRegionStatus();
 	}
 

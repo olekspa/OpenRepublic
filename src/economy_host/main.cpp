@@ -18,6 +18,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -46,12 +47,14 @@ void PrintUsage() {
   std::cerr << "Usage: OpenRepublicEconomyHost [--role observer|controller] [--catalog file]\n"
             << "       [--rules <economy_rules.lua>] [--region <map dir> --content-root <dir> [--center N] [--radius M]]\n"
             << "       [--storage-profile <file> (only with --region)]\n"
+            << "       [--utility-resource <name> (repeatable, only with --region)]\n"
             << "       [--role observer|controller] --checkpoint <file>\n"
             << "Reads protocolVersion 0 JSONL requests from stdin and writes responses to stdout.\n"
             << "--region imports a local WRSR map package's placements and roads into the world\n"
             << "(the catalog is built from <content-root>/buildings_types; local content only).\n"
-            << "--checkpoint restores a bounded native simulation checkpoint; do not combine it with catalog, rules, region, or storage-profile options.\n"
-            << "--storage-profile loads OpenRepublic-authored storage factors for a region import.\n";
+            << "--checkpoint restores a bounded native simulation checkpoint; do not combine it with catalog, rules, region, storage-profile, or utility-resource options.\n"
+            << "--storage-profile loads OpenRepublic-authored storage factors for a region import.\n"
+            << "--utility-resource marks a discovered region catalog resource as supplied by utility connections.\n";
 }
 
 bool ReadFile(const std::filesystem::path &path, std::string &text) {
@@ -108,6 +111,7 @@ bool ApplyRules(const std::filesystem::path &rulesPath, economy::Catalog &catalo
 bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::filesystem::path &mapDir,
                       long centerIndex, double radius, const std::filesystem::path &rulesPath,
                       const compat::StorageCapacityFactors &storageCapacityFactors,
+                      const std::set<std::string> &utilityResources,
                       economy::Catalog &catalog,
                       std::unique_ptr<economy::World> &world, std::string &description,
                       std::string &regionInfoJson, std::string &error) {
@@ -124,6 +128,7 @@ bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::files
   compat::ImportReport catalogReport;
   compat::CatalogImportOptions catalogOptions;
   catalogOptions.storageCapacityFactors = storageCapacityFactors;
+  catalogOptions.utilityResources = utilityResources;
   if (definitions.empty() ||
       !compat::ImportCatalogFromDefinitions(definitions, catalogOptions, catalog, catalogReport)) {
     error = "could not build a catalog from <content-root>/buildings_types";
@@ -195,6 +200,7 @@ int main(int argc, char **argv) {
   bool centerSpecified = false;
   bool radiusSpecified = false;
   bool storageProfileSpecified = false;
+  std::set<std::string> utilityResources;
   std::filesystem::path regionDir;
   std::filesystem::path contentRoot;
   std::filesystem::path rulesPath;
@@ -252,6 +258,19 @@ int main(int argc, char **argv) {
         PrintUsage();
         return 2;
       }
+    } else if (arg == "--utility-resource") {
+      if (i + 1 >= argc || std::string(argv[i + 1]).rfind("--", 0) == 0 ||
+          std::string(argv[i + 1]).empty()) {
+        std::cerr << "--utility-resource needs a non-empty resource name.\n";
+        PrintUsage();
+        return 2;
+      }
+      const std::string utilityName(argv[++i]);
+      if (!utilityResources.insert(utilityName).second) {
+        std::cerr << "--utility-resource may not repeat the same resource name.\n";
+        PrintUsage();
+        return 2;
+      }
     } else if (arg == "--center" && i + 1 < argc) {
       centerSpecified = true;
       centerIndex = std::strtol(argv[++i], nullptr, 10);
@@ -270,8 +289,13 @@ int main(int argc, char **argv) {
 
   if (checkpointSpecified &&
       (catalogSpecified || rulesSpecified || regionSpecified || contentRootSpecified ||
-       centerSpecified || radiusSpecified || storageProfileSpecified)) {
-    std::cerr << "--checkpoint cannot be combined with explicit catalog, rules, region, content-root, center, radius, or storage-profile options.\n";
+       centerSpecified || radiusSpecified || storageProfileSpecified || !utilityResources.empty())) {
+    std::cerr << "--checkpoint cannot be combined with explicit catalog, rules, region, content-root, center, radius, storage-profile, or utility-resource options.\n";
+    PrintUsage();
+    return 2;
+  }
+  if (!utilityResources.empty() && (!regionSpecified || catalogSpecified || checkpointSpecified)) {
+    std::cerr << "--utility-resource requires --region and cannot be combined with --catalog or --checkpoint.\n";
     PrintUsage();
     return 2;
   }
@@ -346,7 +370,7 @@ int main(int argc, char **argv) {
     }
     std::string error;
     if (!BuildRegionWorld(contentRoot, regionDir, centerIndex, radius, rulesPath,
-                          storageCapacityFactors, catalog, regionWorld, regionDescription,
+                          storageCapacityFactors, utilityResources, catalog, regionWorld, regionDescription,
                           regionInfoJson, error)) {
       std::cerr << "Region import failed: " << error << "\n";
       return 2;

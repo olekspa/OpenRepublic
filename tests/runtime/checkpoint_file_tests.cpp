@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <chrono>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -14,6 +15,20 @@ int failures = 0;
 void Check(bool value, const char *message) {
     if (!value) { ++failures; std::cerr << "FAIL: " << message << '\n'; }
 }
+fs::path MakeTempDirectory() {
+    const auto base = fs::temp_directory_path();
+    const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    for (int attempt = 0; attempt < 128; ++attempt) {
+        const auto root = base / ("OpenRepublic-checkpoint-file-tests-" +
+                                  std::to_string(nonce) + "-" + std::to_string(attempt));
+        std::error_code error;
+        if (fs::create_directory(root, error))
+            return root;
+        if (error && error != std::errc::file_exists)
+            break;
+    }
+    return {};
+}
 std::string Read(const fs::path &path) {
     std::ifstream in(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
@@ -21,10 +36,11 @@ std::string Read(const fs::path &path) {
 }
 
 int main() {
-    const auto root = fs::temp_directory_path() / fs::path("OpenRepublic checkpoint file tests");
+    const auto root = MakeTempDirectory();
+    Check(!root.empty(), "create unique temporary directory for checkpoint fixtures");
+    if (root.empty())
+        return 1;
     std::error_code ec;
-    fs::remove_all(root, ec);
-    fs::create_directories(root);
     auto catalog = economy::MakeSyntheticCatalog();
     economy::World world(catalog, 8, 8);
     std::string payload;
@@ -63,5 +79,6 @@ int main() {
     for (const auto &entry : fs::directory_iterator(root))
         Check(entry.path() == unicode || entry.path() == invalid, "no temporary file remains");
     fs::remove_all(root, ec);
+    Check(!ec, "remove only this test process's temporary directory");
     return failures ? 1 : 0;
 }

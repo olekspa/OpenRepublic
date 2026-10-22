@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,6 +22,9 @@ struct CatalogImportOptions {
     // binary64 before capacity is rounded upward to a whole micro-unit.
     // Empty preserves fallback.
     std::map<std::pair<std::string, std::string>, double> storageCapacityFactors;
+    // Resources supplied by utility connections. Each name must also occur in
+    // the parsed building definitions.
+    std::set<std::string> utilityResources;
 };
 
 struct SkippedBuilding {
@@ -41,6 +45,8 @@ struct ImportReport {
     std::size_t storageEntriesUnmapped{};
     std::size_t ambiguousStorageResources{};
     std::size_t storageOnlyBuildingsImported{};
+    std::size_t utilityResourcesImported{};
+    std::size_t utilityStorageEntriesIgnored{};
     std::vector<SkippedBuilding> skippedBuildings;
     std::vector<std::string> warnings;
     std::vector<std::string> storageDiagnostics;

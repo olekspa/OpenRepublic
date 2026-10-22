@@ -23,6 +23,17 @@ namespace openrepublic::preview
 			return std::isfinite(out);
 		}
 
+		bool ToPreciseFloat(double value, float& out) noexcept
+		{
+			if (!ToFloat(value, out) || std::abs(value - static_cast<double>(out)) > 0.0625)
+				return false;
+			const float lower = std::nextafter(out, -std::numeric_limits<float>::infinity());
+			const float upper = std::nextafter(out, std::numeric_limits<float>::infinity());
+			const double ulp = std::max(std::abs(static_cast<double>(out) - lower),
+				std::abs(static_cast<double>(upper) - out));
+			return std::isfinite(ulp) && ulp <= 0.125;
+		}
+
 		XMFLOAT4 BuildingColor(economy::BuildingTypeId type)
 		{
 			// A stable debug palette keyed only by the native type ID. It is a visual
@@ -33,6 +44,17 @@ namespace openrepublic::preview
 				XMFLOAT4(0.44f, 0.63f, 0.51f, 1.0f), XMFLOAT4(0.71f, 0.58f, 0.39f, 1.0f),
 			};
 			return palette[type % (sizeof(palette) / sizeof(palette[0]))];
+		}
+
+		XMFLOAT4 UtilityColor(economy::ResourceId resource)
+		{
+			// OpenRepublic-authored debug colors, keyed by native resource ID.
+			static const XMFLOAT4 palette[] = {
+				XMFLOAT4(0.18f, 0.78f, 0.95f, 1.0f), XMFLOAT4(0.96f, 0.76f, 0.18f, 1.0f),
+				XMFLOAT4(0.48f, 0.92f, 0.45f, 1.0f), XMFLOAT4(0.89f, 0.42f, 0.93f, 1.0f),
+				XMFLOAT4(0.98f, 0.48f, 0.26f, 1.0f), XMFLOAT4(0.44f, 0.57f, 1.0f, 1.0f),
+			};
+			return palette[resource % (sizeof(palette) / sizeof(palette[0]))];
 		}
 
 		bool SetMaterialColor(wi::scene::Scene& scene, wi::ecs::Entity entity, const XMFLOAT4& color)
@@ -96,6 +118,37 @@ namespace openrepublic::preview
 			}
 			transform->Scale(XMFLOAT3(halfWidth, roadHalfHeight, halfDepth));
 			transform->Translate(XMFLOAT3(x, roadHalfHeight, z));
+			return entity;
+		}
+
+		wi::ecs::Entity CreateUtilityConnection(wi::scene::Scene& scene, economy::ResourceId resource,
+			economy::BuildingId a, economy::BuildingId b, double centerX, double centerY, double centerZ,
+			double halfLength, double yaw)
+		{
+			const wi::ecs::Entity entity = scene.Entity_CreateCube(
+				"OpenRepublic native utility connection " + std::to_string(resource) + " " +
+				std::to_string(a) + "-" + std::to_string(b));
+			if (entity == wi::ecs::INVALID_ENTITY)
+				return wi::ecs::INVALID_ENTITY;
+
+			float x, y, z, halfLengthFloat;
+			if (!ToFloat(centerX, x) || !ToFloat(centerY, y) || !ToFloat(centerZ, z) ||
+				!ToFloat(halfLength, halfLengthFloat))
+			{
+				scene.Entity_Remove(entity);
+				return wi::ecs::INVALID_ENTITY;
+			}
+			wi::scene::TransformComponent* transform = scene.transforms.GetComponent(entity);
+			if (transform == nullptr || !SetMaterialColor(scene, entity, UtilityColor(resource)))
+			{
+				scene.Entity_Remove(entity);
+				return wi::ecs::INVALID_ENTITY;
+			}
+			constexpr float halfThickness = 0.045f;
+			transform->Scale(XMFLOAT3(halfLengthFloat, halfThickness, halfThickness));
+			transform->Rotate(XMQuaternionRotationAxis(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f),
+				static_cast<float>(yaw)));
+			transform->Translate(XMFLOAT3(x, y, z));
 			return entity;
 		}
 
@@ -251,6 +304,8 @@ namespace openrepublic::preview
 		struct NewRoad { economy::RoadId id; RoadVisual visual; };
 		std::vector<NewBuilding> addedBuildings;
 		std::vector<NewRoad> addedRoads;
+		std::vector<UtilityVisual> desiredUtilities;
+		std::vector<UtilityVisual> addedUtilities;
 		std::vector<wi::ecs::Entity> createdEntities;
 		auto sameBuilding = [](const BuildingVisual& visual, const BuildingPrimitive& primitive)
 		{
@@ -262,6 +317,12 @@ namespace openrepublic::preview
 		{
 			return visual.centerX == primitive.centerX && visual.centerZ == primitive.centerZ &&
 				visual.width == primitive.width && visual.depth == primitive.depth && visual.enabled == primitive.enabled;
+		};
+		auto sameUtilityGeometry = [](const UtilityVisual& lhs, const UtilityVisual& rhs)
+		{
+			return lhs.resource == rhs.resource && lhs.a == rhs.a && lhs.b == rhs.b &&
+				lhs.centerX == rhs.centerX && lhs.centerZ == rhs.centerZ && lhs.centerY == rhs.centerY &&
+				lhs.halfLength == rhs.halfLength && lhs.yaw == rhs.yaw;
 		};
 		auto rollback = [&]()
 		{
@@ -297,6 +358,83 @@ namespace openrepublic::preview
 			createdEntities.push_back(entity);
 			addedRoads.push_back({ primitive.roadId, { entity, primitive.centerX, primitive.centerZ,
 				primitive.width, primitive.depth, primitive.enabled } });
+		}
+
+		std::unordered_map<economy::BuildingId, const BuildingPrimitive*> buildingGeometry;
+		buildingGeometry.reserve(plan.buildings.size());
+		for (const BuildingPrimitive& primitive : plan.buildings)
+			buildingGeometry.emplace(primitive.buildingId, &primitive);
+		std::vector<economy::UtilityConnectionSnapshot> sortedConnections = snapshot.utilityConnections;
+		for (economy::UtilityConnectionSnapshot& connection : sortedConnections)
+			if (connection.b < connection.a) std::swap(connection.a, connection.b);
+		std::sort(sortedConnections.begin(), sortedConnections.end(), [](const auto& lhs, const auto& rhs)
+		{
+			if (lhs.resource != rhs.resource) return lhs.resource < rhs.resource;
+			if (lhs.a != rhs.a) return lhs.a < rhs.a;
+			return lhs.b < rhs.b;
+		});
+		for (std::size_t i = 0; i < sortedConnections.size(); ++i)
+		{
+			const economy::UtilityConnectionSnapshot& connection = sortedConnections[i];
+			if (connection.a == connection.b || (i > 0 && sortedConnections[i - 1].resource == connection.resource &&
+				sortedConnections[i - 1].a == connection.a && sortedConnections[i - 1].b == connection.b))
+			{
+				rollback();
+				error = "native economy snapshot contains an invalid or duplicate utility connection";
+				return false;
+			}
+			const economy::ResourceDef* resource = catalog.Resource(connection.resource);
+			const auto a = buildingGeometry.find(connection.a);
+			const auto b = buildingGeometry.find(connection.b);
+			if (resource == nullptr || !resource->utility || a == buildingGeometry.end() || b == buildingGeometry.end())
+			{
+				rollback();
+				error = "native economy utility connection does not resolve to a utility resource and live buildings";
+				return false;
+			}
+			const double dx = b->second->centerX - a->second->centerX;
+			const double dz = b->second->centerZ - a->second->centerZ;
+			const double length = std::hypot(dx, dz);
+			const double centerX = a->second->centerX + dx * 0.5;
+			const double centerZ = a->second->centerZ + dz * 0.5;
+			const double centerY = std::max(a->second->height, b->second->height) + 0.25;
+			const double yaw = std::atan2(-dz, dx);
+			float ignored;
+			if (!std::isfinite(length) || length <= 0.0 || !ToPreciseFloat(centerX, ignored) ||
+				!ToPreciseFloat(centerZ, ignored) || !ToPreciseFloat(centerY, ignored) ||
+				!ToPreciseFloat(length * 0.5, ignored) || !ToFloat(yaw, ignored))
+			{
+				rollback();
+				error = "native utility connection exceeds the renderer's finite float range";
+				return false;
+			}
+			desiredUtilities.push_back({ wi::ecs::INVALID_ENTITY, connection.resource, connection.a, connection.b,
+				centerX, centerZ, centerY, length * 0.5, yaw });
+		}
+		bool utilityGeometryChanged = desiredUtilities.size() != utilityConnections_.size();
+		if (!utilityGeometryChanged)
+			for (std::size_t i = 0; i < desiredUtilities.size(); ++i)
+				if (!sameUtilityGeometry(desiredUtilities[i], utilityConnections_[i]))
+				{
+					utilityGeometryChanged = true;
+					break;
+				}
+		if (utilityGeometryChanged)
+		{
+			addedUtilities.reserve(desiredUtilities.size());
+			for (UtilityVisual& visual : desiredUtilities)
+			{
+				visual.entity = CreateUtilityConnection(scene, visual.resource, visual.a, visual.b,
+					visual.centerX, visual.centerY, visual.centerZ, visual.halfLength, visual.yaw);
+				if (visual.entity == wi::ecs::INVALID_ENTITY)
+				{
+					rollback();
+					error = "Wicked Engine could not create a native utility connection primitive";
+					return false;
+				}
+				createdEntities.push_back(visual.entity);
+				addedUtilities.push_back(visual);
+			}
 		}
 
 		wi::ecs::Entity newGround = wi::ecs::INVALID_ENTITY;
@@ -381,6 +519,11 @@ namespace openrepublic::preview
 				it = roads_.erase(it);
 			}
 			else ++it;
+		}
+		if (utilityGeometryChanged)
+		{
+			for (const UtilityVisual& visual : utilityConnections_) scene.Entity_Remove(visual.entity);
+			utilityConnections_ = std::move(addedUtilities);
 		}
 		for (NewBuilding& item : addedBuildings)
 		{

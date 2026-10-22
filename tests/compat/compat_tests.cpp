@@ -422,5 +422,94 @@ int main() {
               noProfileCatalog.BuildingTypes().size() == 1 &&
               noProfileCatalog.BuildingTypes()[0].storage[0].capacity == 1000,
           "without a profile the legacy rate-based storage behavior remains active");
+
+    content::BuildingDefinition powerConsumer;
+    powerConsumer.consumptionPerSecond.push_back(Rate("electricity", 0.01));
+    powerConsumer.storage.push_back({"$STORAGE_IMPORT_SPECIAL", "RESOURCE_TRANSPORT_COVERED",
+                                     100.0, "electricity", 22});
+    content::BuildingDefinition utilityGenerator;
+    utilityGenerator.consumption.push_back(Rate("power", 2.0));
+    utilityGenerator.production.push_back(Rate("power", 5.0));
+    content::BuildingDefinition materialProducer;
+    materialProducer.production.push_back(Rate("food", 1.0));
+    std::map<std::string, content::BuildingDefinition> utilityDefinitions{
+        {"material_producer", materialProducer}, {"power_consumer", powerConsumer},
+        {"utility_generator", utilityGenerator}};
+    compat::CatalogImportOptions utilityOptions;
+    utilityOptions.utilityResources = {"electricity", "power"};
+    economy::Catalog utilityCatalog;
+    compat::ImportReport utilityReport;
+    Check(compat::ImportCatalogFromDefinitions(utilityDefinitions, utilityOptions,
+                                                utilityCatalog, utilityReport),
+          "utility-marked catalog import");
+    economy::ResourceId electricityResource{}, powerResource{}, foodResource{};
+    utilityCatalog.FindResource("electricity", electricityResource);
+    utilityCatalog.FindResource("power", powerResource);
+    utilityCatalog.FindResource("food", foodResource);
+    const auto *electricityDefinition = utilityCatalog.Resource(electricityResource);
+    const auto *powerDefinition = utilityCatalog.Resource(powerResource);
+    economy::BuildingTypeId powerConsumerId{}, materialProducerId{}, utilityGeneratorId{};
+    utilityCatalog.FindBuildingType("power_consumer", powerConsumerId);
+    utilityCatalog.FindBuildingType("material_producer", materialProducerId);
+    const bool generatorWasImported =
+        utilityCatalog.FindBuildingType("utility_generator", utilityGeneratorId);
+    const auto *powerConsumerType = utilityCatalog.BuildingType(powerConsumerId);
+    const auto *materialProducerType = utilityCatalog.BuildingType(materialProducerId);
+    Check(electricityDefinition && electricityDefinition->utility &&
+              powerDefinition && powerDefinition->utility &&
+              utilityReport.utilityResourcesImported == 2,
+          "requested discovered resources are created as utilities");
+    Check(powerConsumerType && powerConsumerType->storage.empty() &&
+              powerConsumerType->recipes.size() == 1 &&
+              powerConsumerType->recipes[0].inputs.size() == 1 &&
+              powerConsumerType->recipes[0].inputs[0].amount == 25000,
+          "utility recipe rate conversion remains unchanged while utility storage is omitted");
+    Check(utilityReport.utilityStorageEntriesIgnored == 1 &&
+              std::any_of(utilityReport.storageDiagnostics.begin(),
+                          utilityReport.storageDiagnostics.end(),
+                          [](const std::string &diagnostic) {
+                              return diagnostic.find("utility resource 'electricity' ignored") !=
+                                     std::string::npos;
+                          }),
+          "explicit storage rows for utilities are diagnosed and ignored");
+    Check(!generatorWasImported && materialProducerType &&
+              materialProducerType->storage.size() == 1 &&
+              utilityReport.skippedBuildings.size() == 1 &&
+              utilityReport.skippedBuildings[0].name == "utility_generator",
+          "utility generator chains are rejected before the building is added");
+    economy::Catalog utilityRoundTrip;
+    economy::ParseError utilityParseError;
+    const auto utilityCatalogText = economy::WriteCatalogText(utilityCatalog);
+    Check(economy::ParseCatalogText(utilityCatalogText, utilityRoundTrip, utilityParseError) &&
+              utilityRoundTrip.Resources().size() == utilityCatalog.Resources().size() &&
+              utilityRoundTrip.Resources()[electricityResource].utility,
+          "canonical catalog round-trip preserves the utility resource kind");
+
+    economy::Catalog unmarkedUtilityCatalog;
+    compat::ImportReport unmarkedUtilityReport;
+    Check(compat::ImportCatalogFromDefinitions({{"power_consumer", powerConsumer}}, options,
+                                                unmarkedUtilityCatalog, unmarkedUtilityReport),
+          "unmarked electricity keeps legacy material catalog import");
+    economy::ResourceId unmarkedElectricity{};
+    unmarkedUtilityCatalog.FindResource("electricity", unmarkedElectricity);
+    economy::BuildingTypeId unmarkedConsumerId{};
+    unmarkedUtilityCatalog.FindBuildingType("power_consumer", unmarkedConsumerId);
+    const auto *unmarkedConsumer = unmarkedUtilityCatalog.BuildingType(unmarkedConsumerId);
+    Check(unmarkedUtilityCatalog.Resource(unmarkedElectricity) &&
+              !unmarkedUtilityCatalog.Resource(unmarkedElectricity)->utility &&
+              unmarkedConsumer && unmarkedConsumer->storage.size() == 1 &&
+              unmarkedUtilityReport.utilityResourcesImported == 0,
+          "unmarked electricity retains ordinary storage behavior");
+
+    economy::Catalog unchangedForUtilityError = catalog;
+    compat::CatalogImportOptions unknownUtilityOptions;
+    unknownUtilityOptions.utilityResources.insert("eletricity_typo");
+    compat::ImportReport unknownUtilityReport;
+    Check(!compat::ImportCatalogFromDefinitions({{"power_consumer", powerConsumer}},
+                                                 unknownUtilityOptions,
+                                                 unchangedForUtilityError,
+                                                 unknownUtilityReport) &&
+              economy::WriteCatalogText(unchangedForUtilityError) == firstText,
+          "unknown utility resource option fails without changing the output catalog");
     return failures == 0 ? 0 : 1;
 }

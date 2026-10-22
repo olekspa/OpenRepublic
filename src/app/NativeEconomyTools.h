@@ -28,6 +28,8 @@ namespace openrepublic::preview
 			std::function<void()> retargetOrder;
 			std::function<void()> cancelOrder;
 			std::function<void()> toggleRoad;
+			std::function<void()> connectUtility;
+			std::function<void()> disconnectUtility;
 		};
 
 		void Create(wi::gui::GUI& gui, const economy::Catalog& catalog, Callbacks callbacks,
@@ -51,6 +53,7 @@ namespace openrepublic::preview
 
 		economy::BuildingTypeId SelectedBuildingType() const noexcept;
 		economy::ResourceId SelectedResource() const noexcept;
+		economy::ResourceId SelectedUtilityResource() const noexcept;
 		economy::VehicleTypeId SelectedVehicleType() const noexcept;
 		economy::OrderId SelectedOrder() const noexcept;
 		economy::RoadId SelectedRoad() const noexcept;
@@ -74,6 +77,7 @@ namespace openrepublic::preview
 		wi::gui::ComboBox vehicleType_;
 		wi::gui::ComboBox order_;
 		wi::gui::ComboBox roadChoice_;
+		wi::gui::ComboBox utilityResource_;
 		wi::gui::Button place_;
 		wi::gui::Button road_;
 		wi::gui::Button cancel_;
@@ -81,9 +85,12 @@ namespace openrepublic::preview
 		wi::gui::Button retargetOrder_;
 		wi::gui::Button cancelOrder_;
 		wi::gui::Button toggleRoad_;
+		wi::gui::Button connectUtility_;
+		wi::gui::Button disconnectUtility_;
 		std::vector<economy::ResourceId> haulResources_;
 		std::vector<economy::OrderId> orderIds_;
 		std::vector<economy::RoadId> roadIds_;
+		bool hasUtilityResources_ = false;
 		bool haveHaulResources_ = false;
 		bool haveOrderRefresh_ = false;
 		bool haveRoadRefresh_ = false;

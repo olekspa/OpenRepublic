@@ -23,7 +23,8 @@ constexpr std::uint32_t MaxStepTicks = 100000;
 enum class Action : std::uint8_t {
     QueryWorld = 1, QueryCatalog, ExplainBuilding, Step, PlaceBuilding, RemoveBuilding,
     BuildRoad, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, CancelHaulOrder,
-    PollCommand, ReadEvents, RetargetHaulOrder, ExportCheckpoint, CompactCommandHistory
+    PollCommand, ReadEvents, RetargetHaulOrder, ExportCheckpoint, CompactCommandHistory,
+    ConnectUtility, DisconnectUtility
 };
 struct Permissions {
     bool query{true};
@@ -42,6 +43,7 @@ enum class ErrorCode : std::uint8_t {
 struct ResourceInfo {
     economy::ResourceId id{};
     std::string name;
+    bool utility{};
 };
 struct StorageInfo {
     std::string resource;
@@ -113,6 +115,10 @@ struct OrderView {
     std::uint64_t cargo{};
     economy::Cell vehicleCell{};
 };
+struct UtilityConnectionView {
+    std::string resource;
+    economy::BuildingId a{}, b{};
+};
 struct WorldView {
     std::uint32_t apiVersion{ApiVersion};
     std::uint64_t revision{}, tick{}, stateHash{};
@@ -120,6 +126,7 @@ struct WorldView {
     std::vector<RoadView> roads;
     std::vector<VehicleView> vehicles;
     std::vector<OrderView> orders;
+    std::vector<UtilityConnectionView> utilityConnections;
     economy::CommandHistorySnapshot commandHistory;
 };
 struct WorldQuery {
@@ -130,12 +137,13 @@ struct EntityPage {
     std::uint64_t revision{};
     std::size_t offset{}, nextOffset{}, total{};
     bool hasMore{};
-    // A page slices one collection selected by kind: buildings, roads, vehicles, orders.
+    // A page slices one collection selected by kind: buildings, roads, vehicles, orders, utility_connections.
     std::string kind;
     std::vector<BuildingView> buildings;
     std::vector<RoadView> roads;
     std::vector<VehicleView> vehicles;
     std::vector<OrderView> orders;
+    std::vector<UtilityConnectionView> utilityConnections;
 };
 struct PageQuery {
     ErrorCode error{ErrorCode::None};
@@ -233,6 +241,12 @@ public:
     /** Queues retargeting of a haul order after checking the expected revision. */
     Submission RetargetHaulOrder(std::uint64_t revision, economy::OrderId id,
         economy::BuildingId destination);
+    /** Queues a connection between buildings for a catalog resource marked as a utility. */
+    Submission ConnectUtility(std::uint64_t revision, const std::string& resource,
+        economy::BuildingId a, economy::BuildingId b);
+    /** Queues removal of an existing connection for a catalog utility resource. */
+    Submission DisconnectUtility(std::uint64_t revision, const std::string& resource,
+        economy::BuildingId a, economy::BuildingId b);
     /** Returns the queued or terminal simulation result associated with a command handle.
      *  For an expired API handle whose native ID mapping was retired, result.commandId is 0. */
     PollResult PollCommand(std::uint64_t handle) const;

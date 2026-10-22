@@ -1,5 +1,12 @@
 # Experimental local economy catalog adapter
 
+**Utility extension:** repeatable `--utility-resource <exact-name>` options mark
+existing definition resources as native utilities in app-owned desktop/host
+regions. Their recipe rates remain, but they receive no inventory/storage or
+truck transport. Supply requires an actual connected generator. This explicit
+authored policy does not restore original stock/topology or establish original
+units. See [utility networks](UTILITY_NETWORKS.md).
+
 `OpenRepublicCompat` converts parsed `content::BuildingDefinition` values into
 an `economy::Catalog`. It is an experimental local compatibility adapter; it
 does not load game files itself and makes no claim of complete WRSR economy

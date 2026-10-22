@@ -8,8 +8,10 @@
 #include <map>
 #include <memory>
 #include <sstream>
+#include <set>
 #include <stdexcept>
 #include <type_traits>
+#include <tuple>
 #include <utility>
 
 namespace openrepublic::economy {
@@ -189,7 +191,9 @@ enum class Kind : std::uint8_t {
     BuildingEnabled,
     Haul,
     Cancel,
-    Retarget
+    Retarget,
+    ConnectUtility,
+    DisconnectUtility
 };
 struct Pending {
     CommandId id{};
@@ -203,6 +207,8 @@ struct Pending {
     ResourceId resource{};
     VehicleTypeId vehicleType{};
     OrderId order{};
+    // Utility endpoints are stored in source/destination so old command-record
+    // layout stays canonical and the two new command kinds need no new fields.
 };
 struct State {
     const Catalog *catalog{};
@@ -218,6 +224,8 @@ struct State {
     std::vector<Road> roads;
     std::vector<Vehicle> vehicles;
     std::vector<Order> orders;
+    std::vector<UtilityConnectionSnapshot> utilityConnections;
+    std::set<CommandId> utilityCommands;
     std::vector<Pending> pending;
     std::map<CommandId, CommandResult> results;
 };
@@ -511,6 +519,12 @@ void Apply(State &s, const Pending &p) {
                 reject(CommandFailure::ReferencedByOrder, "building is referenced by an order");
                 return;
             }
+        for (const auto &connection : s.utilityConnections)
+            if (connection.a == p.building || connection.b == p.building) {
+                reject(CommandFailure::ReferencedByUtilityConnection,
+                       "building is referenced by a utility connection");
+                return;
+            }
         s.buildings.erase(std::remove_if(s.buildings.begin(), s.buildings.end(),
                                          [&](const Building &b) { return b.id == p.building; }),
                           s.buildings.end());
@@ -572,6 +586,10 @@ void Apply(State &s, const Pending &p) {
         }
         if (!s.catalog->Resource(p.resource)) {
             reject(CommandFailure::UnknownResource, "unknown resource");
+            return;
+        }
+        if (s.catalog->Resource(p.resource)->utility) {
+            reject(CommandFailure::InvalidOrderEndpoint, "utility resources cannot be hauled");
             return;
         }
         if (!vt) {
@@ -662,6 +680,44 @@ void Apply(State &s, const Pending &p) {
             std::remove_if(s.vehicles.begin(), s.vehicles.end(), [&](const Vehicle &x) { return x.id == v; }),
             s.vehicles.end());
         Result(s, p, true, CommandFailure::None, "haul order cancelled", 0, 0, p.order);
+        return;
+    }
+    if (p.kind == Kind::ConnectUtility || p.kind == Kind::DisconnectUtility) {
+        const auto *resource = s.catalog->Resource(p.resource);
+        if (!resource || !resource->utility || p.source == p.destination || !Find(s, p.source) ||
+            !Find(s, p.destination)) {
+            reject(CommandFailure::InvalidUtilityConnection,
+                   "utility connection requires a utility resource and two distinct live buildings");
+            return;
+        }
+        const auto a = std::min(p.source, p.destination), b = std::max(p.source, p.destination);
+        const auto existing = std::find_if(s.utilityConnections.begin(), s.utilityConnections.end(),
+                                           [&](const UtilityConnectionSnapshot &edge) {
+                                               return edge.resource == p.resource && edge.a == a && edge.b == b;
+                                           });
+        if (p.kind == Kind::ConnectUtility) {
+            if (existing != s.utilityConnections.end()) {
+                reject(CommandFailure::DuplicateUtilityConnection, "utility connection already exists");
+                return;
+            }
+            s.utilityConnections.push_back({p.resource, a, b});
+            std::sort(s.utilityConnections.begin(), s.utilityConnections.end(),
+                      [](const auto &left, const auto &right) {
+                          if (left.resource != right.resource)
+                              return left.resource < right.resource;
+                          if (left.a != right.a)
+                              return left.a < right.a;
+                          return left.b < right.b;
+                      });
+            Result(s, p, true, CommandFailure::None, "utility connection created");
+        } else {
+            if (existing == s.utilityConnections.end()) {
+                reject(CommandFailure::MissingUtilityConnection, "utility connection does not exist");
+                return;
+            }
+            s.utilityConnections.erase(existing);
+            Result(s, p, true, CommandFailure::None, "utility connection removed");
+        }
     }
 }
 void Repath(const State &s, Vehicle &v, Cell target) {
@@ -796,6 +852,274 @@ void ProductionPhase(State &s) {
     for (auto &th : pool)
         th.join();
 }
+bool HasUtility(const Catalog &catalog, const std::vector<RecipeAmount> &amounts) {
+    for (const auto amount : amounts) {
+        const auto *resource = catalog.Resource(amount.resource);
+        if (resource && resource->utility)
+            return true;
+    }
+    return false;
+}
+bool StockInputs(const State &s, const Building &b, const BuildingTypeDef &type, const RecipeDef &recipe,
+                 ResourceId &missing) {
+    for (const auto amount : recipe.inputs) {
+        const auto *resource = s.catalog->Resource(amount.resource);
+        if (resource && resource->utility)
+            continue;
+        const auto slot = Slot(type, amount.resource);
+        if (slot >= b.inventory.size() || b.inventory[slot] < amount.amount) {
+            missing = amount.resource;
+            return false;
+        }
+    }
+    return true;
+}
+bool StockRoom(const State &s, const Building &b, const BuildingTypeDef &type, const RecipeDef &recipe,
+               ResourceId &full) {
+    for (const auto amount : recipe.outputs) {
+        const auto *resource = s.catalog->Resource(amount.resource);
+        if (resource && resource->utility)
+            continue;
+        const auto slot = Slot(type, amount.resource);
+        if (slot >= b.inventory.size() || amount.amount > type.storage[slot].capacity - b.inventory[slot]) {
+            full = amount.resource;
+            return false;
+        }
+    }
+    return true;
+}
+void ConsumeStock(const State &s, Building &b, const BuildingTypeDef &type, const RecipeDef &recipe) {
+    for (const auto amount : recipe.inputs) {
+        const auto *resource = s.catalog->Resource(amount.resource);
+        if (!(resource && resource->utility))
+            b.inventory[Slot(type, amount.resource)] -= amount.amount;
+    }
+}
+void ProduceStock(const State &s, Building &b, const BuildingTypeDef &type, const RecipeDef &recipe) {
+    for (const auto amount : recipe.outputs) {
+        const auto *resource = s.catalog->Resource(amount.resource);
+        if (!(resource && resource->utility))
+            b.inventory[Slot(type, amount.resource)] += amount.amount;
+    }
+}
+using UtilityBudgetKey = std::pair<ResourceId, BuildingId>;
+struct UtilityBudget {
+    std::uint64_t low{};
+    std::uint64_t high{};
+    void Add(std::uint64_t amount) noexcept {
+        const auto old = low;
+        low += amount;
+        if (low < old)
+            ++high;
+    }
+    bool Covers(std::uint64_t amount) const noexcept { return high != 0 || low >= amount; }
+    void Consume(std::uint64_t amount) noexcept {
+        if (low < amount) {
+            --high;
+            low -= amount;
+        } else {
+            low -= amount;
+        }
+    }
+};
+std::map<ResourceId, std::map<BuildingId, BuildingId>> UtilityComponents(const State &s) {
+    std::map<ResourceId, std::map<BuildingId, BuildingId>> result;
+    for (const auto &resource : s.catalog->Resources()) {
+        if (!resource.utility)
+            continue;
+        auto &parent = result[resource.id];
+        for (const auto &building : s.buildings)
+            parent.emplace(building.id, building.id);
+        auto root = [&](BuildingId id) {
+            BuildingId at = id;
+            while (parent.at(at) != at)
+                at = parent.at(at);
+            while (parent.at(id) != id) {
+                auto next = parent.at(id);
+                parent[id] = at;
+                id = next;
+            }
+            return at;
+        };
+        for (const auto &edge : s.utilityConnections) {
+            if (edge.resource != resource.id)
+                continue;
+            const auto a = root(edge.a), b = root(edge.b);
+            if (a != b) {
+                const auto low = std::min(a, b), high = std::max(a, b);
+                parent[high] = low;
+            }
+        }
+        for (auto &entry : parent)
+            entry.second = root(entry.first);
+    }
+    return result;
+}
+bool IsGenerator(const State &s, const RecipeDef &recipe) {
+    return HasUtility(*s.catalog, recipe.outputs);
+}
+void UtilityProductionPhase(State &s) {
+    const auto components = UtilityComponents(s);
+    std::map<UtilityBudgetKey, UtilityBudget> budget;
+    std::vector<bool> running(s.buildings.size()), missing(s.buildings.size()), utilityMissing(s.buildings.size()),
+        full(s.buildings.size());
+    std::vector<ResourceId> missingResource(s.buildings.size(), InvalidResourceId), fullResource(s.buildings.size(), InvalidResourceId);
+
+    // Generators run first in stable building and recipe order. Fuel, stock
+    // output room, and all stock changes are committed before utility is offered.
+    for (std::size_t bi = 0; bi < s.buildings.size(); ++bi) {
+        auto &building = s.buildings[bi];
+        const auto *type = s.catalog->BuildingType(building.type);
+        if (!building.enabled)
+            continue;
+        for (std::size_t ri = 0; ri < type->recipes.size(); ++ri) {
+            const auto &recipe = type->recipes[ri];
+            if (!IsGenerator(s, recipe))
+                continue;
+            ResourceId blocked{};
+            if (!StockInputs(s, building, *type, recipe, blocked)) {
+                missing[bi] = true;
+                if (missingResource[bi] == InvalidResourceId)
+                    missingResource[bi] = blocked;
+                continue;
+            }
+            if (!StockRoom(s, building, *type, recipe, blocked)) {
+                full[bi] = true;
+                if (fullResource[bi] == InvalidResourceId)
+                    fullResource[bi] = blocked;
+                continue;
+            }
+            ConsumeStock(s, building, *type, recipe);
+            ProduceStock(s, building, *type, recipe);
+            running[bi] = true;
+            for (const auto output : recipe.outputs) {
+                const auto *resource = s.catalog->Resource(output.resource);
+                if (!(resource && resource->utility))
+                    continue;
+                const auto &byBuilding = components.at(output.resource);
+                const auto component = byBuilding.at(building.id);
+                budget[{output.resource, component}].Add(output.amount);
+            }
+            ++building.completed[ri];
+        }
+    }
+
+    // Consumers are visited in stable building/recipe order. A recipe first
+    // preflights every utility, stock input, and stock output before committing.
+    for (std::size_t bi = 0; bi < s.buildings.size(); ++bi) {
+        auto &building = s.buildings[bi];
+        const auto *type = s.catalog->BuildingType(building.type);
+        if (!building.enabled)
+            continue;
+        for (std::size_t ri = 0; ri < type->recipes.size(); ++ri) {
+            const auto &recipe = type->recipes[ri];
+            if (IsGenerator(s, recipe))
+                continue;
+            if (HasUtility(*s.catalog, recipe.inputs)) {
+                ResourceId unavailable = InvalidResourceId;
+                const auto &byBuilding = components;
+                for (const auto input : recipe.inputs) {
+                    const auto *resource = s.catalog->Resource(input.resource);
+                    if (!(resource && resource->utility))
+                        continue;
+                    const auto component = byBuilding.at(input.resource).at(building.id);
+                    const auto found = budget.find({input.resource, component});
+                    if (found == budget.end() || !found->second.Covers(input.amount)) {
+                        unavailable = input.resource;
+                        break;
+                    }
+                }
+                if (unavailable != InvalidResourceId) {
+                    missing[bi] = true;
+                    utilityMissing[bi] = true;
+                    if (missingResource[bi] == InvalidResourceId)
+                        missingResource[bi] = unavailable;
+                    continue;
+                }
+                ResourceId blocked{};
+                if (!StockInputs(s, building, *type, recipe, blocked)) {
+                    missing[bi] = true;
+                    if (missingResource[bi] == InvalidResourceId)
+                        missingResource[bi] = blocked;
+                    continue;
+                }
+                if (!StockRoom(s, building, *type, recipe, blocked)) {
+                    full[bi] = true;
+                    if (fullResource[bi] == InvalidResourceId)
+                        fullResource[bi] = blocked;
+                    continue;
+                }
+                for (const auto input : recipe.inputs) {
+                    const auto *resource = s.catalog->Resource(input.resource);
+                    if (resource && resource->utility) {
+                        const auto component = components.at(input.resource).at(building.id);
+                        budget[{input.resource, component}].Consume(input.amount);
+                    }
+                }
+                ConsumeStock(s, building, *type, recipe);
+                ProduceStock(s, building, *type, recipe);
+                ++building.completed[ri];
+                running[bi] = true;
+                continue;
+            }
+            // Preserve the established interval behavior for unrelated recipes.
+            if (building.remaining[ri]) {
+                running[bi] = true;
+                if (building.remaining[ri] < recipe.intervalTicks)
+                    ++building.remaining[ri];
+                if (building.remaining[ri] == recipe.intervalTicks) {
+                    ResourceId blocked{};
+                    if (StockRoom(s, building, *type, recipe, blocked)) {
+                        ProduceStock(s, building, *type, recipe);
+                        building.remaining[ri] = 0;
+                        ++building.completed[ri];
+                    } else {
+                        full[bi] = true;
+                        if (fullResource[bi] == InvalidResourceId)
+                            fullResource[bi] = blocked;
+                    }
+                }
+                continue;
+            }
+            ResourceId blocked{};
+            if (!StockInputs(s, building, *type, recipe, blocked)) {
+                missing[bi] = true;
+                if (missingResource[bi] == InvalidResourceId)
+                    missingResource[bi] = blocked;
+                continue;
+            }
+            if (!StockRoom(s, building, *type, recipe, blocked)) {
+                full[bi] = true;
+                if (fullResource[bi] == InvalidResourceId)
+                    fullResource[bi] = blocked;
+                continue;
+            }
+            ConsumeStock(s, building, *type, recipe);
+            building.remaining[ri] = 1;
+            running[bi] = true;
+            if (recipe.intervalTicks == 1) {
+                ProduceStock(s, building, *type, recipe);
+                building.remaining[ri] = 0;
+                ++building.completed[ri];
+            }
+        }
+    }
+    for (std::size_t bi = 0; bi < s.buildings.size(); ++bi) {
+        auto &building = s.buildings[bi];
+        if (!building.enabled)
+            building.stall = {building.id, StallReason::Disabled, InvalidResourceId, 0};
+        else if (full[bi])
+            building.stall = {building.id, StallReason::OutputFull, fullResource[bi], 0};
+        else if (utilityMissing[bi])
+            building.stall = {building.id, StallReason::MissingInput, missingResource[bi], 0};
+        else if (running[bi])
+            building.stall = {building.id, StallReason::Running, InvalidResourceId, 0};
+        else if (missing[bi])
+            building.stall = {building.id, StallReason::MissingInput, missingResource[bi], 0};
+        else
+            building.stall = {building.id, StallReason::Running, InvalidResourceId, 0};
+    }
+}
 void AdvanceTick(State &s) {
     auto pending = std::move(s.pending);
     s.pending.clear();
@@ -805,7 +1129,15 @@ void AdvanceTick(State &s) {
     }
     std::sort(s.buildings.begin(), s.buildings.end(),
               [](const Building &a, const Building &b) { return a.id < b.id; });
-    ProductionPhase(s);
+    bool hasUtilityRecipes = false;
+    for (const auto &type : s.catalog->BuildingTypes())
+        for (const auto &recipe : type.recipes)
+            hasUtilityRecipes = hasUtilityRecipes || HasUtility(*s.catalog, recipe.inputs) ||
+                                HasUtility(*s.catalog, recipe.outputs);
+    if (hasUtilityRecipes)
+        UtilityProductionPhase(s);
+    else
+        ProductionPhase(s);
     std::sort(s.orders.begin(), s.orders.end(), [](const Order &a, const Order &b) { return a.id < b.id; });
     for (auto &o : s.orders)
         Haul(s, o);
@@ -863,6 +1195,19 @@ std::uint64_t Hash(const State &s) {
         HashU(h, r.b.x);
         HashU(h, r.b.z);
         HashU(h, r.enabled);
+    }
+    if (!s.utilityConnections.empty()) {
+        HashS(h, "openrepublic.utility-connections.v1");
+        for (const auto &edge : s.utilityConnections) {
+            HashU(h, edge.resource);
+            HashU(h, edge.a);
+            HashU(h, edge.b);
+        }
+    }
+    if (!s.utilityCommands.empty()) {
+        HashS(h, "openrepublic.utility-command-history.v1");
+        for (const auto id : s.utilityCommands)
+            HashU(h, id);
     }
     for (const auto &o : s.orders) {
         HashU(h, o.id);
@@ -984,11 +1329,20 @@ bool CatalogBuilder::AddResource(std::string_view n, ResourceId *out, CatalogErr
         CatError(e, CatalogError::TooManyDefinitions, "resource limit exceeded");
         return false;
     }
-    ResourceDef x{static_cast<ResourceId>(draft_.resources_.size()), std::string(n)};
+    ResourceDef x{static_cast<ResourceId>(draft_.resources_.size()), std::string(n), false};
     draft_.resources_.push_back(x);
     if (out)
         *out = x.id;
     e = {};
+    return true;
+}
+bool CatalogBuilder::AddUtilityResource(std::string_view n, ResourceId *out, CatalogErrorInfo &e) {
+    ResourceId id{};
+    if (!AddResource(n, &id, e))
+        return false;
+    draft_.resources_[id].utility = true;
+    if (out)
+        *out = id;
     return true;
 }
 bool CatalogBuilder::AddBuildingType(std::string_view n, std::uint32_t w, std::uint32_t d,
@@ -1029,6 +1383,10 @@ bool CatalogBuilder::AddStorage(BuildingTypeId b, ResourceId r, std::uint64_t ca
     }
     if (r >= draft_.resources_.size()) {
         CatError(e, CatalogError::UnknownResource, "unknown resource");
+        return false;
+    }
+    if (draft_.resources_[r].utility) {
+        CatError(e, CatalogError::UtilityHasStorage, "utility resources cannot be stored");
         return false;
     }
     if (!cap) {
@@ -1085,7 +1443,7 @@ bool CatalogBuilder::AddRecipe(BuildingTypeId b, const RecipeDef &r, CatalogErro
                 CatError(e, CatalogError::InvalidAmount, "recipe amount must be positive");
                 return false;
             }
-            if (Slot(*t, a.resource) >= t->storage.size()) {
+            if (!draft_.resources_[a.resource].utility && Slot(*t, a.resource) >= t->storage.size()) {
                 CatError(e, CatalogError::MissingStorage, "recipe resource has no storage slot");
                 return false;
             }
@@ -1099,6 +1457,26 @@ bool CatalogBuilder::AddRecipe(BuildingTypeId b, const RecipeDef &r, CatalogErro
     };
     if (!check(r.inputs) || !check(r.outputs))
         return false;
+    bool hasUtility = false, producesUtility = false, consumesUtility = false;
+    for (auto a : r.inputs)
+        if (draft_.resources_[a.resource].utility) {
+            hasUtility = true;
+            consumesUtility = true;
+        }
+    for (auto a : r.outputs)
+        if (draft_.resources_[a.resource].utility) {
+            hasUtility = true;
+            producesUtility = true;
+        }
+    if (hasUtility && r.intervalTicks != 1) {
+        CatError(e, CatalogError::InvalidUtilityRecipe, "utility recipes must run every tick");
+        return false;
+    }
+    if (producesUtility && consumesUtility) {
+        CatError(e, CatalogError::InvalidUtilityRecipe,
+                 "utility-producing recipes cannot consume utility resources");
+        return false;
+    }
     t->recipes.push_back(r);
     e = {};
     return true;
@@ -1265,8 +1643,10 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
             ParseErr(e, ParseErrorCode::UnexpectedToken, line, "unexpected building member");
             return false;
         }
-        if (w[0] == "resource" && w.size() == 2) {
-            if (!b.AddResource(w[1], nullptr, ce)) {
+        if ((w[0] == "resource" || w[0] == "utility") && w.size() == 2) {
+            const bool added = w[0] == "utility" ? b.AddUtilityResource(w[1], nullptr, ce)
+                                                  : b.AddResource(w[1], nullptr, ce);
+            if (!added) {
                 ParseErr(e, ParseErrorCode::DuplicateDefinition, line, ce.message);
                 return false;
             }
@@ -1311,7 +1691,7 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
 std::string WriteCatalogText(const Catalog &c) {
     std::string o = "openrepublic-economy 1\n";
     for (const auto &r : c.Resources())
-        o += "resource " + r.name + "\n";
+        o += std::string(r.utility ? "utility " : "resource ") + r.name + "\n";
     for (const auto &b : c.BuildingTypes()) {
         o += "building " + b.name + " " + Num(b.width) + " " + Num(b.depth) + "\n";
         for (auto s : b.storage)
@@ -1408,7 +1788,7 @@ bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
     const auto &ov = old.VehicleTypes(), &nv = next.VehicleTypes();
     bool same = or_.size() == nr.size() && ob.size() == nb.size() && ov.size() == nv.size();
     for (std::size_t i = 0; same && i < or_.size(); ++i)
-        same = or_[i].name == nr[i].name;
+        same = or_[i].name == nr[i].name && or_[i].utility == nr[i].utility;
     for (std::size_t i = 0; same && i < ov.size(); ++i)
         same = ov[i].name == nv[i].name;
     for (std::size_t i = 0; same && i < ob.size(); ++i) {
@@ -1552,6 +1932,28 @@ CommandId World::RetargetHaulOrder(OrderId o, BuildingId destination) {
     p.destination = destination;
     return Queue(impl_->state, p);
 }
+CommandId World::ConnectUtility(ResourceId resource, BuildingId a, BuildingId b) {
+    Pending p;
+    p.kind = Kind::ConnectUtility;
+    p.resource = resource;
+    p.source = std::min(a, b);
+    p.destination = std::max(a, b);
+    const auto id = Queue(impl_->state, p);
+    if (id)
+        impl_->state.utilityCommands.insert(id);
+    return id;
+}
+CommandId World::DisconnectUtility(ResourceId resource, BuildingId a, BuildingId b) {
+    Pending p;
+    p.kind = Kind::DisconnectUtility;
+    p.resource = resource;
+    p.source = std::min(a, b);
+    p.destination = std::max(a, b);
+    const auto id = Queue(impl_->state, p);
+    if (id)
+        impl_->state.utilityCommands.insert(id);
+    return id;
+}
 CommandResult World::GetCommandResult(CommandId id) const {
     auto i = impl_->state.results.find(id);
     if (i != impl_->state.results.end())
@@ -1588,6 +1990,9 @@ CommandHistoryCompactionResult World::CompactCommandHistory(std::uint32_t keepRe
     auto result = s.results.begin();
     while (result != s.results.end() && result->first < newFloor)
         result = s.results.erase(result);
+    auto utility = s.utilityCommands.begin();
+    while (utility != s.utilityCommands.end() && *utility < newFloor)
+        utility = s.utilityCommands.erase(utility);
     s.firstRetainedCommand = newFloor;
     ++s.revision;
     return {CommandHistoryError::None, removed, CommandHistory()};
@@ -1643,17 +2048,31 @@ WorldSnapshot World::Snapshot() const {
                             v ? v->state : HaulState::NoRoute, v ? v->failure : HaulFailure::NoRoute,
                             v ? v->cargo : 0, v ? v->cell : Cell{}});
     }
+    o.utilityConnections = s.utilityConnections;
     return o;
 }
 
 std::string SaveWorld(const World &w) {
     const auto &s = w.impl_->state;
+    const bool hasPendingUtility = std::any_of(s.pending.begin(), s.pending.end(), [](const Pending &p) {
+        return p.kind == Kind::ConnectUtility || p.kind == Kind::DisconnectUtility;
+    });
+    const bool hasUtilityFailure = std::any_of(s.results.begin(), s.results.end(), [](const auto &entry) {
+        return entry.second.failure >= CommandFailure::DuplicateUtilityConnection;
+    });
+    bool hasUtilityRecipes = false;
+    for (const auto &type : s.catalog->BuildingTypes())
+        for (const auto &recipe : type.recipes)
+            hasUtilityRecipes = hasUtilityRecipes || HasUtility(*s.catalog, recipe.inputs) ||
+                                HasUtility(*s.catalog, recipe.outputs);
+    const bool version4 = !s.utilityConnections.empty() || hasPendingUtility || !s.utilityCommands.empty() ||
+                          hasUtilityFailure || hasUtilityRecipes;
     std::string o = std::string("OPENREPUBLIC_ECONOMY_WORLD ") +
-                    (s.firstRetainedCommand == 1 ? "2\n" : "3\n");
+                    (version4 ? "4\n" : (s.firstRetainedCommand == 1 ? "2\n" : "3\n"));
     o += "GRID " + Num(s.width) + " " + Num(s.depth) + "\nTICK " + Num(s.tick) + "\nREVISION " +
          Num(s.revision) + "\nNEXT " + Num(s.nextBuilding) + " " + Num(s.nextRoad) + " " + Num(s.nextOrder) +
          " " + Num(s.nextVehicle) + " " + Num(s.nextCommand) + "\n";
-    if (s.firstRetainedCommand > 1) {
+    if (version4 || s.firstRetainedCommand > 1) {
         // v3 records only the explicit retained-history boundary. v1/v2 bytes
         // remain unchanged while the entire command history is retained.
         o += "HISTORY " + Num(s.firstRetainedCommand) + "\n";
@@ -1680,6 +2099,25 @@ std::string SaveWorld(const World &w) {
              std::to_string(r.b.x) + " " + std::to_string(r.b.z) + " " + Num(r.enabled) + "\n";
         if (o.size() > MaxWorldSaveBytes)
             return {};
+    }
+    if (version4) {
+        o += "UTILITY_CONNECTIONS " + Num(s.utilityConnections.size()) + "\n";
+        for (const auto &edge : s.utilityConnections) {
+            o += "U " + Num(edge.resource) + " " + Num(edge.a) + " " + Num(edge.b) + "\n";
+            if (o.size() > MaxWorldSaveBytes)
+                return {};
+        }
+        o += "UTILITY_STALLS " + Num(s.buildings.size()) + "\n";
+        for (const auto &building : s.buildings) {
+            o += "S " + Num(building.id) + " " + Num(static_cast<std::uint8_t>(building.stall.reason)) + " " +
+                 Num(building.stall.resource) + " " + Num(building.stall.recipeIndex) + "\n";
+            if (o.size() > MaxWorldSaveBytes)
+                return {};
+        }
+        o += "UTILITY_COMMANDS " + Num(s.utilityCommands.size());
+        for (const auto id : s.utilityCommands)
+            o += " " + Num(id);
+        o += "\n";
     }
     o += "ORDERS " + Num(s.orders.size()) + "\n";
     for (const auto &q : s.orders) {
@@ -1728,7 +2166,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     WorldSaveInput in(text);
     std::string tag, version;
     if (!(in >> tag >> version) || tag != "OPENREPUBLIC_ECONOMY_WORLD" ||
-        (version != "1" && version != "2" && version != "3")) {
+        (version != "1" && version != "2" && version != "3" && version != "4")) {
         ParseErr(e, ParseErrorCode::InvalidHeader, 1, "invalid world header");
         return false;
     }
@@ -1747,6 +2185,8 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     }
     World temp(c, w, d);
     State &s = temp.impl_->state;
+    std::map<BuildingId, StallRecord> utilityStalls;
+    std::set<CommandId> recordedUtilityCommands;
     s.tick = tick;
     s.revision = rev;
     s.nextBuilding = nb;
@@ -1754,7 +2194,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     s.nextOrder = no;
     s.nextVehicle = nv;
     s.nextCommand = nc;
-    if (version == "3") {
+    if (version == "3" || version == "4") {
         if (!(in >> tag >> s.firstRetainedCommand) || tag != "HISTORY" ||
             !s.firstRetainedCommand || s.firstRetainedCommand > nc) {
             ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid command history boundary");
@@ -1816,7 +2256,9 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
                 return false;
             }
         for (std::size_t i = 0; i < b.remaining.size(); ++i)
-            if (b.remaining[i] > t->recipes[i].intervalTicks) {
+            if (b.remaining[i] > t->recipes[i].intervalTicks ||
+                ((HasUtility(c, t->recipes[i].inputs) || HasUtility(c, t->recipes[i].outputs)) &&
+                 b.remaining[i] != 0)) {
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "progress exceeds definition");
                 return false;
             }
@@ -1852,6 +2294,56 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         }
         s.roads.push_back(r);
     }
+    if (version == "4") {
+        if (!(in >> tag >> count) || tag != "UTILITY_CONNECTIONS" || count > text.size()) {
+            ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid utility connection count");
+            return false;
+        }
+        for (std::uint64_t n = 0; n < count; ++n) {
+            UtilityConnectionSnapshot edge;
+            if (!(in >> tag >> edge.resource >> edge.a >> edge.b) || tag != "U" || edge.a >= edge.b ||
+                !c.Resource(edge.resource) || !c.Resource(edge.resource)->utility || !Find(s, edge.a) ||
+                !Find(s, edge.b) || (!s.utilityConnections.empty() &&
+                    std::tie(edge.resource, edge.a, edge.b) <=
+                        std::tie(s.utilityConnections.back().resource, s.utilityConnections.back().a,
+                                 s.utilityConnections.back().b))) {
+                ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid or duplicate utility connection");
+                return false;
+            }
+            s.utilityConnections.push_back(edge);
+        }
+        if (!(in >> tag >> count) || tag != "UTILITY_STALLS" || count != s.buildings.size()) {
+            ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid utility stall count");
+            return false;
+        }
+        for (const auto &building : s.buildings) {
+            BuildingId id{};
+            std::uint32_t reason{}, resource{}, recipe{};
+            if (!(in >> tag >> id >> reason >> resource >> recipe) || tag != "S" || id != building.id ||
+                reason > static_cast<std::uint32_t>(StallReason::Disabled) ||
+                (resource != InvalidResourceId && !c.Resource(resource)) ||
+                (c.BuildingType(building.type)->recipes.empty() ? recipe != 0
+                                                                : recipe >= c.BuildingType(building.type)->recipes.size())) {
+                ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid utility stall state");
+                return false;
+            }
+            utilityStalls.emplace(id, StallRecord{id, static_cast<StallReason>(reason), resource, recipe});
+        }
+        if (!(in >> tag >> count) || tag != "UTILITY_COMMANDS" || count > text.size()) {
+            ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid utility command history count");
+            return false;
+        }
+        CommandId lastUtilityCommand = 0;
+        for (std::uint64_t n = 0; n < count; ++n) {
+            CommandId id{};
+            if (!(in >> id) || !id || id <= lastUtilityCommand || id < s.firstRetainedCommand || id >= nc) {
+                ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid utility command history ID");
+                return false;
+            }
+            recordedUtilityCommands.insert(id);
+            lastUtilityCommand = id;
+        }
+    }
     if (!(in >> tag >> count) || tag != "ORDERS" || count > text.size()) {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid order count");
         return false;
@@ -1865,6 +2357,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         if (!(in >> tag >> q.id >> q.source >> q.destination >> q.resource >> q.vehicleType >> vehicle >>
               st >> fail >> cargo >> cell.x >> cell.z >> to) ||
             tag != "O" || !Find(s, q.source) || !Find(s, q.destination) || !s.catalog->Resource(q.resource) ||
+            s.catalog->Resource(q.resource)->utility ||
             !s.catalog->VehicleType(q.vehicleType) || st > static_cast<std::uint32_t>(HaulState::NoRoute) ||
             fail > static_cast<std::uint32_t>(HaulFailure::RoadDisabled) || to > 1 ||
             !InGrid(cell, w, d) || cargo > s.catalog->VehicleType(q.vehicleType)->capacity ||
@@ -1913,12 +2406,24 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         std::uint32_t kind{};
         if (!(in >> tag >> p.id >> kind >> p.type >> p.building >> p.a.x >> p.a.z >> p.b.x >> p.b.z >>
               p.road >> p.enabled >> p.source >> p.destination >> p.resource >> p.vehicleType >> p.order) ||
-            tag != "Q" || kind < 1 || kind > (version == "1" ? 7u : 8u) || !p.id || p.id >= nc ||
+            tag != "Q" || kind < 1 || kind > (version == "1" ? 7u : (version == "4" ? 10u : 8u)) ||
+            !p.id || p.id >= nc ||
             (!s.pending.empty() && p.id <= s.pending.back().id)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending command");
             return false;
         }
         p.kind = static_cast<Kind>(kind);
+        if (p.kind == Kind::ConnectUtility || p.kind == Kind::DisconnectUtility) {
+            if (version != "4" || p.source > p.destination || p.type || p.building || p.a != Cell{} ||
+                p.b != Cell{} || p.road || p.enabled || p.vehicleType || p.order) {
+                ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending utility command");
+                return false;
+            }
+            if (!recordedUtilityCommands.count(p.id)) {
+                ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "pending utility command is absent from its history");
+                return false;
+            }
+        }
         s.pending.push_back(p);
     }
     if (!(in >> tag >> count) || tag != "RESULTS" || count > text.size()) {
@@ -1930,7 +2435,9 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         std::uint32_t st{}, fail{};
         if (!(in >> tag >> r.commandId >> st >> fail >> r.building >> r.road >> r.order) || tag != "C" ||
             st < 1 || st > 3 || fail > static_cast<std::uint32_t>(version == "1" ? CommandFailure::ParseInvalid
-                                                                      : CommandFailure::CargoInTransit)) {
+                                                              : (version == "4"
+                                                                     ? CommandFailure::ReferencedByUtilityConnection
+                                                                     : CommandFailure::CargoInTransit))) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid command result");
             return false;
         }
@@ -1939,7 +2446,10 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         const auto outputIds = (r.building != 0) + (r.road != 0) + (r.order != 0);
         if (r.commandId != expectedResultId || r.commandId >= nc || r.building >= nb ||
             r.road >= nr || r.order >= no ||
-            (r.state == CommandState::Accepted ? (fail != 0 || outputIds != 1)
+            (r.state == CommandState::Accepted ?
+                 (fail != 0 || (version == "4" && recordedUtilityCommands.count(r.commandId)
+                                    ? outputIds != 0
+                                    : outputIds != 1))
                                                : (outputIds != 0 ||
                                                   (r.state == CommandState::Queued ? fail != 0 : fail == 0)))) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "inconsistent command result or ID history");
@@ -1948,6 +2458,30 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         r.message = r.state == CommandState::Queued ? "queued" : "restored result";
         s.results[r.commandId] = r;
         ++expectedResultId;
+    }
+    for (const auto id : recordedUtilityCommands) {
+        const auto result = s.results.find(id);
+        if (result == s.results.end()) {
+            ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "utility command history has no retained result");
+            return false;
+        }
+        const bool pendingUtility = std::any_of(s.pending.begin(), s.pending.end(),
+                                                [&](const Pending &pending) {
+                                                    return pending.id == id &&
+                                                           (pending.kind == Kind::ConnectUtility ||
+                                                            pending.kind == Kind::DisconnectUtility);
+                                                });
+        const auto failure = result->second.failure;
+        const bool utilityFailure = failure == CommandFailure::InvalidUtilityConnection ||
+                                    failure == CommandFailure::DuplicateUtilityConnection ||
+                                    failure == CommandFailure::MissingUtilityConnection;
+        if ((pendingUtility && result->second.state != CommandState::Queued) ||
+            (!pendingUtility && (result->second.state == CommandState::Queued ||
+                                 (result->second.state == CommandState::Rejected && !utilityFailure)))) {
+            ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "utility command history result is inconsistent");
+            return false;
+        }
+        s.utilityCommands.insert(id);
     }
     if (!(in >> tag) || tag != "END") {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "missing END");
@@ -1987,8 +2521,11 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "queued commands cannot advance without counter overflow");
         return false;
     }
-    for (auto &b : s.buildings)
+    for (auto &b : s.buildings) {
         RefreshStall(s, b);
+        if (version == "4")
+            b.stall = utilityStalls.at(b.id);
+    }
     target.impl_->state = std::move(s);
     return true;
 }

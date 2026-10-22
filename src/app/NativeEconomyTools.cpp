@@ -94,6 +94,9 @@ namespace openrepublic::preview
 		gui.AddWidget(&cancelOrder_);
 		gui.AddWidget(&roadChoice_);
 		gui.AddWidget(&toggleRoad_);
+		gui.AddWidget(&utilityResource_);
+		gui.AddWidget(&connectUtility_);
+		gui.AddWidget(&disconnectUtility_);
 	}
 
 	void NativeEconomyTools::Create(wi::gui::GUI& gui, const economy::Catalog& catalog, Callbacks callbacks,
@@ -113,6 +116,9 @@ namespace openrepublic::preview
 			gui_->RemoveWidget(&cancelOrder_);
 			gui_->RemoveWidget(&roadChoice_);
 			gui_->RemoveWidget(&toggleRoad_);
+			gui_->RemoveWidget(&utilityResource_);
+			gui_->RemoveWidget(&connectUtility_);
+			gui_->RemoveWidget(&disconnectUtility_);
 		}
 
 		gui_ = &gui;
@@ -123,6 +129,7 @@ namespace openrepublic::preview
 		haveOrderRefresh_ = false;
 		haveRoadRefresh_ = false;
 		hasLayout_ = false;
+		hasUtilityResources_ = false;
 
 		buildingType_.Create("NativeEconomyBuildingType");
 		buildingType_.ClearItems();
@@ -221,6 +228,47 @@ namespace openrepublic::preview
 			if (callbacks_.toggleRoad) callbacks_.toggleRoad();
 		});
 
+		utilityResource_.Create("NativeEconomyUtilityResource");
+		utilityResource_.ClearItems();
+		utilityResource_.SetTooltip("Choose an explicit utility resource to connect.");
+		utilityResource_.SetInvalidSelectionText("No utility resources");
+		for (const economy::ResourceDef& resource : catalog.Resources())
+		{
+			if (resource.utility)
+			{
+				utilityResource_.AddItem(resource.name, resource.id);
+				hasUtilityResources_ = true;
+			}
+		}
+		StyleCombo(utilityResource_);
+		if (utilityResource_.GetItemCount() != 0)
+			utilityResource_.SetSelectedWithoutCallback(0);
+
+		connectUtility_.Create("NativeEconomyConnectUtility");
+		connectUtility_.SetText("Connect utility");
+		connectUtility_.SetTooltip("Connect the selected utility resource from the haul source to the selected destination. Set the haul source, then select a destination. This is an idealized connection with shared-grid supply and no cargo transport.");
+		StyleButton(connectUtility_);
+		connectUtility_.OnClick([this](const wi::gui::EventArgs&) {
+			if (callbacks_.connectUtility) callbacks_.connectUtility();
+		});
+
+		disconnectUtility_.Create("NativeEconomyDisconnectUtility");
+		disconnectUtility_.SetText("Disconnect utility");
+		disconnectUtility_.SetTooltip("Disconnect the selected utility resource from the selected destination. Set the haul source, then select a destination. This removes an idealized shared-grid connection; it moves no cargo.");
+		StyleButton(disconnectUtility_);
+		disconnectUtility_.OnClick([this](const wi::gui::EventArgs&) {
+			if (callbacks_.disconnectUtility) callbacks_.disconnectUtility();
+		});
+
+		const std::array<wi::gui::Widget*, 3> utilityControls = {
+			&utilityResource_, &connectUtility_, &disconnectUtility_
+		};
+		for (wi::gui::Widget* widget : utilityControls)
+		{
+			widget->SetVisible(hasUtilityResources_);
+			widget->SetEnabled(hasUtilityResources_);
+		}
+
 		// The same toolbar can be recreated for a world that exposes logistics
 		// without exposing construction. Reset both properties on every Create so
 		// a previous mode cannot leak widget state into the new one.
@@ -293,6 +341,14 @@ namespace openrepublic::preview
 		};
 		const std::array<float, 5> orderWidths = { 440.0f, 180.0f, 120.0f, 0.0f, 0.0f };
 		y = layoutRow(y + kRowGap, orderWidgets, orderWidths, 3);
+		if (hasUtilityResources_)
+		{
+			const std::array<wi::gui::Widget*, 5> utilityWidgets = {
+				&utilityResource_, &connectUtility_, &disconnectUtility_, nullptr, nullptr
+			};
+			const std::array<float, 5> utilityWidths = { 220.0f, 160.0f, 170.0f, 0.0f, 0.0f };
+			y = layoutRow(y + kRowGap, utilityWidgets, utilityWidths, 3);
+		}
 		hasLayout_ = true;
 		return y + 8.0f;
 	}
@@ -465,6 +521,11 @@ namespace openrepublic::preview
 		return SelectedId(resource_, economy::InvalidResourceId);
 	}
 
+	economy::ResourceId NativeEconomyTools::SelectedUtilityResource() const noexcept
+	{
+		return SelectedId(utilityResource_, economy::InvalidResourceId);
+	}
+
 	economy::VehicleTypeId NativeEconomyTools::SelectedVehicleType() const noexcept
 	{
 		return SelectedId(vehicleType_, economy::InvalidVehicleTypeId);
@@ -487,7 +548,8 @@ namespace openrepublic::preview
 		};
 		return active(buildingType_) || active(place_) || active(road_) || active(cancel_) ||
 			active(remove_) || active(resource_) || active(vehicleType_) || active(order_) || active(retargetOrder_) || active(cancelOrder_) ||
-			active(roadChoice_) || active(toggleRoad_);
+			active(roadChoice_) || active(toggleRoad_) || active(utilityResource_) ||
+			active(connectUtility_) || active(disconnectUtility_);
 	}
 
 	bool NativeEconomyTools::PointerOnControls(XMFLOAT2 pointer) const noexcept
@@ -498,6 +560,8 @@ namespace openrepublic::preview
 			WidgetContains(remove_, pointer) || WidgetContains(resource_, pointer) ||
 			WidgetContains(vehicleType_, pointer) || WidgetContains(order_, pointer) ||
 			WidgetContains(retargetOrder_, pointer) || WidgetContains(cancelOrder_, pointer) ||
-			WidgetContains(roadChoice_, pointer) || WidgetContains(toggleRoad_, pointer);
+			WidgetContains(roadChoice_, pointer) || WidgetContains(toggleRoad_, pointer) ||
+			WidgetContains(utilityResource_, pointer) || WidgetContains(connectUtility_, pointer) ||
+			WidgetContains(disconnectUtility_, pointer);
 	}
 }

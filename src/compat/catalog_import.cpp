@@ -225,16 +225,33 @@ bool ImportCatalogFromDefinitions(
             if (!entry.resource.empty() && ValidName(entry.resource))
                 resourceNames.insert(entry.resource);
     }
+    for (const auto &name : options.utilityResources) {
+        if (!ValidName(name) || !resourceNames.count(name))
+            return failImport("utility resource '" + name +
+                              "' is invalid or does not occur in parsed definitions");
+    }
+    for (const auto &building : definitions)
+        for (const auto &entry : building.second.storage)
+            if (!entry.resource.empty() && options.utilityResources.count(entry.resource)) {
+                ++next.utilityStorageEntriesIgnored;
+                next.storageDiagnostics.push_back("building '" + building.first +
+                    "' explicit storage row for utility resource '" + entry.resource + "' ignored");
+            }
 
     economy::CatalogBuilder builder;
     economy::CatalogErrorInfo catalogError;
     std::map<std::string, economy::ResourceId> resourceIds;
     for (const auto &name : resourceNames) {
         economy::ResourceId id{};
-        if (!builder.AddResource(name, &id, catalogError))
+        const bool isUtility = options.utilityResources.count(name) != 0;
+        const bool added = isUtility ? builder.AddUtilityResource(name, &id, catalogError)
+                                     : builder.AddResource(name, &id, catalogError);
+        if (!added)
             return failImport("could not add resource '" + name + "': " + catalogError.message);
         resourceIds.emplace(name, id);
         ++next.resourcesImported;
+        if (isUtility)
+            ++next.utilityResourcesImported;
     }
 
     for (const auto &building : definitions) {
@@ -276,6 +293,19 @@ bool ImportCatalogFromDefinitions(
             AddSkipped(next, name, reason);
             continue;
         }
+        const bool hasUtilityInput = std::any_of(
+            inputAmounts.begin(), inputAmounts.end(), [&](const auto &entry) {
+                return options.utilityResources.count(entry.first) != 0;
+            });
+        const bool hasUtilityOutput = std::any_of(
+            outputAmounts.begin(), outputAmounts.end(), [&](const auto &entry) {
+                return options.utilityResources.count(entry.first) != 0;
+            });
+        if (hasUtilityInput && hasUtilityOutput) {
+            AddSkipped(next, name,
+                       "recipe combines utility inputs and utility outputs; utility generation chains are unsupported");
+            continue;
+        }
 
         // Work out explicit capacities before mutating the builder. A generic
         // storage row may represent a shared pool, so its presence disables
@@ -296,6 +326,8 @@ bool ImportCatalogFromDefinitions(
         std::vector<std::string> mappedDiagnosticsForBuilding;
         for (const auto &entry : definition.storage) {
             if (entry.resource.empty())
+                continue;
+            if (options.utilityResources.count(entry.resource))
                 continue;
             const auto rowCount = rowsPerResource.at(entry.resource);
             if (rowCount > 1) {
@@ -373,6 +405,8 @@ bool ImportCatalogFromDefinitions(
         for (const auto &entry : explicitCapacities)
             storedNames.insert(entry.first);
         for (const auto &resource : storedNames) {
+            if (options.utilityResources.count(resource))
+                continue;
             const long double productionDay = rates.productionPerDay.count(resource)
                                                   ? rates.productionPerDay.at(resource)
                                                   : 0.0L;
@@ -442,6 +476,9 @@ std::string DescribeImport(const ImportReport &report) {
            << report.storageEntriesUnmapped << " unmapped; ambiguous resources: "
            << report.ambiguousStorageResources << "; storage-only buildings imported: "
            << report.storageOnlyBuildingsImported << "\n";
+    output << "Utility resources imported: " << report.utilityResourcesImported
+           << "; explicit utility storage rows ignored: "
+           << report.utilityStorageEntriesIgnored << "\n";
     output << "Options: ticksPerDay=" << report.options.ticksPerDay
            << ", defaultFootprint=" << report.options.defaultFootprint
            << ", storageDaysFallback="

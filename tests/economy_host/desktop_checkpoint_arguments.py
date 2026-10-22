@@ -24,11 +24,22 @@ def rejected_profile(exe, args, message):
         raise RuntimeError(f"{message}: exit={result.returncode}; stderr={result.stderr!r}")
 
 
+def rejected_utility(exe, args, message):
+    result = subprocess.run([exe, *args], capture_output=True, timeout=5)
+    if result.returncode != 2 or b"utility startup failed" not in result.stderr:
+        raise RuntimeError(f"{message}: exit={result.returncode}; stderr={result.stderr!r}")
+
+
 def main():
     exe = sys.argv[1]
     with tempfile.TemporaryDirectory(prefix="openrepublic-desktop-checkpoint-args-") as folder:
         directory = Path(folder)
         absent = str(directory / "absent.checkpoint")
+        rejected_utility(exe, ["--utility-resource"], "missing utility name")
+        rejected_utility(exe, ["--utility-resource", ""], "empty utility name")
+        rejected_utility(exe, ["--utility-resource", "power"], "utility requires imported region")
+        rejected_utility(exe, ["--utility-resource", "bad name"], "invalid utility name")
+        rejected_utility(exe, ["--utility-resource", "power", "--utility-resource", "power"], "duplicate utility name")
         rejected_profile(exe, ["--storage-profile"], "missing storage profile path")
         rejected_profile(exe, ["--storage-profile", ""], "empty storage profile path")
         rejected_profile(exe, ["--storage-profile", absent], "profile requires imported region")
@@ -61,7 +72,7 @@ def main():
                              ("--economy-url", ["http://127.0.0.1:8950"]),
                              ("--scene-pipe-name", ["not-opened"]),
                              ("--capture-preview", ["missing.png"]), ("--nmf-unlit-preview", []),
-                             ("--storage-profile", ["missing.profile"])):
+                             ("--storage-profile", ["missing.profile"]), ("--utility-resource", ["power"])):
             rejected(exe, ["--economy-checkpoint", absent, flag, *values], "exclusive flag " + flag)
             rejected_native(exe, ["--native-economy", flag, *values], "exclusive native economy flag " + flag)
     print("PASS: desktop checkpoint/native-economy startup rejects bad arguments before UI initialization.")

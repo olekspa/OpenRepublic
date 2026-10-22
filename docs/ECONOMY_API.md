@@ -1,5 +1,14 @@
 # OpenRepublic Economy API v0
 
+**Utility extension (22 October 2026):** catalog resources now expose `utility`;
+world queries include `utilityConnections` and support bounded kind
+`utility_connections`. Controller actions `connect_utility` and
+`disconnect_utility` take `resource`, `a`, `b` through the existing strict
+session/revision-bound submit/poll contract. Utility resources cannot be stored
+or hauled. Utility recipes/state/history use native world v4; material-only
+legacy v2/v3 writing remains. The checkpoint wrapper stays v1. See
+[utility contracts](UTILITY_NETWORKS.md) and the [acceptance report](DEVELOPMENT_REPORT_2026-10-22_UTILITIES.md).
+
 `OpenRepublicEconomyApi` exposes the deterministic `economy::World` and immutable
 `economy::Catalog` through typed calls. `OpenRepublicEconomyHost` provides a
 trusted-local JSONL adapter. The API and protocol versions are both `0` and are

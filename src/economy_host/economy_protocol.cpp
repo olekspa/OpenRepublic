@@ -305,6 +305,14 @@ std::string Failure(economy::CommandFailure e) {
     return "parse_invalid";
   case F::CargoInTransit:
     return "cargo_in_transit";
+  case F::DuplicateUtilityConnection:
+    return "duplicate_utility_connection";
+  case F::MissingUtilityConnection:
+    return "missing_utility_connection";
+  case F::InvalidUtilityConnection:
+    return "invalid_utility_connection";
+  case F::ReferencedByUtilityConnection:
+    return "referenced_by_utility_connection";
   }
   return "unknown_failure";
 }
@@ -416,6 +424,10 @@ std::string Action(economy_api::Action action) {
     return "export_checkpoint";
   case A::CompactCommandHistory:
     return "compact_command_history";
+  case A::ConnectUtility:
+    return "connect_utility";
+  case A::DisconnectUtility:
+    return "disconnect_utility";
   case A::PollCommand:
     return "poll_command";
   case A::ReadEvents:
@@ -459,7 +471,7 @@ Json CommandHistory(const economy::CommandHistorySnapshot &history) {
 Json Catalog(const economy_api::CatalogView &c) {
   Json resources = Json::array(), buildings = Json::array(), vehicles = Json::array();
   for (const auto &r : c.resources)
-    resources.push_back(Json{{"id", r.id}, {"name", r.name}});
+    resources.push_back(Json{{"id", r.id}, {"name", r.name}, {"utility", r.utility}});
   for (const auto &b : c.buildingTypes) {
     Json storage = Json::array(), recipes = Json::array();
     for (const auto &s : b.storage)
@@ -493,6 +505,7 @@ Json Catalog(const economy_api::CatalogView &c) {
 }
 Json World(const economy_api::WorldView &w) {
   Json buildings = Json::array(), roads = Json::array(), vehicles = Json::array(), orders = Json::array();
+  Json utilityConnections = Json::array();
   for (const auto &b : w.buildings) {
     Json inventory = Json::array();
     for (const auto &i : b.inventory)
@@ -527,10 +540,13 @@ Json World(const economy_api::WorldView &w) {
                           {"failure", HaulFailure(o.failure)},
                           {"cargo", std::to_string(o.cargo)},
                           {"vehicleCell", Cell(o.vehicleCell)}});
+  for (const auto &u : w.utilityConnections)
+    utilityConnections.push_back(Json{{"resource", u.resource}, {"a", u.a}, {"b", u.b}});
   return Json{{"apiVersion", w.apiVersion},     {"revision", std::to_string(w.revision)},
               {"tick", std::to_string(w.tick)}, {"stateHash", std::to_string(w.stateHash)},
               {"buildings", buildings},         {"roads", roads},
               {"vehicles", vehicles},           {"orders", orders},
+              {"utilityConnections", utilityConnections},
               {"commandHistory", CommandHistory(w.commandHistory)}};
 }
 Json Result(const Json &id, Json value) {
@@ -715,6 +731,10 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                                   {"state", Haul(order.state)},
                                   {"cargo", std::to_string(order.cargo)},
                                   {"vehicleCell", Cell(order.vehicleCell)}});
+        for (const auto &connection : q.page.utilityConnections)
+          entities.push_back(Json{{"resource", connection.resource},
+                                  {"a", connection.a},
+                                  {"b", connection.b}});
         out = Json{{"errorCode", Error(q.error)},
                    {"revision", std::to_string(q.page.revision)},
                    {"kind", q.page.kind},
@@ -746,6 +766,10 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     std::map<std::string, const economy_api::BuildingTypeInfo *> types;
     for (const auto &t : catalog.buildingTypes)
       types[t.name] = &t;
+    std::set<std::string> utilityResources;
+    for (const auto &resource : catalog.resources)
+      if (resource.utility)
+        utilityResources.insert(resource.name);
     auto cellDistance = [](economy::Cell a, economy::Cell b) {
       return std::abs(static_cast<long long>(a.x) - b.x) + std::abs(static_cast<long long>(a.z) - b.z);
     };
@@ -759,6 +783,8 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         continue;
       std::set<std::string> asked;
       for (const auto &input : found->second->recipes.front().inputs) {
+        if (utilityResources.count(input.resource))
+          continue;
         if (!asked.insert(input.resource).second)
           continue;
         std::uint64_t held = 0;
@@ -816,6 +842,8 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         for (const auto &out : r.outputs)
           outputs.insert(out.resource);
       for (const auto &resource : outputs) {
+        if (utilityResources.count(resource))
+          continue;
         bool consumed = false;
         for (const auto &other : q.world.buildings) {
           const auto ot = types.find(other.type);
@@ -1190,6 +1218,19 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         return invalid(message);
       s = api_->RetargetHaulOrder(revision, static_cast<economy::OrderId>(id1),
                                  static_cast<economy::BuildingId>(id2));
+    } else if (kind == "connect_utility" || kind == "disconnect_utility") {
+      if (!NestedFields(c, {"kind", "resource", "a", "b"}, message))
+        return invalid(message);
+      if (!String(c, "resource", resource, message) ||
+          !Unsigned(c, "a", UINT32_MAX, id1, message) ||
+          !Unsigned(c, "b", UINT32_MAX, id2, message))
+        return invalid(message);
+      if (kind == "connect_utility")
+        s = api_->ConnectUtility(revision, resource, static_cast<economy::BuildingId>(id1),
+                                 static_cast<economy::BuildingId>(id2));
+      else
+        s = api_->DisconnectUtility(revision, resource, static_cast<economy::BuildingId>(id1),
+                                    static_cast<economy::BuildingId>(id2));
     } else
       return invalid("unknown command kind");
     out =

@@ -55,6 +55,23 @@ int main() {
                   economy::WriteCatalogText(out) == economy::WriteCatalogText(snapshot),
               std::string("rejected without changing output: ") + text);
     }
+    economy::Catalog utilityBase;
+    economy::ParseError utilityParse;
+    Check(economy::ParseCatalogText(
+        "openrepublic-economy 1\nresource coal\nutility power\n"
+        "building generator 1 1\nstore coal 8\nrecipe generate every 1 in coal:1 out power:3\nend\n",
+        utilityBase, utilityParse), "utility tuning base catalog parses");
+    economy::Catalog utilityTuned;
+    Check(scripting::EconomyRules::ApplyText("return { schema_version = 1 }", utilityBase, utilityTuned, &error) &&
+          economy::WriteCatalogText(utilityTuned) == economy::WriteCatalogText(utilityBase) &&
+          utilityTuned.Resources().size() == 2 && utilityTuned.Resources()[1].utility,
+          "Lua catalog rebuild preserves utility kind and recipe without inventing storage");
+    const std::string utilityBefore = economy::WriteCatalogText(utilityTuned);
+    Check(!scripting::EconomyRules::ApplyText(
+        "return { schema_version = 1, buildings = { generator = { speed_percent = 50 } } }",
+        utilityBase, utilityTuned, &error) && !error.empty() &&
+        economy::WriteCatalogText(utilityTuned) == utilityBefore,
+        "unsupported longer utility intervals reject transactionally during tuning");
     if (failures != 0) {
         std::cerr << failures << " economy-rules test(s) failed\n";
         return 1;

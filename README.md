@@ -1,5 +1,7 @@
 # OpenRepublic
 
+**Utility networks (22 October 2026):** finite connected supply/demand now runs in the shared C++ economy, with fuel gates, GUI/API connect/disconnect, native links and v4 persistence. An authored fuel-to-power-to-iron chain delivers40 units; GUI disconnection/reconnection matches exact headless hashes. Full Release builds succeed; CTest **64/64 client**, **63/63 headless**. Original utility parity remains open. See [utility usage](docs/UTILITY_NETWORKS.md) and [evidence](docs/DEVELOPMENT_REPORT_2026-10-22_UTILITIES.md).
+
 **Storage integration (22 October 2026):** imported-region desktop/host modes now accept optional authored capacity profiles and supported storage-only buildings. A synthetic process test delivers to the exact depot capacity and resumes an identical checkpoint. Full Release builds succeed; CTest passes **60/60 client** and **59/59 headless**. Real-content profile/utility parity remains open. See the [storage-profile report](docs/DEVELOPMENT_REPORT_2026-10-22_STORAGE_PROFILES.md).
 
 **Real-content follow-up:** the integrated region toolbar now has a live exact-binding/iron-haul acceptance check on one real-content region. The independent order waits for missing source stock; original production-state import and gameplay parity remain open. Vehicle labels stay readable with detailed values in tooltips. See the [real-region evidence](docs/DEVELOPMENT_REPORT_2026-10-22_REAL_REGION.md).

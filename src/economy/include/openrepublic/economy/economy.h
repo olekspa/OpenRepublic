@@ -50,6 +50,7 @@ struct RecipeDef {
 struct ResourceDef {
     ResourceId id{};
     std::string name;
+    bool utility{};
 };
 struct BuildingTypeDef {
     BuildingTypeId id{};
@@ -83,7 +84,9 @@ enum class CatalogError : std::uint8_t {
     MissingStorage,
     EmptyCatalog,
     TooManyDefinitions,
-    InvalidRecipeName
+    InvalidRecipeName,
+    UtilityHasStorage,
+    InvalidUtilityRecipe
 };
 struct CatalogErrorInfo {
     CatalogError code{CatalogError::None};
@@ -124,6 +127,8 @@ class CatalogBuilder final {
 public:
     /** Adds a unique resource and returns its dense ID. */
     bool AddResource(std::string_view name, ResourceId *outId, CatalogErrorInfo &error);
+    /** Adds a resource that is supplied through explicit utility connections and cannot be stored or hauled. */
+    bool AddUtilityResource(std::string_view name, ResourceId *outId, CatalogErrorInfo &error);
     /** Adds a positive-footprint building type and returns its dense ID. */
     bool AddBuildingType(std::string_view name, std::uint32_t width, std::uint32_t depth,
                          BuildingTypeId *outId, CatalogErrorInfo &error);
@@ -212,7 +217,11 @@ enum class CommandFailure : std::uint8_t {
     StepLimitExceeded,
     SaveInvalid,
     ParseInvalid,
-    CargoInTransit
+    CargoInTransit,
+    DuplicateUtilityConnection,
+    MissingUtilityConnection,
+    InvalidUtilityConnection,
+    ReferencedByUtilityConnection
 };
 enum class CommandState : std::uint8_t {
     Unknown = 0,
@@ -310,6 +319,11 @@ struct HaulOrderSnapshot {
     std::uint64_t cargo{};
     Cell vehicleCell{};
 };
+struct UtilityConnectionSnapshot {
+    ResourceId resource{};
+    BuildingId a{};
+    BuildingId b{};
+};
 struct WorldSnapshot {
     std::uint32_t gridWidth{};
     std::uint32_t gridDepth{};
@@ -321,6 +335,7 @@ struct WorldSnapshot {
     std::vector<RoadSnapshot> roads;
     std::vector<VehicleSnapshot> vehicles;
     std::vector<HaulOrderSnapshot> orders;
+    std::vector<UtilityConnectionSnapshot> utilityConnections;
 };
 
 /** Worker threads for the per-building production phase (0 = hardware concurrency, 1 = serial).
@@ -361,6 +376,10 @@ public:
     /** Queues a new destination while preserving the order, vehicle, source, resource, and cargo.
      *  A loaded vehicle routes from its current cell; an empty vehicle returns to source first. */
     CommandId RetargetHaulOrder(OrderId order, BuildingId destination);
+    /** Queues a canonical undirected utility link between two live buildings. */
+    CommandId ConnectUtility(ResourceId resource, BuildingId a, BuildingId b);
+    /** Queues removal of an existing undirected utility link. */
+    CommandId DisconnectUtility(ResourceId resource, BuildingId a, BuildingId b);
     /** Swaps in a tuned catalog of identical structure (names, ids, recipe and storage layout) between ticks.
      *  Rejects the swap, leaving the world untouched, if the structure differs or building inventory
      *  or onboard cargo would exceed a reduced capacity. The new catalog must outlive the world. */

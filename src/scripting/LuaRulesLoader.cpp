@@ -427,7 +427,7 @@ namespace openrepublic::scripting
 		for (const auto& r : base.Resources())
 		{
 			economy::ResourceId id;
-			if (!builder.AddResource(r.name, &id, info))
+			if (!(r.utility ? builder.AddUtilityResource(r.name, &id, info) : builder.AddResource(r.name, &id, info)))
 			{
 				return failed();
 			}

@@ -48,12 +48,20 @@ namespace openrepublic::preview
 			double centerX{}, centerZ{}, width{}, depth{};
 			bool enabled{};
 		};
+		struct UtilityVisual
+		{
+			wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
+			economy::ResourceId resource{};
+			economy::BuildingId a{}, b{};
+			double centerX{}, centerZ{}, centerY{}, halfLength{}, yaw{};
+		};
 
 		bool initialized_ = false;
 		wi::ecs::Entity groundEntity_ = wi::ecs::INVALID_ENTITY;
 		std::optional<runtime::NativeEconomyTransform> transform_;
 		std::unordered_map<economy::BuildingId, BuildingVisual> buildings_;
 		std::unordered_map<economy::RoadId, RoadVisual> roads_;
+		std::vector<UtilityVisual> utilityConnections_;
 		std::unordered_map<wi::ecs::Entity, economy::BuildingId> buildingByEntity_;
 		float cameraDistance_ = 20.0f;
 		DirectX::XMFLOAT3 cameraTarget_{};

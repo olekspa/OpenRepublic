@@ -114,6 +114,7 @@ namespace openrepublic
 		openrepublic::economy::World* ActiveOwnedEconomyWorld() noexcept;
 		const openrepublic::economy::World* ActiveOwnedEconomyWorld() const noexcept;
 		void QueueNativeOrderChange(bool retarget);
+		void QueueNativeUtilityConnection(bool connect);
 		void QueueNativeRoadToggle();
 		void SaveNativeCheckpoint();
 		void LayoutNativeControls();

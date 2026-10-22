@@ -29,6 +29,11 @@ target_link_libraries(OpenRepublicCommandHistoryTests PRIVATE OpenRepublicEconom
 target_compile_features(OpenRepublicCommandHistoryTests PRIVATE cxx_std_17)
 add_test(NAME EconomyCommandHistory COMMAND OpenRepublicCommandHistoryTests)
 
+add_executable(OpenRepublicEconomyUtilityTests utility_tests.cpp)
+target_link_libraries(OpenRepublicEconomyUtilityTests PRIVATE OpenRepublicEconomy)
+target_compile_features(OpenRepublicEconomyUtilityTests PRIVATE cxx_std_17)
+add_test(NAME EconomyUtility COMMAND OpenRepublicEconomyUtilityTests)
+
 
 add_executable(OpenRepublicEconomyBench economy_bench.cpp)
 target_link_libraries(OpenRepublicEconomyBench PRIVATE OpenRepublicEconomy)

@@ -201,3 +201,23 @@ original-game behavior. Keep current and pre-update GUI input guards so palette
 interaction cannot also issue world placement. Source/tests, GUI observations,
 checkpoint replay and unverified keyboard/performance acceptance remain separate.
 See the [native construction report](DEVELOPMENT_REPORT_2026-10-22_NATIVE_CONSTRUCTION.md).
+
+## D-014: Utilities are finite tick supply on explicit resource networks
+
+**Date:** 22 October 2026. **Status:** accepted for the independent native economy.
+
+Declare utilities in the immutable catalog; forbid warehouse stock and vehicle cargo.
+Keep explicit resource-specific undirected building links in authoritative C++ state,
+mutated through queued revision/session-checked API commands shared by GUI and agents.
+Generators commit enabled/fuel/material-output checks before offering supply; consumers
+receive complete demand in building/recipe order only after all resource/output gates.
+Use exact aggregate accounting, discard surplus, and document always-on fuel burn.
+Utility recipes require interval one and generators cannot consume utilities in this
+first model. Capacity/loss/voltage/startup power and original-game parity remain open.
+
+Persist links, retained utility command identity and stall receipts as native v4 when
+required, including isolated utility recipes and no-edge history. Preserve material-only
+v2/v3 bytes, exact checkpoint catalogs and fail-closed older readers. Compatibility
+utility declarations are explicit opt-in names, never a consumption bypass or automatic
+original topology claim. Lua tuning preserves kinds. See [utility contracts](UTILITY_NETWORKS.md)
+and [verification](DEVELOPMENT_REPORT_2026-10-22_UTILITIES.md).

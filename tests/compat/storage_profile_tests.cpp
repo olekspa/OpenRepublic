@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <chrono>
 #include <string>
 
 namespace {
@@ -10,6 +11,21 @@ using openrepublic::compat::ParseStorageCapacityProfile;
 using openrepublic::compat::StorageCapacityFactors;
 
 int failures = 0;
+
+std::filesystem::path MakeTempDirectory() {
+    const auto base = std::filesystem::temp_directory_path();
+    const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    for (int attempt = 0; attempt < 128; ++attempt) {
+        const auto root = base / ("openrepublic-storage-profile-" +
+                                  std::to_string(nonce) + "-" + std::to_string(attempt));
+        std::error_code error;
+        if (std::filesystem::create_directory(root, error))
+            return root;
+        if (error && error != std::errc::file_exists)
+            break;
+    }
+    return {};
+}
 
 void Check(bool condition, const char *message) {
     if (condition)
@@ -78,19 +94,24 @@ int main() {
     }
     Reject(tooMany, "profiles with more than 4096 rows are rejected");
 
-    const auto temp = std::filesystem::temp_directory_path() / "openrepublic-storage-profile-test.txt";
+    const auto root = MakeTempDirectory();
+    Check(!root.empty(), "create unique temporary directory for file fixtures");
+    if (root.empty())
+        return 1;
+
+    const auto temp = root / "storage-profile.txt";
     {
         std::ofstream output(temp, std::ios::binary | std::ios::trunc);
         output << "OPENREPUBLIC_STORAGE_PROFILE 1\nFACTOR COVERED grain 3.5\n";
     }
     factors.clear();
-    Check(openrepublic::compat::LoadStorageCapacityProfile(temp.string(), factors, error),
-          "profile loader reads a bounded file");
-    Check(factors.size() == 1 && factors.at({"COVERED", "grain"}) == 3.5,
+    const bool loaded = openrepublic::compat::LoadStorageCapacityProfile(temp.string(), factors, error);
+    Check(loaded, "profile loader reads a bounded file");
+    Check(loaded && factors.size() == 1 && factors.at({"COVERED", "grain"}) == 3.5,
           "file loader returns parsed factors");
     std::filesystem::remove(temp);
 
-    const auto oversized = std::filesystem::temp_directory_path() / "openrepublic-storage-profile-oversized.txt";
+    const auto oversized = root / "storage-profile-oversized.txt";
     {
         std::ofstream output(oversized, std::ios::binary | std::ios::trunc);
         output << "OPENREPUBLIC_STORAGE_PROFILE 1\n";
@@ -103,6 +124,9 @@ int main() {
           "file loader rejects an oversized input before parsing");
     Check(factors == before, "oversized file leaves output map unchanged");
     std::filesystem::remove(oversized);
+    std::error_code cleanupError;
+    std::filesystem::remove_all(root, cleanupError);
+    Check(!cleanupError, "remove only this test process's temporary directory");
 
     std::cout << (failures == 0 ? "PASS" : "FAIL") << ": storage profile tests ("
               << failures << " failures)\n";

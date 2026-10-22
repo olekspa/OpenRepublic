@@ -61,6 +61,10 @@ WorldView MakeWorld(const economy::Catalog& c, const economy::WorldSnapshot& s) 
         v.orders.push_back({x.id, x.source, x.destination, r ? r->name : "",
             t ? t->name : "", x.vehicle, x.state, x.failure, x.cargo, x.vehicleCell});
     }
+    for (const auto& x : s.utilityConnections) {
+        const auto* r = c.Resource(x.resource);
+        v.utilityConnections.push_back({r ? r->name : "", x.a, x.b});
+    }
     return v;
 }
 }
@@ -88,7 +92,7 @@ Capabilities EconomyApi::DiscoverCapabilities() const {
         c.actions.insert(c.actions.end(), {Action::Step, Action::PlaceBuilding, Action::RemoveBuilding,
             Action::BuildRoad, Action::SetRoadEnabled, Action::SetBuildingEnabled,
             Action::CreateHaulOrder, Action::CancelHaulOrder, Action::RetargetHaulOrder,
-            Action::CompactCommandHistory});
+            Action::CompactCommandHistory, Action::ConnectUtility, Action::DisconnectUtility});
     }
     return c;
 }
@@ -158,7 +162,7 @@ CatalogView EconomyApi::DescribeCatalog() const {
         return v;
     }
     for (const auto& r : catalog_->Resources()) {
-        v.resources.push_back({r.id, r.name});
+        v.resources.push_back({r.id, r.name, r.utility});
     }
     for (const auto& b : catalog_->BuildingTypes()) {
         BuildingTypeInfo x{b.id, b.name, b.width, b.depth, {}, {}};
@@ -238,6 +242,14 @@ PageQuery EconomyApi::QueryWorld(std::uint64_t revision, const std::string& kind
         }
         const auto end = offset + std::min(limit, p.total - offset);
         p.orders.assign(all.orders.begin() + offset, all.orders.begin() + end);
+    } else if (kind == "utility_connections") {
+        p.total = all.utilityConnections.size();
+        if (offset > p.total) {
+            return {ErrorCode::InvalidArgument, {}};
+        }
+        const auto end = offset + std::min(limit, p.total - offset);
+        p.utilityConnections.assign(all.utilityConnections.begin() + offset,
+            all.utilityConnections.begin() + end);
     } else {
         return {ErrorCode::InvalidArgument, {}};
     }
@@ -371,6 +383,40 @@ Submission EconomyApi::RetargetHaulOrder(std::uint64_t revision, economy::OrderI
     if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
         return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->RetargetHaulOrder(id, destination));
+}
+Submission EconomyApi::ConnectUtility(std::uint64_t revision, const std::string& resource,
+    economy::BuildingId a, economy::BuildingId b) {
+    if (!Allowed(true)) {
+        return {ErrorCode::PermissionDenied, 0, {}};
+    }
+    if (world_->Revision() != revision) {
+        return {ErrorCode::StaleRevision, 0, {}};
+    }
+    economy::ResourceId id{};
+    const auto* definition = catalog_->FindResource(resource, id) ? catalog_->Resource(id) : nullptr;
+    if (!definition || !definition->utility) {
+        return {ErrorCode::InvalidArgument, 0, {}};
+    }
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
+    return Submit(revision, world_->ConnectUtility(id, a, b));
+}
+Submission EconomyApi::DisconnectUtility(std::uint64_t revision, const std::string& resource,
+    economy::BuildingId a, economy::BuildingId b) {
+    if (!Allowed(true)) {
+        return {ErrorCode::PermissionDenied, 0, {}};
+    }
+    if (world_->Revision() != revision) {
+        return {ErrorCode::StaleRevision, 0, {}};
+    }
+    economy::ResourceId id{};
+    const auto* definition = catalog_->FindResource(resource, id) ? catalog_->Resource(id) : nullptr;
+    if (!definition || !definition->utility) {
+        return {ErrorCode::InvalidArgument, 0, {}};
+    }
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
+    return Submit(revision, world_->DisconnectUtility(id, a, b));
 }
 PollResult EconomyApi::PollCommand(std::uint64_t h) const {
     if (!permissions_.query) {

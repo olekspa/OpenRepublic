@@ -40,7 +40,7 @@ namespace
 			L"--showcase-camera", L"--scene-pipe-name", L"--showcase-sun", L"--building-type",
 			L"--building-lod", L"--nmf-texture-root", L"--nmf-unlit-preview",
 			L"--nmf-material-unlit-preview", L"--capture-preview", L"--capture-preview-zoom",
-			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform", L"--storage-profile" };
+			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform", L"--storage-profile", L"--utility-resource" };
 		return std::find(std::begin(incompatible), std::end(incompatible), argument) != std::end(incompatible);
 	}
 
@@ -72,17 +72,17 @@ namespace
 		return true;
 	}
 
+	// Pre-initialization failures use stderr only. Starting the engine's async
+	// logger immediately before CRT teardown can race its worker initialization.
 	int LogCheckpointStartupError(const std::string& error)
 	{
 		std::fprintf(stderr, "OpenRepublic economy checkpoint startup failed: %s\n", error.c_str());
-		wilog("[OpenRepublic] economy checkpoint startup failed: %s", error.c_str());
 		return 2;
 	}
 
 	int LogNativeEconomyStartupError(const std::string& error)
 	{
 		std::fprintf(stderr, "OpenRepublic native economy startup failed: %s\n", error.c_str());
-		wilog("[OpenRepublic] native economy startup failed: %s", error.c_str());
 		return 2;
 	}
 
@@ -213,6 +213,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::filesystem::path storageProfilePath;
 	bool storageProfileGiven = false;
 	std::string storageProfileError;
+	bool utilityResourceGiven = false;
+	std::string utilityResourceError;
 	openrepublic::compat::CatalogImportOptions regionCatalogOptions;
 	std::filesystem::path mapPackage;
 	std::size_t mapBuildingIndex = 0;
@@ -316,6 +318,27 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			else if (std::wstring_view(arguments[i]) == L"--content-root" && i + 1 < argumentCount)
 			{
 				contentRoot = arguments[++i];
+			}
+			else if (argument == L"--utility-resource")
+			{
+				utilityResourceGiven = true;
+				if (i + 1 >= argumentCount || std::wstring_view(arguments[i + 1]).empty() ||
+					std::wstring_view(arguments[i + 1]).rfind(L"--", 0) == 0)
+				{
+					utilityResourceError = "--utility-resource requires a resource name";
+					continue;
+				}
+				const std::wstring_view name = arguments[++i];
+				if (name.size() > 96 || std::any_of(name.begin(), name.end(), [](wchar_t c) {
+					return c <= 32 || c > 126 || c == L'#'; }))
+					utilityResourceError = "--utility-resource requires a valid ASCII resource name";
+				else
+				{
+					std::string narrowName;
+					for (wchar_t c : name) narrowName.push_back(static_cast<char>(c));
+					if (!regionCatalogOptions.utilityResources.emplace(std::move(narrowName)).second)
+						utilityResourceError = "--utility-resource names must be distinct";
+				}
 			}
 			else if (argument == L"--storage-profile")
 			{
@@ -810,6 +833,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			return LogNativeEconomyStartupError(layoutError);
 		}
 	}
+	if (utilityResourceGiven)
+	{
+		if (utilityResourceError.empty() && (mapPackage.empty() || !mapRegion || contentRoot.empty() ||
+			economyUrlArgumentSeen || syntheticRegionFixture || !nmfCapturePaths.empty() || !mapShowcaseCapturePath.empty()))
+			utilityResourceError = "--utility-resource requires an app-owned --map-package --map-region --content-root economy";
+		if (!utilityResourceError.empty())
+		{
+			std::fprintf(stderr, "OpenRepublic utility startup failed: %s\n", utilityResourceError.c_str());
+			return 2;
+		}
+	}
 	if (storageProfileGiven)
 	{
 		if (storageProfileError.empty() && (mapPackage.empty() || !mapRegion || contentRoot.empty() ||
@@ -821,7 +855,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		if (!storageProfileError.empty())
 		{
 			std::fprintf(stderr, "OpenRepublic storage profile startup failed: %s\n", storageProfileError.c_str());
-			wilog("[OpenRepublic] storage profile startup failed: %s", storageProfileError.c_str());
 			return 2;
 		}
 	}
