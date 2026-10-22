@@ -623,7 +623,7 @@ namespace openrepublic
 				// direct contribution so camera-facing building surfaces read as sunlit.
 				light->intensity = customSun ? 12.0f : 6.0f;
 				light->forced_shadow_resolution = 2048;
-				light->SetCastShadow(true);
+				light->SetCastShadow(std::getenv("OR_NOSHADOW") == nullptr); // debug switch
 				light->SetVolumetricCloudsEnabled(true);
 			}
 		}
