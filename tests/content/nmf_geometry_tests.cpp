@@ -630,8 +630,8 @@ void TestNmfPreviewGeometryNormalizationAndSourceOrder() {
               preview.cameraTarget.y == 5 && preview.cameraTarget.z == 0 &&
               preview.cameraDistance == 16.5f,
           "preview scale and framing metadata are derived from vertex extents");
-    Check(preview.indices == std::vector<std::uint32_t>{0, 2, 1},
-          "flattening preserves the original triangle index order");
+    Check(preview.indices == std::vector<std::uint32_t>{0, 1, 2},
+          "flattening reverses triangle winding by exchanging the second and third index");
     Check(preview.drawRanges.size() == 1 && preview.drawRanges[0].indexOffset == 0 &&
               preview.drawRanges[0].indexCount == 3 && preview.drawRanges[0].submaterialIndex == 0,
           "subset draw range and submaterial index are preserved");
@@ -662,8 +662,8 @@ void TestNmfPreviewGeometryRebasesObjectsAndPreservesSubsetOffsets() {
     std::string error;
     Check(BuildNmfPreviewGeometry(geometry, preview, &error),
           "multi-object preview geometry is built: " + error);
-    Check(preview.indices == std::vector<std::uint32_t>{2, 1, 0, 0, 1, 2, 1, 0, 2, 5, 3, 4},
-          "second object's indices are rebased while both objects retain index order");
+    Check(preview.indices == std::vector<std::uint32_t>{2, 0, 1, 0, 2, 1, 1, 2, 0, 5, 4, 3},
+          "second object's indices are rebased while both objects retain triangle order and reversed winding");
     Check(preview.drawRanges.size() == 3 &&
               preview.drawRanges[0].indexOffset == 0 && preview.drawRanges[0].indexCount == 3 &&
               preview.drawRanges[0].submaterialIndex == 0 &&
@@ -674,7 +674,9 @@ void TestNmfPreviewGeometryRebasesObjectsAndPreservesSubsetOffsets() {
           "subset offsets stay relative to the flattened index stream and tails are omitted per draw");
     Check(preview.ignoredSubsetIndexCount == 3 && preview.drawRangeTriangleCount == 3,
           "trailing per-subset indices and draw-range triangles are counted explicitly");
-    Check(preview.sourceNormalMask == std::vector<std::uint8_t>{1, 1, 1, 0, 0, 0} &&
+    Check(preview.sourceNormals.size() == preview.positions.size() &&
+              preview.sourceNormalMask.size() == preview.positions.size() &&
+              preview.sourceNormalMask == std::vector<std::uint8_t>{1, 1, 1, 0, 0, 0} &&
               preview.sourceNormals[0].x == 0.1f && preview.sourceNormals[2].z == 0.9f &&
               preview.sourceNormals[3].x == 0 && preview.sourceNormals[5].z == 0,
           "mixed source-normal presence remains aligned across object rebasing for renderer fallback");

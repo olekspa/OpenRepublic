@@ -147,11 +147,18 @@ bool BuildNmfPreviewGeometry(const NmfStaticGeometry& geometry,
                 }
             }
 
-            for (const std::uint32_t index : lod.indices) {
-                if (index >= lod.positions.size() ||
-                    index > std::numeric_limits<std::uint32_t>::max() - baseVertex)
-                    return Fail(error, "NMF normalized mesh contains an invalid index");
-                candidate.indices.push_back(baseVertex + index);
+            // Source triangles are wound opposite to Wicked's counter-clockwise front
+            // face (the right-handed cross product of every sampled triangle agrees
+            // with its stored vertex normal), so the second and third index of each
+            // triangle are exchanged. The parser guarantees a multiple of three.
+            for (std::size_t index = 0; index < lod.indices.size(); index += 3) {
+                for (const std::size_t offset : {std::size_t{0}, std::size_t{2}, std::size_t{1}}) {
+                    const std::uint32_t source = lod.indices[index + offset];
+                    if (source >= lod.positions.size() ||
+                        source > std::numeric_limits<std::uint32_t>::max() - baseVertex)
+                        return Fail(error, "NMF normalized mesh contains an invalid index");
+                    candidate.indices.push_back(baseVertex + source);
+                }
             }
 
             if (lod.subsets.empty()) {

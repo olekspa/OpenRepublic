@@ -1879,6 +1879,14 @@ namespace openrepublic
 				{
 					nmfPreviewLoaded = true;
 					uiNotice = description;
+					// Fill light so faces turned away from the preview sun remain legible; the
+					// synthetic scene keeps Wicked's default weather.
+					const wi::ecs::Entity weatherEntity = wi::ecs::CreateEntity();
+					previewWorld.names.Create(weatherEntity) = "OpenRepublic NMF preview weather";
+					wi::scene::WeatherComponent& weather = previewWorld.weathers.Create(weatherEntity);
+					weather.ambient = XMFLOAT3(0.55f, 0.55f, 0.6f);
+					weather.horizon = XMFLOAT3(0.55f, 0.6f, 0.7f);
+					weather.zenith = XMFLOAT3(0.45f, 0.55f, 0.75f);
 				}
 				else
 				{

@@ -24,13 +24,15 @@ struct NmfPreviewDrawRange {
 
 struct NmfPreviewGeometry {
     // Positions use the current diagnostic preview transform: positive uniform
-    // scale, X/Z recentered, minimum Y moved to zero. No axis or winding change.
+    // scale, X/Z recentered, minimum Y moved to zero. No axis change; triangle
+    // winding is reversed (indices 1 and 2 swapped) for Wicked's CCW front face.
     std::vector<NmfPosition> positions;
     // Source normals are retained byte-for-value at the parsed float level;
     // mask entries distinguish them from zero-filled vertices without normals.
     std::vector<NmfNormal> sourceNormals;
     std::vector<std::uint8_t> sourceNormalMask;
-    // The flattened index stream preserves object order and every source index.
+    // The flattened index stream preserves object order and every source index,
+    // with each triangle's second and third index exchanged (winding reversal).
     std::vector<std::uint32_t> indices;
     std::vector<NmfPreviewDrawRange> drawRanges;
 
@@ -50,7 +52,8 @@ struct NmfPreviewGeometry {
 
 // Builds the app's pure CPU-side geometry preview handoff from parsed static
 // objects. It does not interpret stored bounds or node matrices, modify source
-// axes/winding/normals, or claim that the preview transform matches the game.
+// axes/normals, or claim that the preview transform matches the game. Triangle
+// winding is reversed to match Wicked's front-face convention.
 // Only complete triangles in each observed subset draw range are counted. On
 // failure, output is unchanged.
 bool BuildNmfPreviewGeometry(const NmfStaticGeometry& geometry,

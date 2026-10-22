@@ -1,14 +1,15 @@
 # OpenRepublic development checkpoint
 
-**Checkpoint:** 2026-10-21 13:53:36 EDT (17:53:36 UTC)
+**Checkpoint:** 2026-10-21 (final status update after successful client Release rebuild)
 **Repository:** `D:\.CODEX_Projects\OpenRepublic`
-**Base revision:** `4b686ac` (`Verify long-horizon simulation replay`)
-**Branch:** `main`, tracking `origin/main`
-**Goal status:** Active; the playable-alpha objective is not complete.
+**Original M0 checkpoint base:** `4b686ac` (`Verify long-horizon simulation replay`)
+**Current committed revision:** `4cc14aa220f59ab46907e5ea03cda3a363aeb496` (`Add local texture preview and capture controls`)
+**Branch:** `main`, 11 commits ahead of `origin/main`
+**Goal status:** Paused at the project owner's request; the playable-alpha objective remains incomplete.
 
 ## Current milestone
 
-M0, the existing interactive logistics loop, has targeted code fixes and passing source/build checks. Its required full UI scenario is still **not runtime-accepted**. The next M0 action is to run the documented paused storage-placement, road, selection, route, delivery, full-destination, and isolated save/reload sequence through a working native-window automation surface. M1 model/material compatibility follows M0; this checkpoint does not claim it has started or passed.
+The active engineering milestone at pause is M1 visual verification for one authentic model. A private same-input ModelViewer image now shows the complete school after the user zoomed out. Existing OpenRepublic captures permit qualitative comparison, but camera and bounds are unmatched; geometry, material fidelity, and visual acceptance remain **UNKNOWN**. M0's full interactive logistics scenario also remains **not runtime-accepted**. The master playable-alpha goal is incomplete and paused, not achieved.
 
 ## Work completed in this checkpoint
 
@@ -379,3 +380,30 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - The local texture preview remains an experiment: slot-to-map and slot-to-UV relationships are inferred, not accepted source behavior. No geometry or material correction is justified by the unmatched comparison.
 - **PUBLICATION GATE — D-005:** keep the asset-reading runtime local and unpublished pending rights-holder clarification or appropriate legal review. No original game file or save was modified.
 - Next: use the adjustable capture view for a more comparable reference frame, then make only render-path changes supported by that comparison.
+
+## Continuation — full-model reference framing (21 October 2026)
+
+- The user zoomed out the same-input ModelViewer reference so the complete school is visible in a retained private three-quarter image. It shows the multi-storey mass, repeated windows and entrance; this removes the earlier cropping obstacle and supports a whole-model qualitative comparison.
+- OpenRepublic's existing 11-view application-owned captures include the same private input, with optional zoom/elevation. Some views show a strongly stepped/ribbed facade silhouette, while the ModelViewer reference shows a continuous windowed facade. This is an **OBSERVED** difference between unmatched views; exact camera orientation, bounds, source LOD and viewer transforms are not established.
+- No geometry or material correction is justified by this comparison alone. Source axes, world dimensions, topology completeness, winding, transform interpretation and texture-slot/UV semantics remain **UNKNOWN** or **INFERRED** as previously documented.
+- A synthetic mixed-normal regression now explicitly checks that both the flattened normal vector and source-normal mask match the flattened vertex count, and that only vertices with source normals are marked for source-normal application.
+- **PUBLICATION GATE — D-005:** keep the asset-reading runtime local and unpublished. The shared Agent API and synthetic integration remain on the published baseline; the 11 local commits are scoped to the NMF preview path and are not a safe publishable subset while D-005 is unresolved.
+
+## Takeover increment — winding fix, ambient fill and textured school (21 October 2026)
+
+- **Root cause of the "stepped/ribbed, dark" facade:** NMF triangles are wound opposite to Wicked's CCW front face, so every outward wall was culled and interiors were visible. The ribs are real window-reveal geometry. `BuildNmfPreviewGeometry` now exchanges indices 1 and 2 per triangle (data-driven: 418/418 school and 3791/3791 second-model triangles agree with stored normals). The NMF preview also adds a fill-light weather (ambient/horizon/zenith) so lit captures are legible.
+- **Independent geometry evidence:** a Python mirror of the parser reproduces every object's declared bounds exactly, and a software rasteriser with `_TC0` and slot-0 DDS (no V flip) gives a coherent textured facade. See the ledger entries dated 21 October 2026 (Claude takeover). A ModelViewer matched-view comparison is still not retained; that acceptance item remains UNKNOWN.
+- Lit and material-unlit Wicked captures of the school (zoom 2.0, elevation 25) show a recognizable textured building with doors, windows and entrance stairs. Captures live in the private research `scratch\claude-captures` folder, outside Git.
+- **VERIFIED:** client Release build, CTest 15/15; headless Release build, CTest 14/14 (run after the final source change).
+- **UNKNOWN:** slot 1/2 (specular/bump) semantics, `_TC1`, alpha/colour space, orientation against the game world frame. **D-005:** NMF runtime stays local and unpublished.
+- Next: second structurally different model, then specular/bump loader trace; keep unmatched-view caveats.
+
+## Pause status — 21 October 2026
+
+- At the project owner's request, development is paused with the master playable-alpha goal still incomplete. No further code work is planned in this checkpoint.
+- **VERIFIED — Windows Release build:** the full configured client build completed successfully after the mixed-normal test assertion was added. This confirms the changed test source compiles; the client CTest suite was not rerun afterward.
+- **TEST STATUS:** the last client/headless CTest receipts remain 15/15 and 14/14 from before that assertion. Neither suite was rerun in this pause turn; the headless build was not rebuilt after the assertion.
+- **OBSERVED — visual reference:** the user zoomed out the same-input ModelViewer view to show the complete school. The existing OpenRepublic views remain unmatched for camera and bounds, so the visible facade difference does not justify a geometry or shading correction.
+- **PUBLICATION STATUS:** branch `main` is 11 commits ahead of `origin/main` at `4cc14aa220f59ab46907e5ea03cda3a363aeb496`. The unpublished commits are NMF reader/preview work covered by D-005; no push or release was made. The published synthetic simulation and Agent API remain on the public baseline.
+- **WORKTREE:** the latest documentation reconciliation and mixed-normal regression assertion are uncommitted in `README.md`, `docs/DEVELOPMENT_CHECKPOINT.md`, `docs/PROJECT_PLAN.md`, `docs/REVERSE_ENGINEERING_LEDGER.md`, and `tests/content/nmf_geometry_tests.cpp`. No original game payload, capture, or private research data was added.
+- **Resume sequence:** rerun the client and headless CTest suites, then perform a camera/bounds-matched comparison and model-space geometry check before proposing a render correction. Reassess D-005 before any publication.
