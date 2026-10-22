@@ -1,17 +1,22 @@
 # OpenRepublic development checkpoint
 
-**Checkpoint:** 2026-10-21 (final status update after successful client Release rebuild)
+**Checkpoint:** 2026-10-22 EDT / 04:23 UTC (development continued; map LOD selection/fallback verified)
 **Repository:** `D:\.CODEX_Projects\OpenRepublic`
-**Original M0 checkpoint base:** `4b686ac` (`Verify long-horizon simulation replay`)
-**Current committed revision:** `4cc14aa220f59ab46907e5ea03cda3a363aeb496` (`Add local texture preview and capture controls`)
-**Branch:** `main`, 11 commits ahead of `origin/main`
-**Goal status:** Paused at the project owner's request; the playable-alpha objective remains incomplete.
+**Current code-bearing revision:** `a28ac80` (`Add selectable LODs to map previews`)
+**Branch:** `main`, synchronized with `origin/main`
+**Development status:** Active under the owner's latest continuation request. **Persistent goal status:** Active and incomplete.
 
 ## Current milestone
 
-The active engineering milestone at pause is M1 visual verification for one authentic model. A private same-input ModelViewer image now shows the complete school after the user zoomed out. Existing OpenRepublic captures permit qualitative comparison, but camera and bounds are unmatched; geometry, material fidelity, and visual acceptance remain **UNKNOWN**. M0's full interactive logistics scenario also remains **not runtime-accepted**. The master playable-alpha goal is incomplete and paused, not achieved.
+The active fidelity milestone is one authentic model. A fresh Release run resolved the `school` type and declared model/material, then captured three regular and three material-retaining force-unlit 1260x748 views through the app-owned render-target path. The complete building and repeated window facade are recognizable in diagonal views, and all six passed nonzero depth coverage. This is a verified local model-to-render integration result; geometry, material fidelity, and visual acceptance remain **UNKNOWN** because the same-input ModelViewer view is not saved in the local capture directory and the cameras/bounds are unmatched. The published source also includes map-region and road import, the data-driven economy host, Lua economy rules, threaded production, and the first rule-based autopilot.
 
-## Work completed in this checkpoint
+The published `--map-lod` selector/fallback change in `a28ac80` updates `src/app/main.cpp`, `src/app/ContentPreview.h`, `src/app/ContentPreview.cpp`, `src/app/OpenRepublicApplication.h`, and `src/app/OpenRepublicApplication.cpp`. Fallback is counted only after a lower-level preview successfully loads. Windows Release client and AgentHost builds succeeded; fresh Release CTest passed 29/29 in the client tree and 15/15 in the headless tree. On the local read-only WRSR build 23935965 sample, one placed type with all three declared model levels was captured at requested LOD0, LOD1, and LOD2: each request logged one loaded model, zero failed or unresolved models, and zero fallback types; the three 1260x748 captures passed nonzero depth coverage and show visible geometry simplification. A second placement without LOD2 was requested at LOD2 and successfully used LOD1, logging one fallback and zero failed loads. A repeated LOD0 invocation once exited 1 without writing a capture; a later isolated retry exited 0 and produced the same image hash as the first successful LOD0 output. The transient failure is unexplained, and this app path has no direct unit test. Source publication through `a28ac80` is complete; D-005 still gates distribution of original content or a binary release using it. Exact source identities, paths, hashes, and captures remain in private research storage.
+
+Next, obtain a saved same-model ModelViewer reference or otherwise recover a reference artifact, then align bounds/framing to compare the diagonal school view. Keep topology, source axes, and material claims **UNKNOWN** until that comparison supports a stronger conclusion. Repeat the private LOD capture once to check whether the single LOD0 process failure recurs; add direct selector tests if the app-selection logic can be isolated without adding a second production abstraction. Avoid expanding NMF field research without a specific fidelity question.
+
+The chronological implementation notes below preserve the publication and verification state at the time of each entry. Later status in this header and D-005 supersedes historical statements that the NMF source was unpublished.
+
+## Historical M0 work completed (21 October 2026)
 
 - Traced the previous repeat-placement failure to storage placement remaining active after its first accepted queue request. Successful single-storage queueing now exits placement mode; queue failure leaves the mode available for retry.
 - Traced swallowed world clicks to Wicked Engine `GUI::HasFocus()` treating every visible widget hitbox as focus. The large, passive OpenRepublic status label now allows world input to pass through its hitbox while the other GUI focus checks remain in place.
@@ -20,7 +25,7 @@ The active engineering milestone at pause is M1 visual verification for one auth
 - Retained the “Next storage” selector as a fallback selection path. It is useful for deterministic entity selection, but it does not substitute for spatial picking acceptance.
 - Added simulation regression assertions that accepted Farm, Mill, and Storage IDs resolve to the intended entities and that an accepted plan keeps those exact IDs after save/load.
 
-## Validation evidence
+## Historical validation evidence for M0 UI fixes
 
 - **VERIFIED — Release build:** OpenRepublic client and its simulation, terrain-reader, GLB-container, and Lua-rules test targets built with the VS 2022/MSVC toolchain.
 - **VERIFIED — client CTest:** 4/4 tests passed.
@@ -31,7 +36,7 @@ The active engineering milestone at pause is M1 visual verification for one auth
 - The client was launched for this checkpoint, but the available CUA runtime exposed no native-app API and reported no native app windows. REA native UI capture reported `target_unavailable` (“No app is open”) for the running Windows process. Thus the build is runnable but this session could not interact with its window through the available UI automation interface.
 - The existing `build/openrepublic-vs2022/OpenRepublic-demo.save` was observed at 205 bytes with last-write time 2026-10-21 11:56:52 AM before the runtime attempt. No save/load button was used in this checkpoint. No WRSR executable, save, or Steam installation file was changed, and no Rival Republics files were modified.
 
-## Exact M0 runtime items still open
+## M0 runtime items open at the earlier 21 October checkpoint
 
 1. Queue exactly one storage while paused, step one tick, and verify acceptance plus automatic return to selection mode.
 2. Click the new storage at its projected screen location and verify the selected `OR-<id>` and its inventory. Also exercise selection in the former status-label hitbox.
@@ -421,12 +426,22 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - **VERIFIED:** client Release CTest 16/16, headless Release CTest 15/15 after the final source change. **UNKNOWN:** loader semantics of the ini (comment prefix, LOD numbers, emissive use). **D-005:** runtime stays local and unpublished.
 - Next: either trace the ini loader in SOVIET64 for LOD/emissive meaning, or start placing a type at a terrain position.
 
-## Pause status — 21 October 2026
+## Historical pause status — 21 October 2026 (superseded by the current checkpoint)
 
 - At the project owner's request, development is paused with the master playable-alpha goal still incomplete. No further code work is planned in this checkpoint.
 - **VERIFIED — Windows Release build:** the full configured client build completed successfully after the mixed-normal test assertion was added. This confirms the changed test source compiles; the client CTest suite was not rerun afterward.
 - **TEST STATUS:** the last client/headless CTest receipts remain 15/15 and 14/14 from before that assertion. Neither suite was rerun in this pause turn; the headless build was not rebuilt after the assertion.
 - **OBSERVED — visual reference:** the user zoomed out the same-input ModelViewer view to show the complete school. The existing OpenRepublic views remain unmatched for camera and bounds, so the visible facade difference does not justify a geometry or shading correction.
-- **PUBLICATION STATUS:** branch `main` is 11 commits ahead of `origin/main` at `4cc14aa220f59ab46907e5ea03cda3a363aeb496`. The unpublished commits are NMF reader/preview work covered by D-005; no push or release was made. The published synthetic simulation and Agent API remain on the public baseline.
+- **PUBLICATION STATUS AT THAT HISTORICAL CHECKPOINT:** branch `main` was 11 commits ahead of `origin/main` at `4cc14aa220f59ab46907e5ea03cda3a363aeb496`. The NMF reader/preview work had not yet been pushed. The owner later authorized OpenRepublic-authored source publication; see the current checkpoint above and D-005.
 - **WORKTREE:** the latest documentation reconciliation and mixed-normal regression assertion are uncommitted in `README.md`, `docs/DEVELOPMENT_CHECKPOINT.md`, `docs/PROJECT_PLAN.md`, `docs/REVERSE_ENGINEERING_LEDGER.md`, and `tests/content/nmf_geometry_tests.cpp`. No original game payload, capture, or private research data was added.
 - **Resume sequence:** rerun the client and headless CTest suites, then perform a camera/bounds-matched comparison and model-space geometry check before proposing a render correction. Reassess D-005 before any publication.
+
+## Historical development pause and goal-status clarification — 21 October 2026 EDT / 22 October UTC (superseded)
+
+- **VERIFIED — repository state:** `main` and `origin/main` point to `0545eda87c4cfc89b63db31a45cae561982d3400`. The local branch has no unpublished commits.
+- **VERIFIED — public source scope:** the owner authorized publishing OpenRepublic-authored source. The public repository contains no WRSR assets, saves, private captures, or decompiled research. No separate binary/content release has been published; D-005 remains open for distribution of original content and binaries that use it.
+- **TEST RECEIPTS:** latest recorded client Release CTest is 26/26 after road import; latest recorded headless Release CTest is 29/29 after Lua economy rules. Neither receipt is a fresh run after the later autopilot script update. No build or tests were run for the current uncommitted `--map-lod` change.
+- **OBSERVED — reference:** the owner zoomed out the same-input ModelViewer view so the full school is visible. Views remain unmatched for camera and bounds; model and material fidelity remain **UNKNOWN**.
+- **WORKTREE:** uncommitted source files are `src/app/main.cpp`, `src/app/ContentPreview.h`, `src/app/ContentPreview.cpp`, `src/app/OpenRepublicApplication.h`, and `src/app/OpenRepublicApplication.cpp`. Documentation status updates in this pause are also uncommitted. No other changes were observed before this documentation update.
+- **DEVELOPMENT:** this historical pause was superseded by the 22 October active development checkpoint at the top of this document and the continuation receipt in `docs/PROGRESS_LOG.md`.
+- **PROMPT CLARIFICATION:** the prior `docs/AUTONOMOUS_GOAL_PROMPT.md` said to treat new messages as steering and then resume development unless the owner canceled or replaced the goal. It did not preserve a development-only pause across continuations. The assistant also incorrectly treated the owner's development pause as a persistent-goal pause. The prompt now says a development-only pause keeps the goal active and remains in effect until the owner asks to resume; the goal itself is paused only on an explicit goal-pause or cancellation request.

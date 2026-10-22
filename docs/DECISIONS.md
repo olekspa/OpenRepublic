@@ -45,7 +45,9 @@ The repository's original source and documentation use MIT. The license does not
 
 A legitimate installation and read-only loading are project assumptions and engineering controls. Neither proves that use in an independent client is authorized. The official in-game Workshop modding guidance is narrower than standalone distribution.
 
-**Consequence:** keep early content experiments local and make rights-holder clarification/legal review a gate before publishing an asset-reading runtime or content.
+**Consequence:** keep original game files, saves, captures, and extracted payloads local and read-only. Rights-holder clarification/legal review remains a gate before distributing original content or a binary release that uses it.
+
+**Update 2026-10-22:** the project owner explicitly authorized publication of OpenRepublic-authored source. That source is published on `origin/main` through `a28ac80`; the repository contains no WRSR binaries, assets, saves, captures, or extracted data. This source-publication decision does not grant rights to distribute original content, establish standalone-use rights, or clear a binary/content release. No separate release build has been published.
 
 ## D-006: Prove the OpenRepublic viewer with synthetic content first
 
@@ -83,4 +85,4 @@ An architecture review found `src/sim` (hard-coded Farm/Mill/Storage, grain/flou
 
 **Consequence:** new gameplay work targets `src/economy*`; authentic content enters only through adapters (`src/compat`, local under D-005) that produce `economy::Catalog` data, never by adding resource types to `src/sim`. The desktop app's content preview code now lives in `ContentPreview.*` so presentation and content import stay separate from simulation.
 
-**Update 2026-10-22:** the project owner explicitly instructed pushing all local work to GitHub. The repository contains no WRSR binaries, assets, saves or extracted data (checked by file type and path scan); the code reads a local installation only. Rights-holder clarification remains open before distributing any release build or content.
+**Update 2026-10-22:** the owner-authorized source publication is recorded under D-005. `origin/main` currently includes the integration work through `a28ac80`; distribution rights for original content and binary releases remain unresolved.
