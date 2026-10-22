@@ -27,20 +27,34 @@ void F32(std::string& out, float value) {
 }
 
 void AppendSegment(std::string& out, std::uint32_t nodeA, std::uint32_t nodeB,
-                   const std::vector<RoadPoint>& points) {
+                   const std::vector<RoadPoint>& points,
+                   const std::vector<std::uint32_t>& nestedArrayCounts = {},
+                   std::uint8_t conditionalReferenceCount = 0,
+                   std::uint8_t vectorFlag = 1) {
     const std::size_t start = out.size();
     out.resize(start + 0x88, '\0');
     const auto count = static_cast<std::uint32_t>(points.size());
+    const auto nestedCount = static_cast<std::uint32_t>(nestedArrayCounts.size());
     std::memcpy(out.data() + start, &count, sizeof(count));
     std::memcpy(out.data() + start + 4, &nodeA, sizeof(nodeA));
     std::memcpy(out.data() + start + 8, &nodeB, sizeof(nodeB));
+    std::memcpy(out.data() + start + 0x34, &nestedCount, sizeof(nestedCount));
+    out[start + 0x84] = static_cast<char>(vectorFlag);
+    out[start + 0x85] = static_cast<char>(conditionalReferenceCount);
+    for (const std::uint32_t arrayCount : nestedArrayCounts) {
+        const std::size_t record = out.size();
+        out.resize(record + 0xcc, '\0');
+        std::memcpy(out.data() + record + 0xc4, &arrayCount, sizeof(arrayCount));
+        for (int array = 0; array < 3; ++array)
+            for (std::uint32_t i = 0; i < arrayCount; ++i) U32(out, 7 + i);
+    }
     for (const auto& point : points) {
         F32(out, point.x);
         F32(out, point.y);
         F32(out, point.z);
         out.resize(out.size() + 12, '\0');
     }
-    for (int i = 0; i < 6; ++i) U32(out, 0);
+    for (int i = 0; i < 6; ++i) U32(out, 0); // the writer's final two XYZ vectors
 }
 
 // One node: block (x, y, z, five counts, padding to 0x48) + arrays.
@@ -100,6 +114,23 @@ void TestExtraction() {
           "polyline sampling uses equal arc-length spacing and includes endpoints");
 }
 
+void TestNestedSegmentRecords() {
+    std::string bytes;
+    U32(bytes, 2);
+    U32(bytes, 2);
+    U32(bytes, 0);
+    AppendNode(bytes, 0, 0, 0, {1}, 0);
+    AppendNode(bytes, 5, 0, 0, {0}, 0);
+    AppendSegment(bytes, 0, 1, {{0, 0, 0}, {2, 0, 0}, {5, 0, 0}}, {2, 0});
+    AppendSegment(bytes, 0, 1, {{0, 0, 0}, {5, 0, 0}});
+    RoadNetwork network;
+    std::string error;
+    Check(ExtractRoadNetwork(bytes, network, &error) && network.segmentGeometryComplete &&
+              network.segments.size() == 2 && network.segments[0].polyline.size() == 3 &&
+              network.segments[1].polyline.size() == 2,
+          "nested 0xcc records use their +0xc4 count to reach subsequent segment boundaries: " + error);
+}
+
 void TestRejections() {
     RoadNetwork keep;
     keep.segmentCount = 99;
@@ -117,6 +148,26 @@ void TestRejections() {
     U32(out, 0);
     AppendNode(out, 0, 0, 0, {5}, 0);
     rejects(out, "a link to a missing node is rejected");
+
+    std::string nestedTruncated;
+    U32(nestedTruncated, 2);
+    U32(nestedTruncated, 1);
+    U32(nestedTruncated, 0);
+    AppendNode(nestedTruncated, 0, 0, 0, {1}, 0);
+    AppendNode(nestedTruncated, 5, 0, 0, {0}, 0);
+    const std::size_t segmentHeader = nestedTruncated.size();
+    nestedTruncated.resize(segmentHeader + 0x88, '\0');
+    const std::uint32_t nodeA = 0, nodeB = 1, nestedCount = 1, innerCount = 2;
+    std::memcpy(nestedTruncated.data() + segmentHeader + 4, &nodeA, 4);
+    std::memcpy(nestedTruncated.data() + segmentHeader + 8, &nodeB, 4);
+    std::memcpy(nestedTruncated.data() + segmentHeader + 0x34, &nestedCount, 4);
+    nestedTruncated[segmentHeader + 0x84] = 1;
+    const std::size_t nestedRecord = nestedTruncated.size();
+    nestedTruncated.resize(nestedRecord + 0xcc, '\0');
+    std::memcpy(nestedTruncated.data() + nestedRecord + 0xc4, &innerCount, 4);
+    U32(nestedTruncated, 7); // Only one of the required six inner array words.
+    rejects(nestedTruncated, "a truncated nested array is rejected transactionally");
+
     std::string huge;
     U32(huge, static_cast<std::uint32_t>(MaxRoadNodes + 1));
     U32(huge, 0);
@@ -137,33 +188,41 @@ void TestRejections() {
           "a missing reverse link is counted, not fatal");
 }
 
-void TestPartialUnsupportedNestedSegment() {
+void TestPartialUnsupportedConditionalTail() {
     std::string bytes;
     U32(bytes, 2);
     U32(bytes, 1);
     U32(bytes, 0);
     AppendNode(bytes, 0, 0, 0, {1}, 0);
     AppendNode(bytes, 5, 0, 0, {0}, 0);
-    const std::size_t header = bytes.size();
-    bytes.resize(header + 0x88, '\0');
-    const std::uint32_t nodeA = 0, nodeB = 1, nestedCount = 1;
-    std::memcpy(bytes.data() + header + 4, &nodeA, 4);
-    std::memcpy(bytes.data() + header + 8, &nodeB, 4);
-    std::memcpy(bytes.data() + header + 0x34, &nestedCount, 4);
+    AppendSegment(bytes, 0, 1, {{0, 0, 0}, {5, 0, 0}}, {}, 1);
     RoadNetwork network;
     std::string error;
     Check(ExtractRoadNetwork(bytes, network, &error) && network.nodes.size() == 2 &&
-              network.segments.empty() && !network.segmentGeometryComplete &&
-              network.unparsedSegmentCount == 1 && !network.segmentGeometryDiagnostic.empty(),
-          "an unknown nested-vector payload stops segment decoding with an explicit partial result");
+              network.segments.size() == 1 && !network.segmentGeometryComplete &&
+              network.unparsedSegmentCount == 0 && !network.segmentGeometryDiagnostic.empty(),
+          "an unsupported conditional tail preserves the current geometry and reports the remaining count");
+
+    std::string derivedVectors;
+    U32(derivedVectors, 2);
+    U32(derivedVectors, 1);
+    U32(derivedVectors, 0);
+    AppendNode(derivedVectors, 0, 0, 0, {1}, 0);
+    AppendNode(derivedVectors, 5, 0, 0, {0}, 0);
+    AppendSegment(derivedVectors, 0, 1, {{0, 0, 0}, {5, 0, 0}}, {}, 0, 0);
+    Check(ExtractRoadNetwork(derivedVectors, network, &error) &&
+              !network.segmentGeometryComplete && network.segments.size() == 1 &&
+              !network.segmentGeometryDiagnostic.empty(),
+          "a zero +0x84 flag stops at the writer-reader vector mismatch");
 }
 
 } // namespace
 
 int main() {
     TestExtraction();
+    TestNestedSegmentRecords();
     TestRejections();
-    TestPartialUnsupportedNestedSegment();
+    TestPartialUnsupportedConditionalTail();
     if (failures != 0) {
         std::cerr << failures << " road-network test(s) failed\n";
         return 1;

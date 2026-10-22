@@ -45,8 +45,8 @@ struct RoadNetwork {
     // Counts from the header.
     std::uint32_t segmentCount = 0;
     std::uint32_t groupCount = 0;
-    // Geometry may be a safely decoded prefix if an unknown nested vector is
-    // encountered in a segment record.
+    // Geometry may be a safely decoded prefix if an unsupported conditional
+    // tail is encountered in a segment record.
     std::vector<RoadSegment> segments;
     bool segmentGeometryComplete = false;
     std::uint32_t unparsedSegmentCount = 0;
@@ -74,8 +74,8 @@ std::vector<RoadPoint> SampleRoadPolyline(const std::vector<RoadPoint>& polyline
 // arrays of u32 (three arrays of the fifth count first, then neighbors,
 // segment ids, type ids and one more per-connection word). Positions are in
 // map metres. Every link must reference an existing node. Segment geometry
-// is decoded while its serialized length can be determined; unknown nested
-// vectors stop parsing and leave a safe prefix.
+// is decoded while its serialized length can be determined; unsupported
+// conditional tails stop parsing and leave a safe prefix.
 // On failure output is unchanged.
 bool ExtractRoadNetwork(std::string_view bytes, RoadNetwork& output,
                         std::string* error = nullptr);
