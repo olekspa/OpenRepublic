@@ -18,6 +18,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -92,25 +93,29 @@ namespace openrepublic
 		{
 		public:
 			explicit NmfPreviewCaptureRenderPath(std::vector<std::filesystem::path> outputPaths,
-				const XMFLOAT3& cameraTarget, float cameraDistance, bool requireDepthCoverage)
-				: outputPaths(std::move(outputPaths)), cameraTarget(cameraTarget), cameraDistance(cameraDistance),
-				requireDepthCoverage(requireDepthCoverage)
+				const XMFLOAT3& cameraTarget, float cameraDistance)
+				: outputPaths(std::move(outputPaths)), cameraTarget(cameraTarget), cameraDistance(cameraDistance)
 			{
 			}
 
 			void SetDiagnosticCameraView(std::size_t index)
 			{
-				if (camera == nullptr)
+				static constexpr std::array<XMFLOAT3, 3> cameraDirections = {
+					XMFLOAT3(0.6432f, 0.4153f, 0.6432f),  // diagonal A
+					XMFLOAT3(1.0f, 0.0f, 0.0f),          // level +X diagnostic side
+					XMFLOAT3(-0.6432f, 0.4153f, 0.6432f), // diagonal B
+				};
+
+				if (camera == nullptr || index >= cameraDirections.size())
 				{
 					return;
 				}
 
 				const float distance = std::max(cameraDistance, 12.0f);
-				const XMFLOAT3 eye = index == 0
-					? XMFLOAT3(cameraTarget.x + distance * 0.65f, cameraTarget.y + distance * 0.42f,
-						cameraTarget.z + distance * 0.65f)
-					: XMFLOAT3(cameraTarget.x - distance * 0.65f, cameraTarget.y + distance * 0.42f,
-						cameraTarget.z + distance * 0.65f);
+				const XMFLOAT3 direction = cameraDirections[index];
+				const XMFLOAT3 eye(cameraTarget.x + distance * direction.x,
+					cameraTarget.y + distance * direction.y,
+					cameraTarget.z + distance * direction.z);
 				camera->Eye = eye;
 				XMStoreFloat3(&camera->At,
 					XMVector3Normalize(XMLoadFloat3(&cameraTarget) - XMLoadFloat3(&eye)));
@@ -138,35 +143,32 @@ namespace openrepublic
 					return;
 				}
 
-				if (requireDepthCoverage)
+				std::uint64_t coveredPixels = 0;
+				std::string coverageError;
+				if (!CountOpaqueDepthCoverage(depthBuffer_Main, coveredPixels, coverageError))
 				{
-					std::uint64_t coveredPixels = 0;
-					std::string coverageError;
-					if (!CountOpaqueDepthCoverage(depthBuffer_Main, coveredPixels, coverageError))
-					{
-						wilog("[OpenRepublic] NMF preview raster coverage unavailable for view %zu: %s",
-							nextCapture, coverageError.c_str());
-						PostQuitMessage(1);
-						nextCapture = outputPaths.size();
-						return;
-					}
-					if (coveredPixels == 0)
-					{
-						wilog("[OpenRepublic] NMF preview has no opaque depth coverage in view %zu; capture rejected",
-							nextCapture);
-						PostQuitMessage(1);
-						nextCapture = outputPaths.size();
-						return;
-					}
-					const wi::graphics::TextureDesc& desc = depthBuffer_Main.GetDesc();
-					const double coverage = 100.0 * static_cast<double>(coveredPixels) /
-						(static_cast<double>(desc.width) * static_cast<double>(desc.height));
-					wilog("[OpenRepublic] NMF preview raster coverage: view=%zu pixels=%llu/%llu (%.3f%%) depth=D32_FLOAT_S8X24_UINT",
-						nextCapture,
-						static_cast<unsigned long long>(coveredPixels),
-						static_cast<unsigned long long>(desc.width) * desc.height,
-						coverage);
+					wilog("[OpenRepublic] NMF preview raster coverage unavailable for view %zu: %s",
+						nextCapture, coverageError.c_str());
+					PostQuitMessage(1);
+					nextCapture = outputPaths.size();
+					return;
 				}
+				if (coveredPixels == 0)
+				{
+					wilog("[OpenRepublic] NMF preview has no opaque depth coverage in view %zu; capture rejected",
+						nextCapture);
+					PostQuitMessage(1);
+					nextCapture = outputPaths.size();
+					return;
+				}
+				const wi::graphics::TextureDesc& desc = depthBuffer_Main.GetDesc();
+				const double coverage = 100.0 * static_cast<double>(coveredPixels) /
+					(static_cast<double>(desc.width) * static_cast<double>(desc.height));
+				wilog("[OpenRepublic] NMF preview raster coverage: view=%zu pixels=%llu/%llu (%.3f%%) depth=D32_FLOAT_S8X24_UINT",
+					nextCapture,
+					static_cast<unsigned long long>(coveredPixels),
+					static_cast<unsigned long long>(desc.width) * desc.height,
+					coverage);
 
 				const auto& outputPath = outputPaths[nextCapture];
 				const std::string filename = outputPath.string();
@@ -241,7 +243,6 @@ namespace openrepublic
 			float cameraDistance = 12.0f;
 			std::uint32_t warmupFramesRemaining = 60;
 			std::size_t nextCapture = 0;
-			bool requireDepthCoverage = false;
 		};
 
 		std::string PendingTruckPlanCommandLabel(const openrepublic::agent_api::AgentApi& api,
@@ -1493,7 +1494,7 @@ namespace openrepublic
 				wi::renderer::SetForceUnlit(true);
 			}
 			renderPath = std::make_unique<NmfPreviewCaptureRenderPath>(std::move(nmfCapturePaths),
-				nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfUnlitPreview);
+				nmfPreviewCameraTarget, nmfPreviewCameraDistance);
 		}
 		else
 		{

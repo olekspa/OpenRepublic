@@ -114,9 +114,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 					nmfCaptureArgumentError = "--capture-preview requires an absolute output .png path";
 					continue;
 				}
-				if (nmfCapturePaths.size() >= 2)
+				if (nmfCapturePaths.size() >= 3)
 				{
-					nmfCaptureArgumentError = "--capture-preview may be supplied at most twice";
+					nmfCaptureArgumentError = "--capture-preview may be supplied at most three times";
 					++i;
 					continue;
 				}
