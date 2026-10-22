@@ -47,16 +47,41 @@ def raw_producer_type(catalog, resource):
     return None
 
 
-def place_near(host, type_name, cell):
-    """Tries free-looking cells around `cell` (nearest first) until the host accepts a placement."""
-    for ring in range(2, 30, 2):
-        for dx, dz in ((ring, 0), (-ring, 0), (0, ring), (0, -ring), (ring, ring), (-ring, -ring), (ring, -ring), (-ring, ring)):
-            revision = host.call("world")["world"]["revision"]
-            sub = host.call("submit", revision=revision,
-                            command={"kind": "place_building", "type": type_name, "x": cell["x"] + dx, "z": cell["z"] + dz})
-            host.call("step", ticks=1)
-            if host.call("poll", handle=sub["handle"])["state"] == "accepted":
-                return True
+def raw_resources(catalog):
+    raw = set()
+    for building in catalog["buildingTypes"]:
+        for recipe in building["recipes"]:
+            if not recipe["inputs"]:
+                raw.update(o["resource"] for o in recipe["outputs"])
+    return raw
+
+
+def processed_units(world, raw):
+    """Stored amount of every non-raw resource, in whole units (amounts are micro-units)."""
+    total = 0
+    for building in world["buildings"]:
+        for item in building["inventory"]:
+            if item["resource"] not in raw:
+                total += int(item["amount"])
+    return total / 1_000_000
+
+
+def place_near(host, catalog, type_name, cell):
+    """Places the building so its access cell sits on an existing road, nearest road cell first."""
+    width = next(b["width"] for b in catalog["buildingTypes"] if b["name"] == type_name)
+    cells = set()
+    for road in host.call("world")["world"]["roads"]:
+        if road["enabled"]:
+            for end in ("a", "b"):
+                cells.add((road[end]["x"], road[end]["z"]))
+    candidates = sorted(cells, key=lambda c: abs(c[0] - cell["x"]) + abs(c[1] - cell["z"]))
+    for rx, rz in candidates[:400]:
+        revision = host.call("world")["world"]["revision"]
+        sub = host.call("submit", revision=revision, command={
+            "kind": "place_building", "type": type_name, "x": rx - (width - 1) // 2, "z": rz + 1})
+        host.call("step", ticks=1)
+        if host.call("poll", handle=sub["handle"])["state"] == "accepted":
+            return True
     return False
 
 
@@ -72,6 +97,7 @@ def main():
     ordered = set()
     catalog = host.call("catalog")
     placed = set()
+    raw = raw_resources(catalog)
     try:
         for round_number in range(1, args.rounds + 1):
             plan = host.call("advise")
@@ -82,7 +108,7 @@ def main():
                     maker = raw_producer_type(catalog, need["resource"])
                     if maker and need["resource"] not in placed:
                         consumer = next(b for b in world_now["buildings"] if b["id"] == need["building"])
-                        if place_near(host, maker, consumer["cell"]):
+                        if place_near(host, catalog, maker, consumer["cell"]):
                             print(f"  placed a {maker} near building {consumer['id']} for {need['resource']}")
                             placed.add(need["resource"])
                             submitted += 1
@@ -99,11 +125,17 @@ def main():
             world = host.call("world")["world"]
             running = sum(1 for b in world["buildings"] if b["stallReason"] == "running")
             print(f"round {round_number}: submitted {submitted} orders, tick {world['tick']}, "
-                  f"{running}/{len(world['buildings'])} buildings running, {len(world['vehicles'])} trucks")
+                  f"{running}/{len(world['buildings'])} buildings running, {len(world['vehicles'])} trucks, "
+                  f"score (stored non-raw units) {processed_units(world, raw):.1f}")
             blocked = [n for n in plan["unservedInputs"] if not n["producers"]]
             if blocked and round_number == 1:
                 resources = sorted({n["resource"] for n in blocked})
                 print("  cannot be served by any building in this world:", ", ".join(resources))
+        for b in world["buildings"]:
+            held = ", ".join(f"{i['resource']}={int(i['amount']) / 1_000_000:.1f}" for i in b["inventory"] if int(i["amount"]))
+            print(f"  building {b['id']} {b['type']}: {b['stallReason']} [{held}]")
+        for o in host.call("world")["world"]["orders"]:
+            print(f"  order {o['id']} {o['source']}->{o['destination']} {o['resource']}: {o['state']}")
     finally:
         host.close()
     return 0
