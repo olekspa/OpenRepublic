@@ -2,3 +2,8 @@ add_executable(OpenRepublicCompatTests compat_tests.cpp)
 target_link_libraries(OpenRepublicCompatTests PRIVATE OpenRepublicCompat)
 target_compile_features(OpenRepublicCompatTests PRIVATE cxx_std_17)
 add_test(NAME CompatCatalogImport COMMAND OpenRepublicCompatTests)
+
+add_executable(OpenRepublicRegionImportTests region_import_tests.cpp)
+target_link_libraries(OpenRepublicRegionImportTests PRIVATE OpenRepublicCompat)
+target_compile_features(OpenRepublicRegionImportTests PRIVATE cxx_std_17)
+add_test(NAME CompatRegionImport COMMAND OpenRepublicRegionImportTests)

@@ -32,3 +32,23 @@ compatibility. Tests use synthetic definitions only.
 `ImportReport` records the options, counts, ordered skipped buildings,
 warnings, and errors. `DescribeImport` produces a deterministic human-readable
 summary. The adapter does not read or write game files, saves, or assets.
+
+# Region import into the economy
+
+`compat::ImportRegionIntoWorld` adapts plain building type names and horizontal
+world coordinates into an `economy::World`. It resolves catalog types exactly
+after removing a leading `MIRRORZ_` prefix. Treating that prefix as the base
+building type is **INFERRED** from the reviewed building-type loader evidence;
+the mirrored geometry itself is not represented in the economy.
+
+The importer selects the requested radius around a center placement, maps
+coordinates with `floor((coordinate - origin) / cellSizeMeters)`, and creates a
+bounded grid with a four-cell margin. Grid dimensions are capped at 512 cells;
+when needed, the selected radius is reduced and recorded in the report. Unknown
+types, out-of-region positions, and rejected footprint/access-cell collisions
+are counted separately. Placements are submitted in source order and accepted
+through one economy tick. Roads are omitted because road data is not decoded.
+
+This adapter does not parse map packages or establish original-game economic
+behavior. The input data is synthetic/plain data in its tests; map placement
+format evidence and limits remain as recorded in the reverse-engineering ledger.
