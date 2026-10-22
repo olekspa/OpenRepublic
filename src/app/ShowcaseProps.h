@@ -7,6 +7,7 @@
 #include "openrepublic/procgeo/mesh.h"
 
 #include <cstddef>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,7 @@ namespace openrepublic::preview
 		std::size_t lamps = 0;
 		std::size_t pylons = 0;
 		std::size_t railPieces = 0;
+		std::size_t realVehicleTypes = 0;
 		std::string summary;
 	};
 
@@ -29,5 +31,6 @@ namespace openrepublic::preview
 	// Places OpenRepublic procedural vehicles, utility poles with wires, street lamps, a pylon line, a
 	// railway and an industrial skyline around the town. Everything is presentation-only (no WRSR content).
 	bool BuildShowcaseProps(wi::scene::Scene& scene, const openrepublic::content::MapPlacementRequest& request,
-		const ShowcaseTerrainData& terrain, double regionRadius, ShowcasePropsInfo& info, std::string& error);
+		const ShowcaseTerrainData& terrain, double regionRadius, const std::filesystem::path& contentRoot,
+		ShowcasePropsInfo& info, std::string& error);
 }

@@ -1,5 +1,6 @@
 #include "ShowcaseProps.h"
 
+#include "ContentPreview.h"
 #include "RoadPaths.h"
 #include "openrepublic/content/linear_network.h"
 #include "openrepublic/content/terrain_dds.h"
@@ -19,6 +20,9 @@ namespace openrepublic::preview
 
 	namespace
 	{
+		// Rotation applied to the install's vehicle meshes so their front follows the road direction.
+		constexpr double kRealVehicleYawOffset = 0.0;
+
 		float Hash01(int x, int z, std::uint32_t seed)
 		{
 			std::uint32_t hash = static_cast<std::uint32_t>(x) * 0x8da6b343u ^
@@ -105,7 +109,8 @@ namespace openrepublic::preview
 	}
 
 	bool BuildShowcaseProps(wi::scene::Scene& scene, const MapPlacementRequest& request,
-		const ShowcaseTerrainData& terrain, double regionRadius, ShowcasePropsInfo& info, std::string& error)
+		const ShowcaseTerrainData& terrain, double regionRadius, const std::filesystem::path& contentRoot,
+		ShowcasePropsInfo& info, std::string& error)
 	{
 		const TerrainTransform transform = MakeMapTerrainTransform(request.metadata);
 		const double cx = request.placement.X();
@@ -157,6 +162,99 @@ namespace openrepublic::preview
 				weightTable.push_back(weight);
 			}
 		}
+		// Authentic vehicles from a local install (vehicles/<name>/main.nmf + material.mtl); never committed.
+		struct RealVehicle
+		{
+			wi::ecs::Entity mesh = wi::ecs::INVALID_ENTITY;
+			float length = 5.0f;
+		};
+		std::vector<RealVehicle> realCars, realTrucks, realBuses;
+		if (!contentRoot.empty())
+		{
+			const auto loadVehicle = [&](const std::filesystem::path& folder) -> RealVehicle
+			{
+				RealVehicle vehicle;
+				std::error_code fileError;
+				const std::filesystem::path model = folder / "main.nmf";
+				const std::filesystem::path material = folder / "material.mtl";
+				if (!std::filesystem::is_regular_file(model, fileError) || !std::filesystem::is_regular_file(material, fileError))
+				{
+					return vehicle;
+				}
+				wi::ecs::Entity meshEntity = wi::ecs::INVALID_ENTITY;
+				XMFLOAT3 ignoredTarget;
+				float ignoredDistance = 0.0f;
+				std::string d, a, e;
+				if (!CreateNmfStaticPreview(scene, model, meshEntity, ignoredTarget, ignoredDistance, false, false,
+					{ contentRoot }, material, d, a, e, nullptr, true, false))
+				{
+					return vehicle;
+				}
+				if (wi::scene::ObjectComponent* own = scene.objects.GetComponent(meshEntity))
+				{
+					own->SetRenderable(false);
+				}
+				if (const wi::scene::MeshComponent* mesh = scene.meshes.GetComponent(meshEntity))
+				{
+					vehicle.length = std::max(3.0f, mesh->aabb.getHalfWidth().z * 2.0f);
+					for (const auto& subset : mesh->subsets)
+					{
+						if (wi::scene::MaterialComponent* m = scene.materials.GetComponent(subset.materialID))
+						{
+							m->SetRoughness(0.5f);
+							m->SetReflectance(0.35f);
+							m->CreateRenderData(true);
+						}
+					}
+				}
+				vehicle.mesh = meshEntity;
+				return vehicle;
+			};
+			const std::filesystem::path vehicleRoot = contentRoot / "vehicles";
+			std::error_code listError;
+			std::vector<std::filesystem::path> folders;
+			for (const auto& entry : std::filesystem::directory_iterator(vehicleRoot, listError))
+			{
+				if (entry.is_directory())
+				{
+					folders.push_back(entry.path());
+				}
+			}
+			std::sort(folders.begin(), folders.end());
+			const auto take = [&](const char* prefix, std::vector<RealVehicle>& into, std::size_t limit)
+			{
+				std::size_t taken = 0;
+				for (const auto& folder : folders)
+				{
+					if (taken >= limit)
+					{
+						break;
+					}
+					const std::string name = folder.filename().string();
+					if (name.rfind(prefix, 0) != 0 || name.find("trail") != std::string::npos || name.find("train") != std::string::npos)
+					{
+						continue;
+					}
+					// Spread the pick over the alphabetical list so the variants differ.
+					if (Hash01(static_cast<int>(name.size()), static_cast<int>(name.back()), 211) > 0.45f)
+					{
+						continue;
+					}
+					const RealVehicle loaded = loadVehicle(folder);
+					if (loaded.mesh != wi::ecs::INVALID_ENTITY)
+					{
+						into.push_back(loaded);
+						++taken;
+					}
+				}
+			};
+			take("personal_", realCars, 8);
+			take("open_", realTrucks, 5);
+			take("covered_", realTrucks, 5);
+			take("oil_", realTrucks, 3);
+			take("bus_", realBuses, 3);
+		}
+		info.realVehicleTypes = realCars.size() + realTrucks.size() + realBuses.size();
 		const wi::ecs::Entity lampMesh = CreateProceduralMeshEntity(scene, "showcase street lamp", pg::MakeStreetLamp(), 0.6f, 0.4f);
 		const wi::ecs::Entity poleMesh = CreateProceduralMeshEntity(scene, "showcase utility pole", pg::MakeWoodenUtilityPole(), 0.9f);
 		const pg::Mesh pylonSource = pg::MakeSteelLatticePylon();
@@ -244,13 +342,34 @@ namespace openrepublic::preview
 							if (pick <= 0.0f) { chosen = w; break; }
 						}
 						const VehicleType& type = vehicleTypes[chosen];
-						if (type.mesh == wi::ecs::INVALID_ENTITY)
+						wi::ecs::Entity vehicleMesh = type.mesh;
+						float vehicleLength = type.length;
+						double yawOffset = 0.0;
+						{
+							// Prefer the install's own vehicles by procedural category when available.
+							const std::vector<RealVehicle>* pool = nullptr;
+							switch (type.kind)
+							{
+							case pg::VehicleKind::Car: pool = &realCars; break;
+							case pg::VehicleKind::Bus: pool = &realBuses; break;
+							case pg::VehicleKind::CargoTruck: case pg::VehicleKind::Tanker: case pg::VehicleKind::BoxVan: case pg::VehicleKind::Trailer:
+								pool = &realTrucks; break;
+							}
+							if (pool != nullptr && !pool->empty())
+							{
+								const RealVehicle& real = (*pool)[static_cast<std::size_t>(Hash01(seedA + k, seedB, 17) * pool->size()) % pool->size()];
+								vehicleMesh = real.mesh;
+								vehicleLength = real.length;
+								yawOffset = kRealVehicleYawOffset;
+							}
+						}
+						if (vehicleMesh == wi::ecs::INVALID_ENTITY)
 						{
 							continue;
 						}
 						const double yaw = std::atan2(s.dx, s.dz);
-						const Placement p = pose(x, z, forward ? yaw : yaw + 3.14159265, type.length, 0.3);
-						AddObject(scene, type.mesh, p, request, cx, cz, 1.0f, true);
+						const Placement p = pose(x, z, (forward ? yaw : yaw + 3.14159265) + yawOffset, vehicleLength, 0.3);
+						AddObject(scene, vehicleMesh, p, request, cx, cz, 1.0f, true);
 						++vehicles;
 					}
 					// Utility poles every 38 m on the left side with wires between consecutive poles,
@@ -609,7 +728,7 @@ namespace openrepublic::preview
 		info.pylons = pylons + realPylons;
 		info.railPieces = railPieces;
 		std::ostringstream summary;
-		summary << "Showcase props (OpenRepublic procedural meshes): " << vehicles << " vehicles on roads, " << poles
+		summary << "Showcase props (OpenRepublic procedural meshes" << (info.realVehicleTypes > 0 ? std::string(" plus ") + std::to_string(info.realVehicleTypes) + " local-install vehicle types" : std::string()) << "): " << vehicles << " vehicles on roads, " << poles
 			<< " utility poles with wires, " << lamps << " street lamps, " << pylons << " pylons, " << railPieces
 			<< " railway pieces, industrial skyline.";
 		info.summary = summary.str();

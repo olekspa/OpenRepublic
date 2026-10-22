@@ -1847,7 +1847,7 @@ namespace openrepublic::preview
 			{
 				ShowcasePropsInfo propsInfo;
 				std::string propsError;
-				if (BuildShowcaseProps(scene, request, showcaseTerrain, regionRadius, propsInfo, propsError))
+				if (BuildShowcaseProps(scene, request, showcaseTerrain, regionRadius, contentRoot, propsInfo, propsError))
 				{
 					wilog("[OpenRepublic] %s", propsInfo.summary.c_str());
 				}
