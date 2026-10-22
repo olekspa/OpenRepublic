@@ -406,6 +406,14 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - No source change in this increment beyond the earlier winding commit; tests unchanged (client 15/15, headless 14/14 from the previous run).
 - Next: trace the loader's submaterial-to-MTL matching and `$TEXTURE_MTL` path base; parse `buildingtypes.ini` blocks as data.
 
+## Material loader trace and binding (21 October 2026)
+
+- Static Ghidra review of C3DDLL32.dll (build `23935965`, private outputs in the research folder `ghidra-claude`) established: submaterial selection is single-section → that section, else first exact name, else first section; and `$TEXTURE_MTL` = MTL directory + `/` + name. See the ledger section "Material loader trace".
+- Implemented `SelectMtlSubmaterialsLikeLoader` and `ApplyMtlDirectoryToRelativeTextures` (plus app wiring and tests). The residential brick block now loads its two slot-0 textures and renders textured; the school is unchanged (6/6). The old exact-name binder remains for its own tests but is no longer used by the app.
+- **VERIFIED:** client Release CTest 15/15, headless Release CTest 14/14 after the final source change.
+- **UNKNOWN:** 64-bit loader parity, texture slots 1/2, emissive materials, `buildingtypes.ini` model/LOD selection. **D-005:** NMF runtime stays local and unpublished.
+- Next: parse `buildingtypes.ini` blocks as data (MODEL/MODEL_LOD/MATERIAL) so a building type, not a file pair, drives the preview.
+
 ## Pause status — 21 October 2026
 
 - At the project owner's request, development is paused with the master playable-alpha goal still incomplete. No further code work is planned in this checkpoint.

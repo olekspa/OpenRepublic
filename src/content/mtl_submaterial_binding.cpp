@@ -66,4 +66,48 @@ bool BindMtlSubmaterialsByName(const std::vector<std::string>& nmfIdentifiers,
     return true;
 }
 
+bool SelectMtlSubmaterialsLikeLoader(const std::vector<std::string>& nmfIdentifiers,
+                                     const MtlDocument& document,
+                                     std::vector<MtlSubmaterialBinding>& output,
+                                     std::string* error) {
+    if (nmfIdentifiers.size() > MaxMtlSubmaterialBindingEntries ||
+        document.submaterials.size() > MaxMtlSubmaterialBindingEntries)
+        return Fail(error, "submaterial selection exceeds the 4096-entry limit");
+    if (!document.terminated || document.submaterials.empty())
+        return Fail(error, "submaterial selection requires a terminated MTL document with at least one section");
+    for (const auto& section : document.submaterials) {
+        if (section.nameToken.size() > MaxMtlSubmaterialBindingTokenBytes)
+            return Fail(error, "MTL submaterial identifier exceeds the 2048-byte limit");
+    }
+    for (const std::string& identifier : nmfIdentifiers) {
+        if (identifier.size() > MaxMtlSubmaterialBindingTokenBytes)
+            return Fail(error, "NMF submaterial identifier exceeds the 2048-byte limit");
+    }
+
+    std::vector<MtlSubmaterialBinding> candidate;
+    candidate.reserve(nmfIdentifiers.size());
+    for (const std::string& identifier : nmfIdentifiers) {
+        if (document.submaterials.size() == 1) {
+            candidate.push_back({MtlSubmaterialBindingStatus::Matched, 0});
+            continue;
+        }
+        std::size_t selected = 0;
+        bool found = false;
+        for (std::size_t i = 0; i < document.submaterials.size(); ++i) {
+            if (document.submaterials[i].nameToken == identifier) {
+                selected = i;
+                found = true;
+                break;
+            }
+        }
+        candidate.push_back({found ? MtlSubmaterialBindingStatus::Matched
+                                   : MtlSubmaterialBindingStatus::FallbackFirstSection,
+                             selected});
+    }
+
+    output = std::move(candidate);
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace openrepublic::content

@@ -576,6 +576,39 @@ namespace openrepublic
 			return true;
 		}
 
+		// Directory of the sibling MTL relative to the first supplied content root that
+		// contains it (generic '/' separators). Empty when no root yields a non-empty
+		// relative directory; `$TEXTURE_MTL` entries then stay unresolved.
+		std::string MtlDirectoryRelativeToRoots(const std::filesystem::path& nmfPath,
+			const std::vector<std::filesystem::path>& roots)
+		{
+			std::error_code error;
+			std::filesystem::path mtlPath = nmfPath;
+			mtlPath.replace_extension(".mtl");
+			const std::filesystem::path directory = std::filesystem::weakly_canonical(mtlPath.parent_path(), error);
+			if (error)
+			{
+				return {};
+			}
+			for (const std::filesystem::path& root : roots)
+			{
+				const std::filesystem::path canonicalRoot = std::filesystem::weakly_canonical(root, error);
+				if (error)
+				{
+					error.clear();
+					continue;
+				}
+				const std::filesystem::path relative = directory.lexically_relative(canonicalRoot);
+				const std::string generic = relative.generic_string();
+				if (relative.empty() || generic == "." || generic.rfind("..", 0) == 0)
+				{
+					continue;
+				}
+				return generic;
+			}
+			return {};
+		}
+
 		bool LoadSiblingNmfMtl(const std::filesystem::path& nmfPath,
 			openrepublic::content::MtlDocument& document, std::string& status)
 		{
@@ -1056,6 +1089,7 @@ namespace openrepublic
 			bool haveMtlBindings = false;
 			bool haveTextureBindings = false;
 			std::string mtlTextureStatus;
+			std::size_t mtlRelativeTextureCount = 0;
 			if (unlitDiagnostic)
 			{
 				mtlStatus = "neutral unlit geometry diagnostic bypasses sibling MTL parsing";
@@ -1063,12 +1097,21 @@ namespace openrepublic
 			else if (LoadSiblingNmfMtl(nmfPath, mtlDocument, mtlStatus))
 			{
 				std::string bindingError;
-				haveMtlBindings = openrepublic::content::BindMtlSubmaterialsByName(
+				// Mirrors the build-scoped loader selection rule (single section, exact
+				// name, else first section); see SelectMtlSubmaterialsLikeLoader.
+				haveMtlBindings = openrepublic::content::SelectMtlSubmaterialsLikeLoader(
 					geometry.submaterialIdentifiers, mtlDocument, mtlBindings, &bindingError);
 				if (!haveMtlBindings)
 				{
 					mtlDocument = {};
-					mtlStatus = "NMF/MTL identifiers could not be matched within the bounded profile; diagnostic colors are used";
+					mtlStatus = "NMF/MTL identifiers could not be selected within the bounded profile; diagnostic colors are used";
+				}
+				else if (const std::string mtlDirectory = MtlDirectoryRelativeToRoots(nmfPath, textureRoots);
+					!mtlDirectory.empty())
+				{
+					// `$TEXTURE_MTL` paths are relative to the MTL's own directory.
+					openrepublic::content::ApplyMtlDirectoryToRelativeTextures(
+						mtlDocument, mtlDirectory, &mtlRelativeTextureCount, &bindingError);
 				}
 			}
 			if (!unlitDiagnostic && !textureRoots.empty() && haveMtlBindings)
@@ -1226,6 +1269,7 @@ namespace openrepublic
 			std::size_t absentDiffuseColorCount = 0;
 			std::size_t invalidDiffuseColorCount = 0;
 			std::size_t missingMtlMatchCount = 0;
+		std::size_t fallbackMtlMatchCount = 0;
 			std::size_t ambiguousMtlMatchCount = 0;
 			std::size_t baseColorTextureCandidateCount = 0;
 			std::size_t baseColorTextureLoadedCount = 0;
@@ -1253,11 +1297,21 @@ namespace openrepublic
 				}
 				++mappedSubmaterialCount;
 				if (!unlitDiagnostic && haveMtlBindings && materialIndex < mtlBindings.size() &&
+					(mtlBindings[materialIndex].status ==
+						openrepublic::content::MtlSubmaterialBindingStatus::Matched ||
 					mtlBindings[materialIndex].status ==
-						openrepublic::content::MtlSubmaterialBindingStatus::Matched &&
+						openrepublic::content::MtlSubmaterialBindingStatus::FallbackFirstSection) &&
 					mtlBindings[materialIndex].sectionIndex < mtlDocument.submaterials.size())
 				{
-					++exactMtlMatchCount;
+					if (mtlBindings[materialIndex].status ==
+						openrepublic::content::MtlSubmaterialBindingStatus::Matched)
+					{
+						++exactMtlMatchCount;
+					}
+					else
+					{
+						++fallbackMtlMatchCount;
+					}
 					const auto diffuseColor = openrepublic::content::ExtractMtlDiffuseColorForPreview(
 						mtlDocument.submaterials[mtlBindings[materialIndex].sectionIndex]);
 					if (diffuseColor.status ==
@@ -1305,8 +1359,10 @@ namespace openrepublic
 				bool expectsBaseColorTexture = false;
 				if (!unlitDiagnostic && haveTextureBindings && haveMtlBindings &&
 					materialIndex < mtlBindings.size() &&
+					(mtlBindings[materialIndex].status ==
+						openrepublic::content::MtlSubmaterialBindingStatus::Matched ||
 					mtlBindings[materialIndex].status ==
-						openrepublic::content::MtlSubmaterialBindingStatus::Matched &&
+						openrepublic::content::MtlSubmaterialBindingStatus::FallbackFirstSection) &&
 					mtlBindings[materialIndex].sectionIndex < baseColorTextures.size())
 				{
 					const auto& texture = baseColorTextures[mtlBindings[materialIndex].sectionIndex];
@@ -1406,7 +1462,11 @@ namespace openrepublic
 			else if (haveMtlBindings)
 			{
 				mtlBindingSummary = std::to_string(exactMtlMatchCount) +
-					" exact-name MTL matches; " + std::to_string(diffuseColorCount) +
+					" exact-name or single-section MTL selections and " +
+					std::to_string(fallbackMtlMatchCount) +
+					" first-section fallbacks (build-scoped loader rule); " +
+					std::to_string(mtlRelativeTextureCount) + " $TEXTURE_MTL paths rebased onto the MTL directory; " +
+					std::to_string(diffuseColorCount) +
 					" parseable $DIFFUSECOLOR values shown approximately as Wicked base colors; " +
 					std::to_string(absentDiffuseColorCount) +
 					" absent diffuse directives use the observed all-ones source default; " +

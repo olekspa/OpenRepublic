@@ -186,4 +186,32 @@ bool ParseMtlSyntax(const std::string& text, MtlDocument& output, std::string* e
     return true;
 }
 
+bool ApplyMtlDirectoryToRelativeTextures(MtlDocument& document, const std::string& mtlDirectory,
+                                         std::size_t* converted, std::string* error) {
+    if (mtlDirectory.empty() || mtlDirectory.size() > kMaxTokenBytes ||
+        mtlDirectory.find('\0') != std::string::npos)
+        return Fail(error, "MTL directory must be non-empty, NUL-free and at most 2048 bytes");
+
+    MtlDocument candidate = document;
+    std::size_t count = 0;
+    for (auto& section : candidate.submaterials) {
+        for (auto& directive : section.directives) {
+            if (directive.name != "$TEXTURE_MTL" || directive.arguments.size() != 2 ||
+                !IsFiniteNumericToken(directive.arguments[0]))
+                continue;
+            std::string combined = mtlDirectory + "/" + directive.arguments[1];
+            if (combined.size() > kMaxTokenBytes)
+                return Fail(error, "combined $TEXTURE_MTL path exceeds the 2048-byte token limit");
+            directive.name = "$TEXTURE";
+            directive.kind = MtlDirectiveKind::Texture;
+            directive.arguments[1] = std::move(combined);
+            ++count;
+        }
+    }
+    document = std::move(candidate);
+    if (converted) *converted = count;
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace openrepublic::content

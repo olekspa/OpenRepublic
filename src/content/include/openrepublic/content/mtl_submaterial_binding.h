@@ -12,6 +12,9 @@ enum class MtlSubmaterialBindingStatus {
     Matched,
     Missing,
     Ambiguous,
+    // Produced only by SelectMtlSubmaterialsLikeLoader: no exact name matched
+    // and the loader's default (first) section was selected.
+    FallbackFirstSection,
 };
 
 struct MtlSubmaterialBinding {
@@ -33,5 +36,20 @@ bool BindMtlSubmaterialsByName(const std::vector<std::string>& nmfIdentifiers,
                                const MtlDocument& document,
                                std::vector<MtlSubmaterialBinding>& output,
                                std::string* error = nullptr);
+
+// Reproduces C3D_MATERIAL::SelectSubMaterial(const char*) as statically read in
+// C3DDLL32.dll shipped with WRSR build 23935965 (VERIFIED static review; not
+// re-checked on other builds): the first section is the default selection; a
+// document with exactly one section always selects it regardless of name;
+// otherwise the first section whose name is byte-equal wins (duplicates are not
+// ambiguous), and an unmatched name keeps the first section. The mesh renderer
+// passes each subset's NMF table identifier to that call. Statuses are Matched
+// (single section or exact name) or FallbackFirstSection; sectionIndex is
+// always valid. Inputs are bounded as in BindMtlSubmaterialsByName and failure
+// leaves output unchanged.
+bool SelectMtlSubmaterialsLikeLoader(const std::vector<std::string>& nmfIdentifiers,
+                                     const MtlDocument& document,
+                                     std::vector<MtlSubmaterialBinding>& output,
+                                     std::string* error = nullptr);
 
 } // namespace openrepublic::content

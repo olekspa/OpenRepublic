@@ -46,4 +46,19 @@ struct MtlDocument {
 bool ParseMtlSyntax(const std::string& text, MtlDocument& output,
                     std::string* error = nullptr);
 
+// Rewrites each well-formed `$TEXTURE_MTL <index> <name>` directive (two
+// arguments, finite numeric index) into the equivalent `$TEXTURE <index>
+// <mtlDirectory>/<name>`. In C3DDLL32.dll for WRSR build 23935965
+// (C3D_MATERIAL::Load, static review) the game builds that path as the
+// directory part of the material path it was given, up to the last '/', then
+// '/' and the name, and loads it like `$TEXTURE`. `mtlDirectory` is therefore
+// the MTL's directory relative to the content root, with '/' separators; it
+// must be non-empty, NUL-free and at most 2048 bytes. Malformed directives are
+// left untouched. `converted` receives the number rewritten. On failure the
+// document is unchanged.
+bool ApplyMtlDirectoryToRelativeTextures(MtlDocument& document,
+                                         const std::string& mtlDirectory,
+                                         std::size_t* converted = nullptr,
+                                         std::string* error = nullptr);
+
 } // namespace openrepublic::content

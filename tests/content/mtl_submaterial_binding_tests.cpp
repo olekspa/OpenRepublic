@@ -135,11 +135,50 @@ void TestMalformedAndOverLimitInputsAreTransactional() {
 
 } // namespace
 
+void TestLoaderSelectionRule() {
+    MtlDocument single;
+    single.submaterials = {MtlSubmaterial{"lambert1", {}, 1}};
+    single.terminated = true;
+    std::vector<MtlSubmaterialBinding> bindings;
+    Check(SelectMtlSubmaterialsLikeLoader({"____Default1", "other_name"}, single, bindings),
+          "single-section document selects");
+    Check(bindings.size() == 2 && bindings[0].status == MtlSubmaterialBindingStatus::Matched &&
+              bindings[0].sectionIndex == 0 && bindings[1].status == MtlSubmaterialBindingStatus::Matched &&
+              bindings[1].sectionIndex == 0,
+          "a single section is selected for every identifier regardless of name");
+
+    MtlDocument multi;
+    multi.submaterials = {
+        MtlSubmaterial{"first", {}, 1},
+        MtlSubmaterial{"wall", {}, 2},
+        MtlSubmaterial{"wall", {}, 3},
+    };
+    multi.terminated = true;
+    Check(SelectMtlSubmaterialsLikeLoader({"wall", "Wall", "nothing"}, multi, bindings),
+          "multi-section document selects");
+    Check(bindings.size() == 3 && bindings[0].status == MtlSubmaterialBindingStatus::Matched &&
+              bindings[0].sectionIndex == 1,
+          "the first exact-name section wins and duplicates are not ambiguous");
+    Check(bindings[1].status == MtlSubmaterialBindingStatus::FallbackFirstSection &&
+              bindings[1].sectionIndex == 0 &&
+              bindings[2].status == MtlSubmaterialBindingStatus::FallbackFirstSection &&
+              bindings[2].sectionIndex == 0,
+          "case differences and unknown names keep the first section");
+
+    MtlDocument unterminated = multi;
+    unterminated.terminated = false;
+    std::vector<MtlSubmaterialBinding> unchanged{{MtlSubmaterialBindingStatus::Missing, 9}};
+    Check(!SelectMtlSubmaterialsLikeLoader({"wall"}, unterminated, unchanged) &&
+              unchanged.size() == 1 && unchanged[0].sectionIndex == 9,
+          "invalid selection input leaves output unchanged");
+}
+
 int main() {
     TestReorderedSectionsMatchByExactName();
     TestMissingAndAmbiguousSections();
     TestDuplicateNmfIdentifiersAndExactCase();
     TestMalformedAndOverLimitInputsAreTransactional();
+    TestLoaderSelectionRule();
     if (failures != 0) {
         std::cerr << failures << " MTL submaterial binding test(s) failed\n";
         return 1;

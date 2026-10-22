@@ -120,10 +120,39 @@ void TestInputBounds() {
 
 } // namespace
 
+void TestMtlDirectoryRebasing() {
+    MtlDocument document;
+    std::string error;
+    Check(ParseMtlSyntax(std::string("$SUBMATERIAL a") + char(10) + "$TEXTURE_MTL 0 atlas.dds" + char(10) +
+                         "$TEXTURE 1 other/x.dds" + char(10) + "$TEXTURE_MTL 2" + char(10) + "$END" + char(10),
+                         document, &error),
+          "synthetic document with $TEXTURE_MTL parses: " + error);
+    std::size_t converted = 99;
+    Check(ApplyMtlDirectoryToRelativeTextures(document, "buildings/sub", &converted, &error) &&
+              converted == 1,
+          "one well-formed $TEXTURE_MTL directive is rewritten");
+    const auto& directives = document.submaterials[0].directives;
+    Check(directives.size() == 3 && directives[0].name == "$TEXTURE" &&
+              directives[0].kind == MtlDirectiveKind::Texture &&
+              directives[0].arguments[0] == "0" &&
+              directives[0].arguments[1] == "buildings/sub/atlas.dds",
+          "the rewritten directive is a $TEXTURE with the MTL directory prefix");
+    Check(directives[1].name == "$TEXTURE" && directives[1].arguments[1] == "other/x.dds" &&
+              directives[2].name == "$TEXTURE_MTL" && directives[2].arguments.size() == 1,
+          "plain $TEXTURE and malformed $TEXTURE_MTL directives are untouched");
+
+    MtlDocument before = document;
+    Check(!ApplyMtlDirectoryToRelativeTextures(document, "", &converted, &error) && !error.empty() &&
+              document.submaterials[0].directives[0].arguments[1] ==
+                  before.submaterials[0].directives[0].arguments[1],
+          "an empty directory is rejected and the document is unchanged");
+}
+
 int main() {
     TestValidSyntaxAndUnknownPreservation();
     TestMalformedSyntax();
     TestInputBounds();
+    TestMtlDirectoryRebasing();
     if (failures != 0) {
         std::cerr << failures << " MTL syntax test(s) failed\n";
         return 1;
