@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,28 +23,59 @@ struct RoadNode {
     std::vector<std::uint32_t> typeIds;
 };
 
+struct RoadPoint {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
+struct RoadSegment {
+    std::uint32_t nodeA = 0;
+    std::uint32_t nodeB = 0;
+    // Present only when endpoint connection arrays agree on this value.
+    // The game's semantic meaning for the value is not yet known.
+    std::optional<std::uint32_t> typeId;
+    // The 0x18-record XYZ sequence. Centerline interpretation is INFERRED;
+    // points are retained in file order.
+    std::vector<RoadPoint> polyline;
+};
+
 struct RoadNetwork {
     std::vector<RoadNode> nodes;
-    // Counts from the header; segment and group records are not decoded.
+    // Counts from the header.
     std::uint32_t segmentCount = 0;
     std::uint32_t groupCount = 0;
-    // Neighbor links whose reverse link is missing (0 in all 34 sampled files).
+    // Geometry may be a safely decoded prefix if an unknown nested vector is
+    // encountered in a segment record.
+    std::vector<RoadSegment> segments;
+    bool segmentGeometryComplete = false;
+    std::uint32_t unparsedSegmentCount = 0;
+    std::string segmentGeometryDiagnostic;
+    // Neighbor links whose reverse link is missing (0 in all 66 prior samples).
     std::size_t asymmetricLinks = 0;
 };
 
 constexpr std::size_t MaxRoadNodes = 1u << 20;
 constexpr std::size_t MaxRoadNodeLinks = 64;
+constexpr std::size_t MaxRoadSegments = 1u << 20;
+constexpr std::size_t MaxRoadPolylinePoints = 1u << 20;
+
+// Returns samples at equal distances along the polyline, including endpoints
+// when sampleCount > 1. Empty input or zero samples returns an empty vector.
+std::vector<RoadPoint> SampleRoadPolyline(const std::vector<RoadPoint>& polyline,
+                                         std::size_t sampleCount);
 
 // Extracts the junction graph from a `road.bin`-style file (OBSERVED layout in
-// one WRSR build, validated on 34 files): three little-endian u32 counts
+// one WRSR build, previously validated on 66 files): three little-endian u32 counts
 // (nodes, segments, groups) followed by one node record per node. A node
 // record is a 0x48-byte block - float x, y, z, then u32 counts of the four
 // per-connection arrays and of a further triple of arrays (the first four
 // counts always matched the neighbor count in the samples) - followed by those
 // arrays of u32 (three arrays of the fifth count first, then neighbors,
 // segment ids, type ids and one more per-connection word). Positions are in
-// map metres. Every link must reference an existing node. Segment records
-// (which hold the road polylines) come after the nodes and are not parsed.
+// map metres. Every link must reference an existing node. Segment geometry
+// is decoded while its serialized length can be determined; unknown nested
+// vectors stop parsing and leave a safe prefix.
 // On failure output is unchanged.
 bool ExtractRoadNetwork(std::string_view bytes, RoadNetwork& output,
                         std::string* error = nullptr);
