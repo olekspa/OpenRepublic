@@ -474,6 +474,13 @@ Json ProtocolError(const Json &id, std::string code, std::string message) {
 Dispatcher::Dispatcher(Role role, const economy::Catalog &catalog)
     : api_(catalog, 64, 64, economy_api::Permissions{true, role == Role::Controller}), role_(role) {}
 
+Dispatcher::Dispatcher(Role role, economy::World &world)
+    : api_(world, economy_api::Permissions{true, role == Role::Controller}), role_(role) {}
+
+void Dispatcher::SetRegionDescription(std::string description) {
+  regionDescription_ = std::move(description);
+}
+
 bool Dispatcher::ShutdownRequested() const noexcept {
   return shutdown_;
 }
@@ -531,6 +538,8 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                                {"maxEntityPageSize", economy_api::MaxEntityPageSize},
                                {"maxEventPageSize", economy_api::MaxEventPageSize}}},
                {"uint64Encoding", "decimal_string"}};
+    if (!regionDescription_.empty())
+      out["region"] = regionDescription_;
   } else if (method == "catalog") {
     if (!Fields(req, {}, message))
       return invalid(message);

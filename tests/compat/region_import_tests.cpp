@@ -61,7 +61,7 @@ int main() {
               firstReport.gridWidth <= 512 && firstReport.gridDepth <= 512,
           "grid origin uses four-cell margin and dimensions are capped");
     Check(firstReport.notes.size() == 1 &&
-              firstReport.notes[0].find("Roads were not created") != std::string::npos,
+              firstReport.notes[0].find("Roads are not part of this step") != std::string::npos,
           "report notes roads are omitted");
     Check(firstReport.placedBuildings.size() == 2 &&
               firstReport.placedBuildings[0].first == "farm" &&
@@ -87,7 +87,7 @@ int main() {
     }
     const std::string description = compat::DescribeRegionImport(firstReport);
     Check(description.find("2 placed") != std::string::npos &&
-              description.find("Roads were not created") != std::string::npos,
+              description.find("Roads are not part of this step") != std::string::npos,
           "description is a concise readable report");
 
     const std::vector<compat::PlacedBuildingRef> wideRegion = {

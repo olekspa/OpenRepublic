@@ -145,7 +145,7 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
     next.gridWidth = gridWidth;
     next.gridDepth = gridDepth;
     next.considered = placements.size();
-    next.notes.push_back("Roads were not created because map road data is not decoded yet.");
+    next.notes.push_back("Roads are not part of this step; import them with ImportRoadsIntoWorld.");
 
     std::vector<SelectedPlacement> known;
     known.reserve(selected.size());

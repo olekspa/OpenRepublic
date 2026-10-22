@@ -20,13 +20,18 @@ enum class Role { Observer, Controller };
 class Dispatcher final {
 public:
   explicit Dispatcher(Role role, const economy::Catalog &catalog);
+  /** Attaches to an existing world (and its catalog); both must outlive the dispatcher. */
+  Dispatcher(Role role, economy::World &world);
   std::string HandleLine(std::string_view line);
   bool ShutdownRequested() const noexcept;
+  /** Free-text provenance reported by `hello` (for example an imported map region). */
+  void SetRegionDescription(std::string description);
 
 private:
   economy_api::EconomyApi api_;
   Role role_;
   bool shutdown_{};
+  std::string regionDescription_;
 };
 
 } // namespace openrepublic::economy_host
