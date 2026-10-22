@@ -25,7 +25,8 @@ namespace openrepublic
 		void SetNmfProbePath(std::filesystem::path path);
 		void SetNmfTextureRoots(std::vector<std::filesystem::path> roots);
 		void SetNmfMaterialPath(std::filesystem::path path);
-		void SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters);
+		void SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
+			bool regionPreview, std::filesystem::path contentRoot);
 		void SetNmfUnlitPreview(bool enabled);
 		void SetNmfMaterialUnlitPreview(bool enabled);
 		void SetNmfCapturePaths(std::vector<std::filesystem::path> paths);
@@ -76,6 +77,8 @@ namespace openrepublic
 		std::filesystem::path nmfMaterialPath;
 		std::optional<openrepublic::content::MapPlacementRequest> mapPlacement;
 		double mapRadiusMeters = 0.0;
+		bool mapRegionPreview = false;
+		std::filesystem::path mapContentRoot;
 		bool nmfUnlitPreview = false;
 		bool nmfMaterialUnlitPreview = false;
 		std::vector<std::filesystem::path> nmfCapturePaths;

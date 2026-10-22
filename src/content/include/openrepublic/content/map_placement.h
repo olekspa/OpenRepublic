@@ -54,12 +54,28 @@ bool ExtractPlacedBuildings(std::string_view bytes, std::vector<PlacedBuilding>&
 // 0.02 m); it is not checked on other maps.
 TerrainTransform MakeMapTerrainTransform(const TerrainMetadata& metadata);
 
+// Reads and extracts `<map>/buildings_game.bin`. Fails like ExtractPlacedBuildings
+// or when the file is missing or larger than 64 MiB. On failure output is unchanged.
+bool LoadMapPlacements(const std::filesystem::path& mapDirectory,
+                       std::vector<PlacedBuilding>& output, std::string* error = nullptr);
+
+// Indices of the placements whose origin lies within `radiusMeters` (horizontal
+// distance) of placement `centerIndex`, in file order, including the centre.
+std::vector<std::size_t> SelectPlacementsInRadius(const std::vector<PlacedBuilding>& placements,
+                                                  std::size_t centerIndex, double radiusMeters);
+
+// Index of the placement with the most neighbours (itself included) within
+// `radiusMeters`; ties resolve to the lowest index. Returns 0 for an empty list.
+std::size_t FindDensestPlacement(const std::vector<PlacedBuilding>& placements, double radiusMeters);
+
 // Everything the preview needs to show one placed building on its terrain.
 struct MapPlacementRequest {
     std::filesystem::path mapDirectory;
     Heightmap heightmap;
     TerrainMetadata metadata;
     PlacedBuilding placement;
+    // Every placement in the package (the selected one is allPlacements[placementIndex]).
+    std::vector<PlacedBuilding> allPlacements;
     std::size_t placementIndex = 0;
     std::size_t placementCount = 0;
     BuildingTypeAssetPaths assets;
@@ -70,8 +86,12 @@ struct MapPlacementRequest {
 // placement `index` and resolves the placed type's model and MATERIAL under the
 // content root. Fails with a diagnostic if the type has no building-type entry
 // (for example the map's airspace markers). On failure output is unchanged.
+// With `requireAssets` false the placed type's model/material are not resolved
+// (`assets` stays empty); a region view uses this because its centre may be an
+// unresolvable type such as an editor scratch placement.
 bool ResolveMapPlacement(const std::filesystem::path& contentRoot,
                          const std::filesystem::path& mapDirectory, std::size_t index,
-                         MapPlacementRequest& output, std::string* error = nullptr);
+                         MapPlacementRequest& output, std::string* error = nullptr,
+                         bool requireAssets = true);
 
 } // namespace openrepublic::content

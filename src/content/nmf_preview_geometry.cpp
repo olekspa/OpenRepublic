@@ -1,6 +1,7 @@
 #include "openrepublic/content/nmf_preview_geometry.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <new>
 #include <stdexcept>
@@ -24,9 +25,18 @@ bool IsFinite(const NmfNormal& value) {
 
 } // namespace
 
-bool BuildNmfPreviewGeometry(const NmfStaticGeometry& geometry,
+bool BuildNmfPreviewGeometry(const NmfStaticGeometry& inputGeometry,
                              NmfPreviewGeometry& output,
-                             std::string* error) {
+                             std::string* error, bool sourceUnits, bool mirrorZ) {
+    NmfStaticGeometry mirroredCopy;
+    if (mirrorZ) {
+        mirroredCopy = inputGeometry;
+        for (auto& object : mirroredCopy.objects) {
+            for (auto& position : object.lod.positions) position.z = -position.z;
+            for (auto& normal : object.lod.vertexNormals) normal.z = -normal.z;
+        }
+    }
+    const NmfStaticGeometry& geometry = mirrorZ ? mirroredCopy : inputGeometry;
     if (geometry.objects.empty() || geometry.objects.size() > MaxNmfGeometryObjects)
         return Fail(error, "NMF preview requires a bounded, nonempty static-object list");
 
@@ -86,9 +96,11 @@ bool BuildNmfPreviewGeometry(const NmfStaticGeometry& geometry,
         return Fail(error, "NMF geometry could not be mapped into a bounded static mesh preview");
 
     NmfPreviewGeometry candidate;
-    candidate.displayScale = NmfPreviewDisplaySpan / maximumExtent;
-    const double centerX = (minimumX + maximumX) * 0.5;
-    const double centerZ = (minimumZ + maximumZ) * 0.5;
+    candidate.displayScale = sourceUnits ? 1.0 : NmfPreviewDisplaySpan / maximumExtent;
+    const double centerX = sourceUnits ? 0.0 : (minimumX + maximumX) * 0.5;
+    const double centerZ = sourceUnits ? 0.0 : (minimumZ + maximumZ) * 0.5;
+    const double offsetX = sourceUnits ? 0.0 : NmfPreviewCenterX;
+    const double offsetY = sourceUnits ? 0.0 : minimumY;
     candidate.sourceMinimum = {static_cast<float>(minimumX), static_cast<float>(minimumY),
                                static_cast<float>(minimumZ)};
     candidate.sourceMaximum = {static_cast<float>(maximumX), static_cast<float>(maximumY),
@@ -127,9 +139,9 @@ bool BuildNmfPreviewGeometry(const NmfStaticGeometry& geometry,
             for (std::size_t vertexIndex = 0; vertexIndex < lod.positions.size(); ++vertexIndex) {
                 const auto& position = lod.positions[vertexIndex];
                 const NmfPosition normalized{
-                    static_cast<float>(NmfPreviewCenterX +
+                    static_cast<float>(offsetX +
                                        (static_cast<double>(position.x) - centerX) * candidate.displayScale),
-                    static_cast<float>((static_cast<double>(position.y) - minimumY) *
+                    static_cast<float>((static_cast<double>(position.y) - offsetY) *
                                        candidate.displayScale),
                     static_cast<float>((static_cast<double>(position.z) - centerZ) *
                                        candidate.displayScale)};
@@ -152,7 +164,9 @@ bool BuildNmfPreviewGeometry(const NmfStaticGeometry& geometry,
             // with its stored vertex normal), so the second and third index of each
             // triangle are exchanged. The parser guarantees a multiple of three.
             for (std::size_t index = 0; index < lod.indices.size(); index += 3) {
-                for (const std::size_t offset : {std::size_t{0}, std::size_t{2}, std::size_t{1}}) {
+                const std::array<std::size_t, 3> order = mirrorZ ? std::array<std::size_t, 3>{0, 1, 2}
+                                                                  : std::array<std::size_t, 3>{0, 2, 1};
+                for (const std::size_t offset : order) {
                     const std::uint32_t source = lod.indices[index + offset];
                     if (source >= lod.positions.size() ||
                         source > std::numeric_limits<std::uint32_t>::max() - baseVertex)

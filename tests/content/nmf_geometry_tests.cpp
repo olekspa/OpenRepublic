@@ -605,6 +605,34 @@ void TestAllAuxiliaryBranchesAndTruncation() {
     ExpectFailure(std::move(short24ByteFace), "truncated second per-triangle auxiliary array");
 }
 
+void TestNmfPreviewGeometrySourceUnitsAndMirror() {
+    NmfStaticGeometry geometry;
+    geometry.submaterialIdentifiers = {"m"};
+    NmfStaticObject object;
+    object.lod.positions = {{1, 2, 3}, {4, 2, 3}, {1, 6, 5}};
+    object.lod.vertexNormals = {{0, 0, 1}, {0, 0, 1}, {0, 0, 1}};
+    object.lod.indices = {0, 1, 2};
+    object.lod.subsets = {{0, 3, 0, 0, {}}};
+    geometry.objects.push_back(object);
+
+    NmfPreviewGeometry plain;
+    std::string error;
+    Check(BuildNmfPreviewGeometry(geometry, plain, &error, true), "source-units geometry builds: " + error);
+    Check(plain.displayScale == 1.0 && plain.positions.size() == 3 && plain.positions[0].x == 1 &&
+              plain.positions[0].y == 2 && plain.positions[0].z == 3 && plain.positions[2].z == 5,
+          "source units keep positions unscaled, uncentred and unshifted");
+    Check(plain.indices == std::vector<std::uint32_t>{0, 2, 1}, "the usual winding swap still applies");
+
+    NmfPreviewGeometry mirrored;
+    Check(BuildNmfPreviewGeometry(geometry, mirrored, &error, true, true),
+          "mirrored geometry builds: " + error);
+    Check(mirrored.positions[0].z == -3 && mirrored.positions[2].z == -5 && mirrored.positions[0].x == 1 &&
+              mirrored.sourceNormals[0].z == -1.0f && mirrored.sourceMaximum.z == -3.0f,
+          "mirroring negates Z for positions, normals and the recorded bounds");
+    Check(mirrored.indices == std::vector<std::uint32_t>{0, 1, 2},
+          "mirroring keeps the source triangle order so faces stay outward");
+}
+
 void TestNmfPreviewGeometryNormalizationAndSourceOrder() {
     NmfStaticGeometry geometry;
     geometry.submaterialIdentifiers = {"preview-material"};
@@ -793,6 +821,7 @@ int main() {
     TestCombinedTextureCoordinateStreamsStayVertexAligned();
     TestBuildScopedNonStreamBitsDoNotAdvanceTheStream();
     TestAllAuxiliaryBranchesAndTruncation();
+    TestNmfPreviewGeometrySourceUnitsAndMirror();
     TestNmfPreviewGeometryNormalizationAndSourceOrder();
     TestNmfPreviewGeometryRebasesObjectsAndPreservesSubsetOffsets();
     TestNmfPreviewGeometryStructuralDiagnosticsAndTransactionalFailures();

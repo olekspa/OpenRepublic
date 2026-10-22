@@ -66,6 +66,10 @@ constexpr std::size_t MaxBuildingTypeDirectives = 4096;
 bool ParseBuildingTypes(const std::string& text, BuildingTypesDocument& output,
                         std::string* error = nullptr);
 
+// Reads `<contentRoot>/buildings/buildingtypes.ini` (bounded) and parses it.
+bool LoadBuildingTypesFile(const std::filesystem::path& contentRoot, BuildingTypesDocument& output,
+                           std::string* error = nullptr);
+
 const BuildingTypeDefinition* FindBuildingType(const BuildingTypesDocument& document,
                                                const std::string& name);
 

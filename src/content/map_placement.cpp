@@ -119,9 +119,50 @@ TerrainTransform MakeMapTerrainTransform(const TerrainMetadata& metadata) {
     return transform;
 }
 
+bool LoadMapPlacements(const std::filesystem::path& mapDirectory,
+                       std::vector<PlacedBuilding>& output, std::string* error) {
+    std::error_code ec;
+    const auto path = mapDirectory / "buildings_game.bin";
+    const auto bytes = std::filesystem::file_size(path, ec);
+    if (ec || bytes > 64u * 1024u * 1024u)
+        return Fail(error, "buildings_game.bin is missing or exceeds the 64 MiB limit");
+    std::string data(static_cast<std::size_t>(bytes), '\0');
+    std::ifstream in(path, std::ios::binary);
+    in.read(data.data(), static_cast<std::streamsize>(data.size()));
+    if (!in || in.gcount() != static_cast<std::streamsize>(data.size()))
+        return Fail(error, "buildings_game.bin could not be read completely");
+    return ExtractPlacedBuildings(data, output, error);
+}
+
+std::vector<std::size_t> SelectPlacementsInRadius(const std::vector<PlacedBuilding>& placements,
+                                                  std::size_t centerIndex, double radiusMeters) {
+    std::vector<std::size_t> selected;
+    if (centerIndex >= placements.size()) return selected;
+    const double r2 = radiusMeters * radiusMeters;
+    for (std::size_t i = 0; i < placements.size(); ++i) {
+        const double dx = placements[i].X() - placements[centerIndex].X();
+        const double dz = placements[i].Z() - placements[centerIndex].Z();
+        if (dx * dx + dz * dz <= r2) selected.push_back(i);
+    }
+    return selected;
+}
+
+std::size_t FindDensestPlacement(const std::vector<PlacedBuilding>& placements, double radiusMeters) {
+    std::size_t best = 0;
+    std::size_t bestCount = 0;
+    for (std::size_t i = 0; i < placements.size(); ++i) {
+        const std::size_t count = SelectPlacementsInRadius(placements, i, radiusMeters).size();
+        if (count > bestCount) {
+            best = i;
+            bestCount = count;
+        }
+    }
+    return best;
+}
+
 bool ResolveMapPlacement(const std::filesystem::path& contentRoot,
                          const std::filesystem::path& mapDirectory, std::size_t index,
-                         MapPlacementRequest& output, std::string* error) {
+                         MapPlacementRequest& output, std::string* error, bool requireAssets) {
     MapPlacementRequest candidate;
     candidate.mapDirectory = mapDirectory;
 
@@ -132,23 +173,19 @@ bool ResolveMapPlacement(const std::filesystem::path& contentRoot,
     if (!ParseTerrainMetadata(script, candidate.heightmap, candidate.metadata, error)) return false;
 
     std::error_code ec;
-    const auto placementBytes = std::filesystem::file_size(mapDirectory / "buildings_game.bin", ec);
-    if (ec || placementBytes > 64u * 1024u * 1024u)
-        return Fail(error, "buildings_game.bin is missing or exceeds the 64 MiB limit");
-    std::string placements(static_cast<std::size_t>(placementBytes), '\0');
-    {
-        std::ifstream in(mapDirectory / "buildings_game.bin", std::ios::binary);
-        in.read(placements.data(), static_cast<std::streamsize>(placements.size()));
-        if (!in || in.gcount() != static_cast<std::streamsize>(placements.size()))
-            return Fail(error, "buildings_game.bin could not be read completely");
-    }
     std::vector<PlacedBuilding> all;
-    if (!ExtractPlacedBuildings(placements, all, error)) return false;
+    if (!LoadMapPlacements(mapDirectory, all, error)) return false;
     if (index >= all.size()) return Fail(error, "placement index is outside the map's building list");
     candidate.placement = all[index];
     candidate.placementIndex = index;
     candidate.placementCount = all.size();
+    candidate.allPlacements = std::move(all);
 
+    if (!requireAssets) {
+        output = std::move(candidate);
+        if (error) error->clear();
+        return true;
+    }
     const auto iniPath = contentRoot / "buildings" / "buildingtypes.ini";
     const auto iniBytes = std::filesystem::file_size(iniPath, ec);
     if (ec || iniBytes > MaxBuildingTypesInputBytes)

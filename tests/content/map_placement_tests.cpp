@@ -81,6 +81,20 @@ void TestExtraction() {
     Check(!ExtractPlacedBuildings(skewed, keep, &error), "a non-affine matrix is not accepted as a record");
 }
 
+void TestRegionSelection() {
+    std::vector<PlacedBuilding> list(4);
+    const double xs[] = {0.0, 30.0, 60.0, 1000.0};
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        list[i].matrix[12] = static_cast<float>(xs[i]);
+    }
+    const auto near = SelectPlacementsInRadius(list, 1, 40.0);
+    Check(near.size() == 3 && near[0] == 0 && near[1] == 1 && near[2] == 2,
+          "placements within the radius are selected in file order, including the centre");
+    Check(SelectPlacementsInRadius(list, 9, 40.0).empty(), "an invalid centre selects nothing");
+    Check(FindDensestPlacement(list, 40.0) == 1, "the densest placement is the middle of the cluster");
+    Check(FindDensestPlacement({}, 40.0) == 0, "an empty list returns index 0");
+}
+
 void TestTransformAndRegion() {
     TerrainMetadata metadata;
     metadata.worldSizeX = 20000.0f;
@@ -119,6 +133,7 @@ void TestTransformAndRegion() {
 
 int main() {
     TestExtraction();
+    TestRegionSelection();
     TestTransformAndRegion();
     if (failures != 0) {
         std::cerr << failures << " map-placement test(s) failed\n";

@@ -90,6 +90,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::filesystem::path contentRoot;
 	std::filesystem::path mapPackage;
 	std::size_t mapBuildingIndex = 0;
+	bool mapBuildingIndexGiven = false;
+	bool mapRegion = false;
 	double mapRadiusMeters = 0.0;
 	std::string buildingTypeName;
 	int buildingModelLevel = 0;
@@ -142,8 +144,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				else
 				{
 					mapBuildingIndex = static_cast<std::size_t>(parsed);
+					mapBuildingIndexGiven = true;
 				}
 				static_cast<void>(value);
+			}
+			else if (std::wstring_view(arguments[i]) == L"--map-region")
+			{
+				mapRegion = true;
 			}
 			else if (std::wstring_view(arguments[i]) == L"--map-radius" && i + 1 < argumentCount)
 			{
@@ -350,13 +357,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		{
 			openrepublic::content::MapPlacementRequest request;
 			std::string mapResolveError;
-			if (!openrepublic::content::ResolveMapPlacement(contentRoot, mapPackage, mapBuildingIndex, request, &mapResolveError))
+			if (mapRegion && !mapBuildingIndexGiven)
+			{
+				// Centre the region on the busiest spot of the package.
+				std::vector<openrepublic::content::PlacedBuilding> mapPlacements;
+				if (openrepublic::content::LoadMapPlacements(mapPackage, mapPlacements, &mapResolveError))
+				{
+					mapBuildingIndex = openrepublic::content::FindDensestPlacement(
+						mapPlacements, mapRadiusMeters > 0.0 ? mapRadiusMeters : 400.0);
+				}
+			}
+			if (!openrepublic::content::ResolveMapPlacement(contentRoot, mapPackage, mapBuildingIndex, request, &mapResolveError, !mapRegion))
 			{
 				nmfCaptureArgumentError = "map placement could not be resolved: " + mapResolveError;
 			}
 			else
 			{
-				nmfProbePath = request.assets.model;
+				// A region view shows many models; the probe path only marks NMF preview mode.
+				nmfProbePath = mapRegion ? mapPackage / "region.nmf" : request.assets.model;
 				nmfMaterialPath = request.assets.material;
 				nmfTextureRoots.insert(nmfTextureRoots.begin(), contentRoot);
 				mapPlacementRequest = std::move(request);
@@ -544,7 +562,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	application.SetNmfMaterialPath(std::move(nmfMaterialPath));
 	if (mapPlacementRequest)
 	{
-		application.SetMapPlacement(std::move(*mapPlacementRequest), mapRadiusMeters);
+		application.SetMapPlacement(std::move(*mapPlacementRequest), mapRadiusMeters, mapRegion, contentRoot);
 	}
 	application.SetNmfUnlitPreview(nmfUnlitPreview);
 	application.SetNmfMaterialUnlitPreview(nmfMaterialUnlitPreview);

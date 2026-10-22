@@ -9,6 +9,8 @@
 #include "openrepublic/content/terrain_preview.h"
 
 #include <array>
+#include <map>
+#include <set>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -703,7 +705,7 @@ namespace openrepublic::preview
 		const std::vector<std::filesystem::path>& textureRoots,
 		const std::filesystem::path& explicitMtlPath,
 		std::string& description, std::string& geometryAuditSummary,
-		std::string& error, NmfPreviewFrame* frame)
+		std::string& error, NmfPreviewFrame* frame, bool sourceUnits, bool mirrorZ)
 	{
 		openrepublic::content::NmfStaticGeometry geometry;
 		if (!openrepublic::content::LoadNmfStaticGeometry(nmfPath, geometry, &error))
@@ -776,7 +778,7 @@ namespace openrepublic::preview
 			return false;
 
 		openrepublic::content::NmfPreviewGeometry previewGeometry;
-		if (!openrepublic::content::BuildNmfPreviewGeometry(geometry, previewGeometry, &error))
+		if (!openrepublic::content::BuildNmfPreviewGeometry(geometry, previewGeometry, &error, sourceUnits, mirrorZ))
 			return false;
 		previewCameraTarget = XMFLOAT3(previewGeometry.cameraTarget.x,
 			previewGeometry.cameraTarget.y, previewGeometry.cameraTarget.z);
@@ -1313,6 +1315,170 @@ namespace openrepublic::preview
 			<< request.heightmap.width << 'x' << request.heightmap.height
 			<< " R32F; transform: centred extent, height = raw*" << request.metadata.heightScale << '+'
 			<< request.metadata.worldPositionY << ", rows ascend with Z (verified on one map package)";
+		description = summary.str();
+		return true;
+	}
+
+	bool CreateMapRegionPreview(wi::scene::Scene& scene,
+		const openrepublic::content::MapPlacementRequest& request,
+		const std::filesystem::path& contentRoot, double radiusMeters,
+		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error)
+	{
+		using namespace openrepublic::content;
+		constexpr std::size_t kMaxRegionObjects = 1500;
+		constexpr std::size_t kMaxRegionTypes = 160;
+		const double radius = radiusMeters > 0.0 ? radiusMeters : 400.0;
+		const PlacedBuilding& center = request.placement;
+
+		BuildingTypesDocument types;
+		if (!LoadBuildingTypesFile(contentRoot, types, &error))
+		{
+			return false;
+		}
+		const std::vector<std::size_t> selected =
+			SelectPlacementsInRadius(request.allPlacements, request.placementIndex, radius);
+
+		// Terrain first: a 1:1 mesh around the region centre, in centre-relative metres.
+		const TerrainTransform transform = MakeMapTerrainTransform(request.metadata);
+		const double regionRadius = radius * 1.25;
+		const double minX = std::max(transform.originX, center.X() - regionRadius);
+		const double maxX = std::min(transform.originX + transform.sizeX, center.X() + regionRadius);
+		const double minZ = std::max(transform.originZ, center.Z() - regionRadius);
+		const double maxZ = std::min(transform.originZ + transform.sizeZ, center.Z() + regionRadius);
+		constexpr std::uint32_t kSamples = 257;
+		TerrainPreviewGrid grid;
+		if (!BuildTerrainRegionGrid(request.heightmap, transform, minX, minZ, maxX - minX, maxZ - minZ,
+			kSamples, kSamples, grid, &error))
+		{
+			return false;
+		}
+		std::vector<XMFLOAT3> positions;
+		positions.reserve(static_cast<std::size_t>(kSamples) * kSamples);
+		for (std::uint32_t z = 0; z < kSamples; ++z)
+		{
+			for (std::uint32_t x = 0; x < kSamples; ++x)
+			{
+				positions.emplace_back(
+					static_cast<float>(grid.worldXCoordinates[x] - center.X()),
+					grid.heights[static_cast<std::size_t>(z) * kSamples + x],
+					static_cast<float>(grid.worldZCoordinates[z] - center.Z()));
+			}
+		}
+		std::vector<std::uint32_t> indices;
+		indices.reserve(static_cast<std::size_t>(kSamples - 1) * (kSamples - 1) * 6);
+		for (std::uint32_t z = 0; z + 1 < kSamples; ++z)
+		{
+			for (std::uint32_t x = 0; x + 1 < kSamples; ++x)
+			{
+				const std::uint32_t a = z * kSamples + x;
+				const std::uint32_t b = a + 1;
+				const std::uint32_t c = a + kSamples;
+				const std::uint32_t d = c + 1;
+				indices.insert(indices.end(), { a, b, c, b, d, c });
+			}
+		}
+		const wi::ecs::Entity terrainEntity = scene.Entity_CreateMeshFromData(
+			"OpenRepublic map region terrain", indices.size(), indices.data(), positions.size(),
+			positions.data());
+		wi::scene::MeshComponent* terrainMesh = scene.meshes.GetComponent(terrainEntity);
+		wi::scene::MaterialComponent* terrainMaterial = scene.materials.GetComponent(terrainEntity);
+		if (terrainMesh == nullptr || terrainMaterial == nullptr)
+		{
+			error = "Wicked Engine did not create the map region terrain components";
+			return false;
+		}
+		terrainMesh->CreateRenderData();
+		terrainMaterial->SetBaseColor(XMFLOAT4(0.30f, 0.42f, 0.24f, 1.0f));
+		terrainMaterial->SetRoughness(1.0f);
+		terrainMaterial->SetReflectance(0.0f);
+		terrainMaterial->CreateRenderData(true);
+
+		// Buildings: one mesh per distinct type, one object per placement.
+		std::map<std::string, wi::ecs::Entity> meshByType;
+		std::size_t instances = 0;
+		std::size_t unresolvedTypes = 0;
+		std::size_t failedLoads = 0;
+		std::size_t skippedByLimit = 0;
+		std::set<std::string> missingTypeNames;
+		for (const std::size_t index : selected)
+		{
+			const PlacedBuilding& placed = request.allPlacements[index];
+			if (instances >= kMaxRegionObjects)
+			{
+				++skippedByLimit;
+				continue;
+			}
+			auto cached = meshByType.find(placed.typeName);
+			if (cached == meshByType.end())
+			{
+				wi::ecs::Entity meshEntity = wi::ecs::INVALID_ENTITY;
+				if (meshByType.size() < kMaxRegionTypes)
+				{
+					// `MIRRORZ_<type>` is the loader's mirrored derivative of <type>.
+					const std::string mirrorPrefix = "MIRRORZ_";
+					const bool mirrored = placed.typeName.rfind(mirrorPrefix, 0) == 0;
+					const std::string baseName = mirrored ? placed.typeName.substr(mirrorPrefix.size())
+						: placed.typeName;
+					const BuildingTypeDefinition* type = FindBuildingType(types, baseName);
+					BuildingTypeAssetPaths assets;
+					std::string assetError;
+					if (type == nullptr || !ResolveBuildingTypeAssets(*type, 0, contentRoot, assets, &assetError))
+					{
+						++unresolvedTypes;
+						missingTypeNames.insert(placed.typeName);
+						wilog("[OpenRepublic] Map region type '%s' has no resolvable model", placed.typeName.c_str());
+					}
+					else
+					{
+						XMFLOAT3 ignoredTarget;
+						float ignoredDistance = 0.0f;
+						std::string modelDescription;
+						std::string modelAudit;
+						std::string modelError;
+						if (CreateNmfStaticPreview(scene, assets.model, meshEntity, ignoredTarget, ignoredDistance,
+							false, false, { contentRoot }, assets.material, modelDescription, modelAudit, modelError,
+							nullptr, true, mirrored))
+						{
+							// The mesh entity carries its own object; hide it so only instances render.
+							if (wi::scene::ObjectComponent* own = scene.objects.GetComponent(meshEntity))
+							{
+								own->SetRenderable(false);
+							}
+						}
+						else
+						{
+							meshEntity = wi::ecs::INVALID_ENTITY;
+							++failedLoads;
+							wilog("[OpenRepublic] Map region type '%s' skipped: %s", placed.typeName.c_str(),
+								modelError.c_str());
+						}
+					}
+				}
+				cached = meshByType.emplace(placed.typeName, meshEntity).first;
+			}
+			if (cached->second == wi::ecs::INVALID_ENTITY)
+			{
+				continue;
+			}
+			const wi::ecs::Entity instance = scene.Entity_CreateObject(placed.typeName);
+			scene.objects.GetComponent(instance)->meshID = cached->second;
+			XMFLOAT4X4 matrix(placed.matrix.data());
+			matrix._41 = static_cast<float>(placed.X() - center.X());
+			matrix._43 = static_cast<float>(placed.Z() - center.Z());
+			scene.transforms.GetComponent(instance)->MatrixTransform(matrix);
+			++instances;
+		}
+
+		cameraTarget = XMFLOAT3(0.0f, static_cast<float>(center.Y()), 0.0f);
+		cameraDistance = static_cast<float>(radius * 1.5);
+		std::ostringstream summary;
+		summary << "Map region: " << instances << " building instances of "
+			<< (meshByType.size() - unresolvedTypes - failedLoads) << " models within " << radius
+			<< " m of placement " << request.placementIndex + 1 << '/' << request.placementCount << " ("
+			<< center.typeName << "); " << selected.size() << " placements selected, " << unresolvedTypes
+			<< " unresolved types, " << failedLoads << " failed loads, " << skippedByLimit
+			<< " skipped by the instance/type limits; 1:1 metres, verified terrain transform, placement"
+			<< " matrices applied as stored";
 		description = summary.str();
 		return true;
 	}

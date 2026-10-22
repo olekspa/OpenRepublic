@@ -56,8 +56,16 @@ struct NmfPreviewGeometry {
 // winding is reversed to match Wicked's front-face convention.
 // Only complete triangles in each observed subset draw range are counted. On
 // failure, output is unchanged.
+// With `sourceUnits` the positions keep their source coordinates (scale 1, no
+// recentering or vertical shift) so a caller can instance the mesh at real
+// scale; the camera fields are still derived from the extents but are unused.
+// With `mirrorZ` the model is mirrored across the XY plane (z -> -z for positions
+// and source normals) and the triangle winding is kept so faces stay outward;
+// this serves the game's `MIRRORZ_<type>` derived types (INFERRED reading of the
+// loader, see the evidence ledger).
 bool BuildNmfPreviewGeometry(const NmfStaticGeometry& geometry,
                              NmfPreviewGeometry& output,
-                             std::string* error = nullptr);
+                             std::string* error = nullptr, bool sourceUnits = false,
+                             bool mirrorZ = false);
 
 } // namespace openrepublic::content

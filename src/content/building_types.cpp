@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
 #include <set>
 #include <sstream>
 #include <system_error>
@@ -192,6 +193,21 @@ bool ParseBuildingTypes(const std::string& text, BuildingTypesDocument& output, 
     output = std::move(candidate);
     if (error) error->clear();
     return true;
+}
+
+bool LoadBuildingTypesFile(const std::filesystem::path& contentRoot, BuildingTypesDocument& output,
+                           std::string* error) {
+    std::error_code ec;
+    const auto path = contentRoot / "buildings" / "buildingtypes.ini";
+    const auto bytes = std::filesystem::file_size(path, ec);
+    if (ec || bytes > MaxBuildingTypesInputBytes)
+        return Fail(error, "buildings/buildingtypes.ini is missing or exceeds the 8 MiB limit");
+    std::string text(static_cast<std::size_t>(bytes), '\0');
+    std::ifstream in(path, std::ios::binary);
+    in.read(text.data(), static_cast<std::streamsize>(text.size()));
+    if (!in || in.gcount() != static_cast<std::streamsize>(text.size()))
+        return Fail(error, "buildings/buildingtypes.ini could not be read completely");
+    return ParseBuildingTypes(text, output, error);
 }
 
 const BuildingTypeDefinition* FindBuildingType(const BuildingTypesDocument& document,

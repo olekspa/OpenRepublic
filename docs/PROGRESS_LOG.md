@@ -18,6 +18,8 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **~01:10 EDT [05:10 UTC]** Imported the OpenNR bridge as `CodexBridge-v5-OpenRepublic` (ports 8890/8891, own venv), running; merged the Luna economy core (reformatted) into `main`; started worker `ECON-API` through the v5 bridge in worktree `OpenRepublic-wt-econapi`.
 - **~02:00 EDT [06:00 UTC]** Verified the map terrain transform against 28 building placements and the placement rotation convention; implemented `ExtractPlacedBuildings`, `MakeMapTerrainRegion`, `--map-package` preview (commit follows).
 
+- **~03:00 EDT [07:00 UTC]** Region view of a real save with instanced authentic buildings (`--map-region`), `MIRRORZ_` support, scanner validated on 65 files. ECON-API worker finished (commit `7454948` in worktree `OpenRepublic-wt-econapi`), merge pending review.
+
 ## Operating notes
 
 - Launching the game: `steam.exe -applaunch 784150` works; running the game launcher exe directly or `steam://rungameid` fails (reported by the project owner on 2026-10-21). The game and saves remain read-only research sources per `AGENTS.md`.

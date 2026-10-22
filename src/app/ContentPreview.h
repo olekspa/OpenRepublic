@@ -169,13 +169,23 @@ namespace openrepublic::preview
 		const std::vector<std::filesystem::path>& textureRoots,
 		const std::filesystem::path& explicitMtlPath,
 		std::string& description, std::string& geometryAuditSummary,
-		std::string& error, NmfPreviewFrame* frame = nullptr);
+		std::string& error, NmfPreviewFrame* frame = nullptr, bool sourceUnits = false,
+		bool mirrorZ = false);
 
 	// Adds the terrain around a placed building in that building's local frame so
 	// it lines up with the NMF preview: the region around the placement is sampled
 	// with the map's verified terrain transform, rotated by the placement matrix
 	// and mapped through `frame` (1:1, no vertical exaggeration). `radiusMeters`
 	// <= 0 selects an automatic radius from the model size.
+	// Shows every placement within `radiusMeters` of the request's selected placement
+	// (instanced 1:1 at its authentic matrix) on the map terrain around it. Types that
+	// are missing from the building-type data or fail to load are skipped and counted.
+	// The preview frame is the region centre: camera target/distance are set for it.
+	bool CreateMapRegionPreview(wi::scene::Scene& scene,
+		const openrepublic::content::MapPlacementRequest& request,
+		const std::filesystem::path& contentRoot, double radiusMeters,
+		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error);
+
 	bool CreateMapTerrainAroundPlacement(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request, const NmfPreviewFrame& frame,
 		double radiusMeters, std::string& description, std::string& error);

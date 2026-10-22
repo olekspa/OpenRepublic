@@ -188,10 +188,13 @@ namespace openrepublic
 		nmfMaterialPath = std::move(path);
 	}
 
-	void OpenRepublicApplication::SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters)
+	void OpenRepublicApplication::SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
+		bool regionPreview, std::filesystem::path contentRoot)
 	{
 		mapPlacement = std::move(request);
 		mapRadiusMeters = radiusMeters;
+		mapRegionPreview = regionPreview;
+		mapContentRoot = std::move(contentRoot);
 	}
 
 	void OpenRepublicApplication::SetNmfUnlitPreview(bool enabled)
@@ -468,14 +471,29 @@ namespace openrepublic
 				std::string description;
 				std::string error;
 				preview::NmfPreviewFrame previewFrame;
-				if (CreateNmfStaticPreview(previewWorld, nmfProbePath, meshEntity,
-					nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfUnlitPreview,
-					nmfMaterialUnlitPreview, nmfTextureRoots, nmfMaterialPath,
-					description, geometryAuditSummary, error, &previewFrame))
+				bool created = false;
+				if (mapRegionPreview && mapPlacement)
+				{
+					created = preview::CreateMapRegionPreview(previewWorld, *mapPlacement, mapContentRoot,
+						mapRadiusMeters, nmfPreviewCameraTarget, nmfPreviewCameraDistance, description, error);
+					geometryAuditSummary = "map region preview (per-model audits are in the records above)";
+				}
+				else
+				{
+					created = CreateNmfStaticPreview(previewWorld, nmfProbePath, meshEntity,
+						nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfUnlitPreview,
+						nmfMaterialUnlitPreview, nmfTextureRoots, nmfMaterialPath,
+						description, geometryAuditSummary, error, &previewFrame);
+				}
+				if (created)
 				{
 					nmfPreviewLoaded = true;
 					uiNotice = description;
-					if (mapPlacement)
+					if (mapRegionPreview)
+					{
+						wilog("[OpenRepublic] %s", description.c_str());
+					}
+					else if (mapPlacement)
 					{
 						std::string terrainDescription;
 						std::string terrainError;
