@@ -413,7 +413,19 @@ namespace openrepublic::preview
 								const double side = -4.6;
 								const double x = s.x + s.dz * side;
 								const double z = s.z - s.dx * side;
-								AddObject(scene, lampMesh, pose(x, z, std::atan2(s.dx, s.dz) + 3.14159265 * 0.5, 0.0, -0.05), request, cx, cz, 1.0f, false);
+								const Placement lampPose = pose(x, z, std::atan2(s.dx, s.dz) + 3.14159265 * 0.5, 0.0, -0.05);
+								AddObject(scene, lampMesh, lampPose, request, cx, cz, 1.0f, false);
+								if (lamps < 24)
+								{
+									// Warm sodium glow so dusk scenes have light sources (shadowless, cheap).
+									const wi::ecs::Entity light = scene.Entity_CreateLight("showcase lamp light",
+										XMFLOAT3(static_cast<float>(lampPose.x - cx), static_cast<float>(lampPose.y + 7.6), static_cast<float>(lampPose.z - cz)),
+										XMFLOAT3(1.0f, 0.62f, 0.28f), 40.0f, 28.0f, wi::scene::LightComponent::POINT);
+									if (wi::scene::LightComponent* component = scene.lights.GetComponent(light))
+									{
+										component->SetCastShadow(false);
+									}
+								}
 								++lamps;
 							}
 						}

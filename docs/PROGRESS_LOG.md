@@ -135,3 +135,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - 2026-10-22 ~06:00 EDT Far landscape mesh raised from 769 to 1435 samples (about 9.8 m, the heightmap's own spacing): the slope grid on real-relief terrains is visibly weaker, so it was mesh/heightmap aliasing. N22 hero unchanged in brightness; capture still completes.
 
 - **2026-10-22 ~06:10 EDT** Worker ELECTRO started (luna/electro): establish the meaning of electro_high/low point sequences (pole/pylon positions, cable spans) for real power lines in the showcase.
+
+- **2026-10-22 ~06:25 EDT** Added warm point lights at the first 24 street lamps (dusk scenes); a sun-at-3-degrees capture shows a believable red-sky dusk with the lamp glow visible but weak (lamp light range 28 m, intensity 40); facades keep their faint emissive lift so they read light in the dark (a stand-in for lit windows). Not tuned further.
