@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -34,6 +35,9 @@ public:
   void SetRegionDescription(std::string description);
   /** Machine-readable region geometry (a JSON object text) reported by `hello` as `regionInfo`. */
   void SetRegionInfoJson(std::string json);
+  /** Builds a tuned catalog from rule text (from the base catalog, not compounding); enables `reload_rules`. */
+  using RulesBuilder = std::function<bool(std::string_view text, economy::Catalog &out, std::string &error)>;
+  void SetRulesBuilder(RulesBuilder builder);
 
 private:
   std::unique_ptr<economy_api::EconomyApi> ownedApi_;
@@ -45,6 +49,8 @@ private:
   bool shutdown_{};
   std::string regionDescription_;
   std::string regionInfoJson_;
+  RulesBuilder rulesBuilder_;
+  std::vector<std::unique_ptr<economy::Catalog>> retiredCatalogs_;
 };
 
 } // namespace openrepublic::economy_host

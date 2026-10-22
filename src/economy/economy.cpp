@@ -1242,6 +1242,43 @@ World &World::operator=(World &&other) noexcept {
 const Catalog &World::GetCatalog() const noexcept {
     return *impl_->state.catalog;
 }
+bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
+    const Catalog &old = *impl_->state.catalog;
+    const auto &or_ = old.Resources(), &nr = next.Resources();
+    const auto &ob = old.BuildingTypes(), &nb = next.BuildingTypes();
+    const auto &ov = old.VehicleTypes(), &nv = next.VehicleTypes();
+    bool same = or_.size() == nr.size() && ob.size() == nb.size() && ov.size() == nv.size();
+    for (std::size_t i = 0; same && i < or_.size(); ++i)
+        same = or_[i].name == nr[i].name;
+    for (std::size_t i = 0; same && i < ov.size(); ++i)
+        same = ov[i].name == nv[i].name;
+    for (std::size_t i = 0; same && i < ob.size(); ++i) {
+        same = ob[i].name == nb[i].name && ob[i].width == nb[i].width && ob[i].depth == nb[i].depth &&
+               ob[i].storage.size() == nb[i].storage.size() && ob[i].recipes.size() == nb[i].recipes.size();
+        for (std::size_t j = 0; same && j < ob[i].storage.size(); ++j)
+            same = ob[i].storage[j].resource == nb[i].storage[j].resource;
+        for (std::size_t j = 0; same && j < ob[i].recipes.size(); ++j) {
+            const auto &a = ob[i].recipes[j], &b = nb[i].recipes[j];
+            same = a.name == b.name && a.inputs.size() == b.inputs.size() && a.outputs.size() == b.outputs.size();
+        }
+    }
+    if (!same) {
+        error = "the new catalog does not have the same structure as the running one";
+        return false;
+    }
+    for (const auto &b : impl_->state.buildings)
+        for (std::size_t i = 0; i < b.inventory.size(); ++i)
+            if (b.inventory[i] > nb[b.type].storage[i].capacity) {
+                error = "a stored amount exceeds the reduced capacity of its building type";
+                return false;
+            }
+    impl_->state.catalog = &next;
+    for (auto &b : impl_->state.buildings)
+        for (std::size_t i = 0; i < b.remaining.size(); ++i)
+            b.remaining[i] = std::min(b.remaining[i], nb[b.type].recipes[i].intervalTicks);
+    ++impl_->state.revision;
+    return true;
+}
 void SetProductionThreads(unsigned threads) noexcept {
     g_productionThreads = threads;
 }

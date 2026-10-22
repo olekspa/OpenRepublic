@@ -212,6 +212,8 @@ public:
     PollResult PollCommand(std::uint64_t handle) const;
     /** Advances up to MaxStepTicks; command outcomes are evaluated at tick boundaries. */
     ErrorCode Step(std::uint32_t ticks = 1);
+    /** Controller-only rules swap between ticks; see economy::World::ReplaceCatalog. */
+    ErrorCode ReplaceCatalog(const economy::Catalog& catalog, std::string& error);
     /** Reads up to MaxEventPageSize entries after an exclusive cursor. */
     EventQuery ReadEvents(std::uint64_t afterSequence, std::size_t limit) const;
 private:

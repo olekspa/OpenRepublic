@@ -331,6 +331,10 @@ public:
                               VehicleTypeId vehicleType);
     /** Queues cancellation of an order and its owned vehicle. */
     CommandId CancelHaulOrder(OrderId order);
+    /** Swaps in a tuned catalog of identical structure (names, ids, recipe and storage layout) between ticks.
+     *  Rejects the swap, leaving the world untouched, if the structure differs or a stored amount would
+     *  exceed a reduced capacity. The new catalog must outlive the world. */
+    bool ReplaceCatalog(const Catalog &catalog, std::string &error);
     /** Returns queued, accepted, rejected, or unknown command status. */
     CommandResult GetCommandResult(CommandId command) const;
     /** Applies queued commands, production, and haul movement for each bounded tick. */

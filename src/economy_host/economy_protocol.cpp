@@ -510,6 +510,9 @@ void Dispatcher::SetRegionDescription(std::string description) {
   regionDescription_ = std::move(description);
 }
 
+void Dispatcher::SetRulesBuilder(RulesBuilder builder) {
+  rulesBuilder_ = std::move(builder);
+}
 void Dispatcher::SetRegionInfoJson(std::string json) {
   regionInfoJson_ = std::move(json);
 }
@@ -885,6 +888,32 @@ std::string Dispatcher::HandleLine(std::string_view line) {
       return invalid("unknown command kind");
     out =
         Json{{"errorCode", Error(s.error)}, {"handle", std::to_string(s.handle)}, {"state", State(s.state)}};
+  } else if (method == "reload_rules") {
+    // Swaps in a Lua-tuned catalog of identical structure between ticks (controller only).
+    if (!Fields(req, {"text"}, message))
+      return invalid(message);
+    std::string text;
+    if (!String(req, "text", text, message))
+      return invalid(message);
+    if (role_ != Role::Controller)
+      out = Json{{"errorCode", "permission_denied"}};
+    else if (!rulesBuilder_)
+      out = Json{{"errorCode", "unsupported"}, {"message", "this host was built without Lua rules"}};
+    else {
+      auto tuned = std::make_unique<economy::Catalog>();
+      std::string error;
+      if (!rulesBuilder_(text, *tuned, error)) {
+        out = Json{{"errorCode", "invalid_argument"}, {"message", error}};
+      } else {
+        const auto code = api_->ReplaceCatalog(*tuned, error);
+        if (code == economy_api::ErrorCode::None) {
+          retiredCatalogs_.push_back(std::move(tuned));
+          out = Json{{"errorCode", "none"}};
+        } else {
+          out = Json{{"errorCode", Error(code)}, {"message", error}};
+        }
+      }
+    }
   } else if (method == "shutdown") {
     if (!Fields(req, {}, message))
       return invalid(message);

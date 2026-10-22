@@ -328,6 +328,16 @@ void EconomyApi::CaptureChanges(const economy::WorldSnapshot& before) {
         }
     }
 }
+ErrorCode EconomyApi::ReplaceCatalog(const economy::Catalog& catalog, std::string& error) {
+    if (!Allowed(true)) {
+        return ErrorCode::PermissionDenied;
+    }
+    if (!world_->ReplaceCatalog(catalog, error)) {
+        return ErrorCode::InvalidArgument;
+    }
+    catalog_ = &catalog;
+    return ErrorCode::None;
+}
 ErrorCode EconomyApi::Step(std::uint32_t ticks) {
     if (!Allowed(true)) {
         return ErrorCode::PermissionDenied;

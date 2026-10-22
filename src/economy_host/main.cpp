@@ -237,6 +237,16 @@ int main(int argc, char **argv) {
     dispatcher.SetRegionDescription(regionDescription);
   if (regionWorld)
     dispatcher.SetRegionInfoJson(regionInfoJson);
+#ifdef OPENREPUBLIC_HAVE_LUA_RULES
+  {
+    // Rules are always applied to the untuned base so repeated reloads do not compound.
+    const economy::Catalog &baseCatalog = regionWorld ? regionWorld->GetCatalog() : catalog;
+    const auto baseCopy = std::make_shared<economy::Catalog>(baseCatalog);
+    dispatcher.SetRulesBuilder([baseCopy](std::string_view text, economy::Catalog &out, std::string &error) {
+      return scripting::EconomyRules::ApplyText(text, *baseCopy, out, &error);
+    });
+  }
+#endif
   std::string line;
   std::size_t requests = 0;
   while (!dispatcher.ShutdownRequested()) {
