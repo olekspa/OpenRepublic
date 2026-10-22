@@ -23,11 +23,6 @@ set(OPENREPUBLIC_AGENT_HOST_AVAILABLE FALSE)
 if(NOT DEFINED OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR)
     set(_OPENREPUBLIC_DEFAULT_JSON_INCLUDE_DIR
         "${PROJECT_SOURCE_DIR}/third_party/WickedEngine/Editor")
-    if(NOT EXISTS "${_OPENREPUBLIC_DEFAULT_JSON_INCLUDE_DIR}/json.hpp" AND
-       EXISTS "D:/.CODEX_Projects/OpenRepublic/third_party/WickedEngine/Editor/json.hpp")
-        set(_OPENREPUBLIC_DEFAULT_JSON_INCLUDE_DIR
-            "D:/.CODEX_Projects/OpenRepublic/third_party/WickedEngine/Editor")
-    endif()
     set(OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR "${_OPENREPUBLIC_DEFAULT_JSON_INCLUDE_DIR}" CACHE PATH
         "Directory containing the pinned Wicked Engine Editor/json.hpp header")
 endif()
