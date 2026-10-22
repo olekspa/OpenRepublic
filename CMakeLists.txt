@@ -39,6 +39,18 @@ else()
     message(STATUS "OpenRepublicAgentHost disabled: pinned nlohmann/json.hpp is unavailable")
 endif()
 
+# Lua rules only need the plain C Lua library; the headless build compiles it without the engine.
+set(WICKED_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/WickedEngine")
+if(NOT OPENREPUBLIC_BUILD_CLIENT AND EXISTS "${WICKED_ROOT_DIR}/WickedEngine/LUA/CMakeLists.txt")
+    enable_language(C)
+    set(WICKED_PIC OFF)
+    add_subdirectory("${WICKED_ROOT_DIR}/WickedEngine/LUA" lua_headless EXCLUDE_FROM_ALL)
+    add_subdirectory(src/scripting)
+endif()
+if(TARGET LUA OR EXISTS "${WICKED_ROOT_DIR}/WickedEngine/LUA/CMakeLists.txt")
+    set(OPENREPUBLIC_LUA_AVAILABLE TRUE)
+endif()
+
 set(OPENREPUBLIC_ECONOMY_HOST_AVAILABLE FALSE)
 if(EXISTS "${OPENREPUBLIC_WICKED_JSON_HEADER}")
     add_subdirectory(src/economy_host)
@@ -67,11 +79,7 @@ if(OPENREPUBLIC_BUILD_CLIENT)
 
     add_subdirectory(third_party/WickedEngine EXCLUDE_FROM_ALL)
 
-    # Lua-backed rules are optional and use Wicked Engine's bundled Lua target.
-    if(TARGET LUA)
-        add_subdirectory(src/scripting)
-    endif()
-
+    add_subdirectory(src/scripting)
     add_subdirectory(src/app)
 endif()
 
@@ -93,7 +101,7 @@ if(OPENREPUBLIC_BUILD_TESTS)
         add_subdirectory(tests/economy_host)
     endif()
 
-    if(OPENREPUBLIC_BUILD_CLIENT AND TARGET LUA)
+    if(TARGET OpenRepublicScripting)
         add_subdirectory(tests/scripting)
     endif()
 endif()

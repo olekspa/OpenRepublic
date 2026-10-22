@@ -5,3 +5,11 @@ target_compile_definitions(OpenRepublicLuaRulesTests PRIVATE
     OPENREPUBLIC_DEMO_RULES_PATH="${PROJECT_SOURCE_DIR}/data/rules/demo_rules.lua"
 )
 add_test(NAME OpenRepublicLuaRulesTests COMMAND OpenRepublicLuaRulesTests)
+
+add_executable(OpenRepublicEconomyRulesTests economy_rules_tests.cpp)
+target_link_libraries(OpenRepublicEconomyRulesTests PRIVATE OpenRepublicScripting)
+target_compile_features(OpenRepublicEconomyRulesTests PRIVATE cxx_std_17)
+target_compile_definitions(OpenRepublicEconomyRulesTests PRIVATE
+    OPENREPUBLIC_ECONOMY_RULES_PATH="${PROJECT_SOURCE_DIR}/data/rules/economy_rules.lua"
+)
+add_test(NAME OpenRepublicEconomyRulesTests COMMAND OpenRepublicEconomyRulesTests)

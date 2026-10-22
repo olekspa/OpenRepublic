@@ -6,6 +6,10 @@
 #include "openrepublic/content/map_placement.h"
 #include "openrepublic/content/road_network.h"
 
+#ifdef OPENREPUBLIC_HAVE_LUA_RULES
+#include "openrepublic/scripting/economy_rules.h"
+#endif
+
 #include <fstream>
 #include <iostream>
 #include <filesystem>
@@ -38,7 +42,7 @@ LineStatus ReadBoundedLine(std::istream &input, std::string &line) {
 
 void PrintUsage() {
   std::cerr << "Usage: OpenRepublicEconomyHost [--role observer|controller] [--catalog file]\n"
-            << "       [--region <map dir> --content-root <dir> [--center N] [--radius M]]\n"
+            << "       [--rules <economy_rules.lua>] [--region <map dir> --content-root <dir> [--center N] [--radius M]]\n"
             << "Reads protocolVersion 0 JSONL requests from stdin and writes responses to stdout.\n"
             << "--region imports a local WRSR map package's placements and roads into the world\n"
             << "(the catalog is built from <content-root>/buildings_types; local content only).\n";
@@ -54,9 +58,26 @@ bool ReadFile(const std::filesystem::path &path, std::string &text) {
   return true;
 }
 
+// Applies a sandboxed Lua tuning bundle to the catalog (no-op without a rules path).
+bool ApplyRules(const std::filesystem::path &rulesPath, economy::Catalog &catalog, std::string &error) {
+  if (rulesPath.empty())
+    return true;
+#ifdef OPENREPUBLIC_HAVE_LUA_RULES
+  economy::Catalog tuned;
+  if (!scripting::EconomyRules::ApplyFile(rulesPath, catalog, tuned, &error))
+    return false;
+  catalog = std::move(tuned);
+  return true;
+#else
+  error = "this build has no Lua support";
+  return false;
+#endif
+}
+
 // Imports a map package region into a new world. All outputs stay owned by the caller.
 bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::filesystem::path &mapDir,
-                      long centerIndex, double radius, economy::Catalog &catalog,
+                      long centerIndex, double radius, const std::filesystem::path &rulesPath,
+                      economy::Catalog &catalog,
                       std::unique_ptr<economy::World> &world, std::string &description,
                       std::string &regionInfoJson, std::string &error) {
   std::map<std::string, content::BuildingDefinition> definitions;
@@ -75,6 +96,8 @@ bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::files
     error = "could not build a catalog from <content-root>/buildings_types";
     return false;
   }
+  if (!ApplyRules(rulesPath, catalog, error))
+    return false;
   std::vector<content::PlacedBuilding> placements;
   if (!content::LoadMapPlacements(mapDir, placements, &error))
     return false;
@@ -131,6 +154,7 @@ int main(int argc, char **argv) {
   std::string catalogPath;
   std::filesystem::path regionDir;
   std::filesystem::path contentRoot;
+  std::filesystem::path rulesPath;
   long centerIndex = -1;
   double radius = 400.0;
   for (int i = 1; i < argc; ++i) {
@@ -152,6 +176,8 @@ int main(int argc, char **argv) {
       regionDir = argv[++i];
     } else if (arg == "--content-root" && i + 1 < argc) {
       contentRoot = argv[++i];
+    } else if (arg == "--rules" && i + 1 < argc) {
+      rulesPath = argv[++i];
     } else if (arg == "--center" && i + 1 < argc) {
       centerIndex = std::strtol(argv[++i], nullptr, 10);
     } else if (arg == "--radius" && i + 1 < argc) {
@@ -183,6 +209,13 @@ int main(int argc, char **argv) {
     catalog = std::move(parsed);
   }
 
+  if (regionDir.empty()) {
+    std::string rulesError;
+    if (!ApplyRules(rulesPath, catalog, rulesError)) {
+      std::cerr << "Lua rules rejected: " << rulesError << "\n";
+      return 2;
+    }
+  }
   std::unique_ptr<economy::World> regionWorld;
   std::string regionDescription;
   std::string regionInfoJson;
@@ -192,7 +225,7 @@ int main(int argc, char **argv) {
       return 2;
     }
     std::string error;
-    if (!BuildRegionWorld(contentRoot, regionDir, centerIndex, radius, catalog, regionWorld,
+    if (!BuildRegionWorld(contentRoot, regionDir, centerIndex, radius, rulesPath, catalog, regionWorld,
                           regionDescription, regionInfoJson, error)) {
       std::cerr << "Region import failed: " << error << "\n";
       return 2;

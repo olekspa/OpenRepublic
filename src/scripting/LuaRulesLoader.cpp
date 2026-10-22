@@ -1,4 +1,5 @@
 #include "openrepublic/scripting/lua_rules_loader.h"
+#include "openrepublic/scripting/economy_rules.h"
 
 extern "C"
 {
@@ -10,7 +11,9 @@ extern "C"
 #include <array>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <utility>
@@ -236,7 +239,7 @@ namespace openrepublic::scripting
 		return LoadText(source, out, error);
 	}
 
-	bool LuaRulesLoader::LoadText(std::string_view text, sim::SimulationRules& out, std::string* error)
+	bool RunSandboxedRules(std::string_view text, std::string* error, const std::function<bool(lua_State*)>& consume)
 	{
 		if (error != nullptr)
 		{
@@ -279,14 +282,220 @@ namespace openrepublic::scripting
 		{
 			return Reject(error, "unable to execute Lua rules: " + LuaErrorMessage(state.get(), "unknown Lua runtime error"));
 		}
+		return consume(state.get());
+	}
 
-		sim::SimulationRules candidate = out;
-		if (!ValidateRules(state.get(), candidate, error))
+	bool LuaRulesLoader::LoadText(std::string_view text, sim::SimulationRules& out, std::string* error)
+	{
+		return RunSandboxedRules(text, error, [&](lua_State* state) {
+			sim::SimulationRules candidate = out;
+			if (!ValidateRules(state, candidate, error))
+			{
+				return false;
+			}
+			out = candidate;
+			return true;
+		});
+	}
+	namespace
+	{
+		struct BuildingTuning
+		{
+			std::uint32_t speedPercent = 100;
+			std::uint32_t storagePercent = 100;
+		};
+		struct VehicleTuning
+		{
+			std::uint32_t capacityPercent = 100;
+			std::uint32_t speedPercent = 100;
+		};
+
+		using TuningValues = std::array<std::uint32_t, 2>;
+
+		// Reads a table of name -> { field = integer percent }; every field must be in 10..1000.
+		bool ReadTuningTable(lua_State* state, const char* tableName, const std::array<const char*, 2>& fieldNames,
+			const std::function<bool(const std::string&)>& knownName,
+			const std::function<void(const std::string&, const TuningValues&)>& store, std::string* error)
+		{
+			lua_getfield(state, -1, tableName);
+			if (lua_isnil(state, -1))
+			{
+				lua_pop(state, 1);
+				return true;
+			}
+			if (lua_type(state, -1) != LUA_TTABLE)
+			{
+				return Reject(error, std::string("'") + tableName + "' must be a table");
+			}
+			const int tableIndex = lua_absindex(state, -1);
+			lua_pushnil(state);
+			while (lua_next(state, tableIndex) != 0)
+			{
+				if (lua_type(state, -2) != LUA_TSTRING || lua_type(state, -1) != LUA_TTABLE)
+				{
+					return Reject(error, std::string("'") + tableName + "' entries must be name = { fields }");
+				}
+				const std::string name = lua_tostring(state, -2);
+				if (!knownName(name))
+				{
+					return Reject(error, std::string("unknown ") + tableName + " entry '" + name + "'");
+				}
+				TuningValues values{ 100, 100 };
+				const int entryIndex = lua_absindex(state, -1);
+				lua_pushnil(state);
+				while (lua_next(state, entryIndex) != 0)
+				{
+					if (lua_type(state, -2) != LUA_TSTRING)
+					{
+						return Reject(error, "tuning field names must be strings");
+					}
+					const std::string field = lua_tostring(state, -2);
+					std::size_t slot = fieldNames.size();
+					for (std::size_t i = 0; i < fieldNames.size(); ++i)
+					{
+						if (field == fieldNames[i])
+						{
+							slot = i;
+						}
+					}
+					if (slot == fieldNames.size())
+					{
+						return Reject(error, "unknown tuning field '" + field + "' on " + name);
+					}
+					if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) < 10 || lua_tointeger(state, -1) > 1000)
+					{
+						return Reject(error, name + "." + field + " must be an integer percent between 10 and 1000");
+					}
+					values[slot] = static_cast<std::uint32_t>(lua_tointeger(state, -1));
+					lua_pop(state, 1);
+				}
+				store(name, values);
+				lua_pop(state, 1);
+			}
+			lua_pop(state, 1);
+			return true;
+		}
+	}
+
+	bool EconomyRules::ApplyText(std::string_view text, const economy::Catalog& base, economy::Catalog& out, std::string* error)
+	{
+		if (error != nullptr)
+		{
+			error->clear();
+		}
+		std::map<std::string, BuildingTuning> buildingTuning;
+		std::map<std::string, VehicleTuning> vehicleTuning;
+		const bool parsed = RunSandboxedRules(text, error, [&](lua_State* state) {
+			if (lua_type(state, -1) != LUA_TTABLE)
+			{
+				return Reject(error, "Lua rule script must return a table");
+			}
+			lua_getfield(state, -1, "schema_version");
+			if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) != 1)
+			{
+				return Reject(error, "rule field 'schema_version' must be the integer 1");
+			}
+			lua_pop(state, 1);
+			lua_pushnil(state);
+			while (lua_next(state, -2) != 0)
+			{
+				const char* key = lua_type(state, -2) == LUA_TSTRING ? lua_tostring(state, -2) : nullptr;
+				if (key == nullptr || (std::string(key) != "schema_version" && std::string(key) != "buildings" &&
+					std::string(key) != "vehicles"))
+				{
+					return Reject(error, "unknown top-level rule field");
+				}
+				lua_pop(state, 1);
+			}
+			const std::array<const char*, 2> buildingFields = { "speed_percent", "storage_percent" };
+			const std::array<const char*, 2> vehicleFields = { "capacity_percent", "speed_percent" };
+			return ReadTuningTable(state, "buildings", buildingFields,
+					[&](const std::string& n) { economy::BuildingTypeId id; return base.FindBuildingType(n, id); },
+					[&](const std::string& n, const TuningValues& v) { buildingTuning[n] = { v[0], v[1] }; }, error) &&
+				ReadTuningTable(state, "vehicles", vehicleFields,
+					[&](const std::string& n) { economy::VehicleTypeId id; return base.FindVehicleType(n, id); },
+					[&](const std::string& n, const TuningValues& v) { vehicleTuning[n] = { v[0], v[1] }; }, error);
+		});
+		if (!parsed)
 		{
 			return false;
 		}
 
-		out = candidate;
+		economy::CatalogBuilder builder;
+		economy::CatalogErrorInfo info;
+		auto failed = [&]() { return Reject(error, "catalog rebuild failed: " + info.message); };
+		for (const auto& r : base.Resources())
+		{
+			economy::ResourceId id;
+			if (!builder.AddResource(r.name, &id, info))
+			{
+				return failed();
+			}
+		}
+		for (const auto& t : base.BuildingTypes())
+		{
+			const auto found = buildingTuning.find(t.name);
+			const BuildingTuning tuning = found != buildingTuning.end() ? found->second : BuildingTuning{};
+			economy::BuildingTypeId id;
+			if (!builder.AddBuildingType(t.name, t.width, t.depth, &id, info))
+			{
+				return failed();
+			}
+			for (const auto& s : t.storage)
+			{
+				const std::uint64_t capacity = std::max<std::uint64_t>(1, s.capacity * tuning.storagePercent / 100);
+				if (!builder.AddStorage(id, s.resource, capacity, info))
+				{
+					return failed();
+				}
+			}
+			for (auto recipe : t.recipes)
+			{
+				recipe.intervalTicks = static_cast<std::uint32_t>(std::max<std::uint64_t>(
+					1, static_cast<std::uint64_t>(recipe.intervalTicks) * 100 / tuning.speedPercent));
+				if (!builder.AddRecipe(id, recipe, info))
+				{
+					return failed();
+				}
+			}
+		}
+		for (const auto& v : base.VehicleTypes())
+		{
+			const auto found = vehicleTuning.find(v.name);
+			const VehicleTuning tuning = found != vehicleTuning.end() ? found->second : VehicleTuning{};
+			economy::VehicleTypeId id;
+			const std::uint64_t capacity = std::max<std::uint64_t>(1, v.capacity * tuning.capacityPercent / 100);
+			const std::uint32_t speed = static_cast<std::uint32_t>(
+				std::max<std::uint64_t>(1, static_cast<std::uint64_t>(v.cellsPerTick) * tuning.speedPercent / 100));
+			if (!builder.AddVehicleType(v.name, capacity, speed, &id, info))
+			{
+				return failed();
+			}
+		}
+		economy::Catalog rebuilt;
+		if (!builder.Build(rebuilt, info))
+		{
+			return failed();
+		}
+		out = std::move(rebuilt);
 		return true;
+	}
+
+	bool EconomyRules::ApplyFile(const std::filesystem::path& path, const economy::Catalog& base, economy::Catalog& out, std::string* error)
+	{
+		std::ifstream file(path, std::ios::binary);
+		if (!file)
+		{
+			return Reject(error, "unable to open Lua rules file: " + path.string());
+		}
+		std::string source(kMaximumSourceBytes + 1, '\0');
+		file.read(source.data(), static_cast<std::streamsize>(source.size()));
+		const std::streamsize bytesRead = file.gcount();
+		if (bytesRead < 0 || static_cast<std::size_t>(bytesRead) > kMaximumSourceBytes)
+		{
+			return Reject(error, "Lua rule source exceeds the 65536-byte limit");
+		}
+		source.resize(static_cast<std::size_t>(bytesRead));
+		return ApplyText(source, base, out, error);
 	}
 }
