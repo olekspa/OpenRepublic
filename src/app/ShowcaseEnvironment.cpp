@@ -573,6 +573,32 @@ namespace openrepublic::preview
 		RealGroundNormal() = normal;
 	}
 
+	const wi::Resource& ShowcaseSoftCircleTexture()
+	{
+		static wi::Resource resource = []()
+		{
+			constexpr std::uint32_t kSize = 64;
+			std::vector<std::uint8_t> pixels(static_cast<std::size_t>(kSize) * kSize * 4);
+			for (std::uint32_t y = 0; y < kSize; ++y)
+			{
+				for (std::uint32_t x = 0; x < kSize; ++x)
+				{
+					const float dx = (x + 0.5f) / kSize * 2.0f - 1.0f;
+					const float dy = (y + 0.5f) / kSize * 2.0f - 1.0f;
+					const float r = std::sqrt(dx * dx + dy * dy);
+					const float falloff = std::clamp(1.0f - r, 0.0f, 1.0f);
+					const float alpha = falloff * falloff * (3.0f - 2.0f * falloff);
+					const float noise = 0.85f + 0.3f * Hash01(static_cast<int>(x / 4), static_cast<int>(y / 4), 61);
+					const std::size_t i = (static_cast<std::size_t>(y) * kSize + x) * 4;
+					pixels[i + 0] = pixels[i + 1] = pixels[i + 2] = 255;
+					pixels[i + 3] = static_cast<std::uint8_t>(std::clamp(alpha * noise, 0.0f, 1.0f) * 255.0f);
+				}
+			}
+			return MakeTexture(kSize, kSize, std::move(pixels));
+		}();
+		return resource;
+	}
+
 	void ApplyShowcaseGrass(wi::scene::MaterialComponent& material)
 	{
 		const bool real = RealGroundAlbedo().IsValid();

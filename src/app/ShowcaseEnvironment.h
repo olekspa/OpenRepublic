@@ -63,6 +63,8 @@ namespace openrepublic::preview
 	// Procedural detail textures (created once, shared).
 	const wi::Resource& ShowcaseGrassTexture();
 	const wi::Resource& ShowcaseAsphaltTexture();
+	// Soft round alpha sprite for smoke puffs.
+	const wi::Resource& ShowcaseSoftCircleTexture();
 
 	// Gives a terrain material the grass detail texture (UV 0 = world metres / 12). When `realGround`
 	// is valid (a texture decoded from a local WRSR install) it replaces the procedural one.

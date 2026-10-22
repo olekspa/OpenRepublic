@@ -373,7 +373,7 @@ namespace openrepublic::preview
 		}
 
 		// ---- Industrial skyline: chimney and cooling tower beyond the town edge.
-		const auto industrial = [&](wi::ecs::Entity mesh, double dx, double dz)
+		const auto industrial = [&](wi::ecs::Entity mesh, double dx, double dz, double smokeHeight)
 		{
 			if (mesh == wi::ecs::INVALID_ENTITY)
 			{
@@ -388,10 +388,37 @@ namespace openrepublic::preview
 			Placement p;
 			p.x = x; p.z = z; p.y = h - 0.3; p.yaw = 0.0; p.pitch = 0.0;
 			AddObject(scene, mesh, p, request, cx, cz, 1.0f, true);
+			if (smokeHeight > 0.0)
+			{
+				// Slowly rising, drifting grey plume from the top of the stack.
+				const wi::ecs::Entity emitterEntity = scene.Entity_CreateEmitter("showcase smoke",
+					XMFLOAT3(static_cast<float>(x - cx), static_cast<float>(h + smokeHeight), static_cast<float>(z - cz)));
+				if (wi::EmittedParticleSystem* emitter = scene.emitters.GetComponent(emitterEntity))
+				{
+					emitter->count = 22.0f;
+					emitter->size = 5.0f;
+					emitter->life = 26.0f;
+					emitter->random_life = 0.4f;
+					emitter->normal_factor = 0.0f;
+					emitter->random_factor = 0.5f;
+					emitter->velocity = XMFLOAT3(2.2f, 3.2f, 0.8f);
+					emitter->scaleX = 2.6f;
+					emitter->mass = -0.02f;
+					emitter->drag = 0.99f;
+					emitter->rotation = 1.0f;
+				}
+				if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(emitterEntity))
+				{
+					material->SetBaseColor(XMFLOAT4(0.55f, 0.53f, 0.50f, 0.6f));
+					material->userBlendMode = wi::enums::BLENDMODE_ALPHA;
+					material->textures[wi::scene::MaterialComponent::BASECOLORMAP].resource = ShowcaseSoftCircleTexture();
+					material->textures[wi::scene::MaterialComponent::BASECOLORMAP].uvset = 0;
+				}
+			}
 		};
-		industrial(chimneyMesh, regionRadius * 1.6, -regionRadius * 0.5);
-		industrial(towerMesh, regionRadius * 1.9, -regionRadius * 0.15);
-		industrial(chimneyMesh, regionRadius * 1.75, regionRadius * 0.1);
+		industrial(chimneyMesh, regionRadius * 1.6, -regionRadius * 0.5, 60.0);
+		industrial(towerMesh, regionRadius * 1.9, -regionRadius * 0.15, 40.0);
+		industrial(chimneyMesh, regionRadius * 1.75, regionRadius * 0.1, 60.0);
 		(void)crossbuckMesh;
 
 		// ---- Wires: one static mesh, lit and shadowed like the rest.
