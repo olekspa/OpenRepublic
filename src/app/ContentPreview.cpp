@@ -1325,7 +1325,7 @@ namespace openrepublic::preview
 		const openrepublic::content::MapPlacementRequest& request,
 		const std::filesystem::path& contentRoot, double radiusMeters, int modelLevel, bool enhancedLook,
 		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
-		std::vector<RegionInstance>* outInstances)
+		std::vector<RegionInstance>* outInstances, ShowcaseEnvironmentInfo* environmentInfo)
 	{
 		using namespace openrepublic::content;
 		constexpr std::size_t kMaxRegionObjects = 1500;
@@ -1357,6 +1357,11 @@ namespace openrepublic::preview
 		TerrainPreviewGrid grid;
 		if (!BuildTerrainRegionGrid(request.heightmap, transform, minX, minZ, maxX - minX, maxZ - minZ,
 			kSamples, kSamples, grid, &error))
+		{
+			return false;
+		}
+		ShowcaseTerrainData showcaseTerrain;
+		if (enhancedLook && !PrepareShowcaseTerrain(request, regionRadius, showcaseTerrain, error))
 		{
 			return false;
 		}
@@ -1397,36 +1402,15 @@ namespace openrepublic::preview
 		}
 		if (enhancedLook)
 		{
-			// This is OpenRepublic presentation styling over the verified height mesh;
-			// it does not interpret or claim compatibility with the map's unknown masks.
-			const auto latticeValue = [](int x, int z)
-			{
-				std::uint32_t hash = static_cast<std::uint32_t>(x) * 0x8da6b343u ^
-					static_cast<std::uint32_t>(z) * 0xd8163841u;
-				hash ^= hash >> 13;
-				hash *= 0x85ebca6bu;
-				hash ^= hash >> 16;
-				return static_cast<float>(hash & 0x00ffffffu) / 16777215.0f;
-			};
-			const auto smoothNoise = [&](double worldX, double worldZ, double scale)
-			{
-				const double x = worldX / scale;
-				const double z = worldZ / scale;
-				const int x0 = static_cast<int>(std::floor(x));
-				const int z0 = static_cast<int>(std::floor(z));
-				const float tx = static_cast<float>(x - x0);
-				const float tz = static_cast<float>(z - z0);
-				const float sx = tx * tx * (3.0f - 2.0f * tx);
-				const float sz = tz * tz * (3.0f - 2.0f * tz);
-				const float a = wi::math::Lerp(latticeValue(x0, z0), latticeValue(x0 + 1, z0), sx);
-				const float b = wi::math::Lerp(latticeValue(x0, z0 + 1), latticeValue(x0 + 1, z0 + 1), sx);
-				return wi::math::Lerp(a, b, sz);
-			};
+			// OpenRepublic presentation styling over the verified height mesh (not an
+			// interpretation of the map's unknown masks); shared with the far landscape so
+			// the two meshes shade identically.
 			const auto gridHeight = [&](std::uint32_t x, std::uint32_t z)
 			{
 				return grid.heights[static_cast<std::size_t>(z) * kSamples + x];
 			};
 			terrainMesh->vertex_colors.reserve(positions.size());
+			terrainMesh->vertex_uvset_0.reserve(positions.size());
 			for (std::uint32_t z = 0; z < kSamples; ++z)
 			{
 				for (std::uint32_t x = 0; x < kSamples; ++x)
@@ -1439,28 +1423,17 @@ namespace openrepublic::preview
 					const double dz = grid.worldZCoordinates[up] - grid.worldZCoordinates[down];
 					const float slopeX = dx > 0.0 ? static_cast<float>((gridHeight(right, z) - gridHeight(left, z)) / dx) : 0.0f;
 					const float slopeZ = dz > 0.0 ? static_cast<float>((gridHeight(x, up) - gridHeight(x, down)) / dz) : 0.0f;
-					const float steepness = std::clamp((std::sqrt(slopeX * slopeX + slopeZ * slopeZ) - 0.08f) * 1.6f,
-						0.0f, 0.34f);
+					const float slope = std::sqrt(slopeX * slopeX + slopeZ * slopeZ);
 					const double worldX = grid.worldXCoordinates[x];
 					const double worldZ = grid.worldZCoordinates[z];
-					const float broad = smoothNoise(worldX, worldZ, 78.0);
-					const float fine = smoothNoise(worldX, worldZ, 29.0);
-					const float heightRange = grid.maxHeight - grid.minHeight;
-					const float elevation = heightRange > 0.01f
-						? std::clamp((gridHeight(x, z) - grid.minHeight) / heightRange, 0.0f, 1.0f) : 0.0f;
-					const float dryness = std::clamp((broad - 0.42f) * 0.44f + elevation * 0.16f, 0.0f, 0.32f);
-					XMFLOAT3 color(
-						0.28f + dryness * 0.46f + fine * 0.035f,
-						0.37f + (1.0f - dryness) * 0.08f + broad * 0.045f,
-						0.23f + (1.0f - dryness) * 0.035f + fine * 0.028f);
-					color.x = wi::math::Lerp(color.x, 0.39f, steepness);
-					color.y = wi::math::Lerp(color.y, 0.37f, steepness);
-					color.z = wi::math::Lerp(color.z, 0.32f, steepness);
+					const XMFLOAT3 color = ShadeShowcaseTerrain(showcaseTerrain, worldX, worldZ, gridHeight(x, z), slope);
 					terrainMesh->vertex_colors.push_back(wi::Color::fromFloat4(XMFLOAT4(color.x, color.y, color.z, 1.0f)).rgba);
+					terrainMesh->vertex_uvset_0.emplace_back(static_cast<float>(worldX / 12.0), static_cast<float>(worldZ / 12.0));
 				}
 			}
 			terrainMaterial->SetUseVertexColors(true);
 			terrainMaterial->SetBaseColor(XMFLOAT4(1, 1, 1, 1));
+			ApplyShowcaseGrass(*terrainMaterial);
 		}
 		else
 		{
@@ -1481,6 +1454,7 @@ namespace openrepublic::preview
 			constexpr double kRoadStep = 8.0;
 			constexpr std::size_t kMaxRoadVertices = 240000;
 			std::vector<XMFLOAT3> roadPositions;
+			std::vector<XMFLOAT2> roadUvs;
 			std::vector<std::uint32_t> roadIndices;
 			const double limit = regionRadius * 1.1;
 			const auto& nodes = request.roads.nodes;
@@ -1526,6 +1500,9 @@ namespace openrepublic::preview
 							static_cast<float>(wz - center.Z() + dx * kRoadHalfWidth));
 						roadPositions.emplace_back(static_cast<float>(wx - center.X() + dz * kRoadHalfWidth), y,
 							static_cast<float>(wz - center.Z() - dx * kRoadHalfWidth));
+						// u across the 5 m ribbon, v along it (one texture repeat per 16 m).
+						roadUvs.emplace_back(0.0f, static_cast<float>(t / 16.0));
+						roadUvs.emplace_back(1.0f, static_cast<float>(t / 16.0));
 					}
 					for (int s = 0; s < steps; ++s)
 					{
@@ -1544,11 +1521,20 @@ namespace openrepublic::preview
 				wi::scene::MaterialComponent* roadMaterial = scene.materials.GetComponent(roadEntity);
 				if (roadMesh != nullptr && roadMaterial != nullptr)
 				{
+					if (enhancedLook)
+					{
+						roadMesh->vertex_uvset_0 = roadUvs;
+					}
 					roadMesh->CreateRenderData();
-					roadMaterial->SetBaseColor(enhancedLook ? XMFLOAT4(0.13f, 0.14f, 0.15f, 1.0f)
+					roadMaterial->SetBaseColor(enhancedLook ? XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f)
 						: XMFLOAT4(0.16f, 0.17f, 0.19f, 1.0f));
-					roadMaterial->SetRoughness(enhancedLook ? 0.88f : 1.0f);
-					roadMaterial->SetReflectance(enhancedLook ? 0.04f : 0.0f);
+					if (enhancedLook)
+					{
+						roadMaterial->textures[wi::scene::MaterialComponent::BASECOLORMAP].resource = ShowcaseAsphaltTexture();
+						roadMaterial->textures[wi::scene::MaterialComponent::BASECOLORMAP].uvset = 0;
+					}
+					roadMaterial->SetRoughness(enhancedLook ? 0.55f : 1.0f);
+					roadMaterial->SetReflectance(enhancedLook ? 0.35f : 0.0f);
 					roadMaterial->SetDoubleSided(true);
 					roadMaterial->CreateRenderData(true);
 				}
@@ -1666,6 +1652,49 @@ namespace openrepublic::preview
 					placed.X(), placed.Z(), static_cast<std::uint64_t>(index) });
 			}
 			++instances;
+		}
+
+		std::string environmentSummary;
+		if (enhancedLook)
+		{
+			// Material response: the converted building materials default to fully rough;
+			// give them a satin, slightly reflective finish so sun and sky read on facades.
+			for (const auto& entry : meshByType)
+			{
+				const wi::scene::MeshComponent* mesh = entry.second == wi::ecs::INVALID_ENTITY
+					? nullptr : scene.meshes.GetComponent(entry.second);
+				if (mesh == nullptr)
+				{
+					continue;
+				}
+				for (const auto& subset : mesh->subsets)
+				{
+					if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(subset.materialID))
+					{
+						material->SetRoughness(0.62f);
+						material->SetReflectance(0.30f);
+						material->CreateRenderData(true);
+					}
+				}
+			}
+			ShowcaseEnvironmentInfo localInfo;
+			ShowcaseEnvironmentInfo& info = environmentInfo != nullptr ? *environmentInfo : localInfo;
+			std::string environmentError;
+			std::vector<RegionInstance> localInstances;
+			for (const std::size_t index : selected)
+			{
+				const PlacedBuilding& placed = request.allPlacements[index];
+				localInstances.push_back({ wi::ecs::INVALID_ENTITY, placed.typeName, placed.X(), placed.Z(), index });
+			}
+			if (BuildShowcaseWorld(scene, request, showcaseTerrain, regionRadius, localInstances, info, environmentError))
+			{
+				environmentSummary = info.summary;
+				wilog("[OpenRepublic] %s", info.summary.c_str());
+			}
+			else
+			{
+				wilog("[OpenRepublic] Showcase environment skipped: %s", environmentError.c_str());
+			}
 		}
 
 		cameraTarget = XMFLOAT3(0.0f, static_cast<float>(center.Y()), 0.0f);

@@ -439,6 +439,12 @@ namespace openrepublic
 		localEconomyPipeName = std::move(name);
 	}
 
+	void OpenRepublicApplication::SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees)
+	{
+		mapShowcaseSunElevationDegrees = elevationDegrees;
+		mapShowcaseSunYawOffsetDegrees = yawOffsetDegrees;
+	}
+
 	void OpenRepublicApplication::SetNmfUnlitPreview(bool enabled)
 	{
 		nmfUnlitPreview = enabled;
@@ -570,8 +576,13 @@ namespace openrepublic
 			truckEntity = createBlock("OpenRepublic synthetic truck", -4.0f, 0.28f, XMFLOAT3(0.25f, 0.25f, 0.25f), XMFLOAT4(0.85f, 0.72f, 0.18f, 1.0f));
 		}
 
-		const XMFLOAT3 previewSunColor = mapShowcaseEnhancedLook
-			? XMFLOAT3(1.0f, 0.92f, 0.82f) : XMFLOAT3(1.0f, 0.88f, 0.72f);
+		const bool customSun = mapShowcaseEnhancedLook && std::isfinite(mapShowcaseSunElevationDegrees);
+		// Warm, low sun for golden hour; near-white high sun at midday.
+		const float sunWarmth = customSun
+			? std::clamp((mapShowcaseSunElevationDegrees - 4.0f) / 46.0f, 0.0f, 1.0f) : 0.7f;
+		const XMFLOAT3 previewSunColor = customSun
+			? XMFLOAT3(1.0f, 0.50f + 0.45f * sunWarmth, 0.26f + 0.62f * sunWarmth)
+			: (mapShowcaseEnhancedLook ? XMFLOAT3(1.0f, 0.92f, 0.82f) : XMFLOAT3(1.0f, 0.88f, 0.72f));
 		const wi::ecs::Entity sun = previewWorld.Entity_CreateLight(
 			"OpenRepublic preview light", XMFLOAT3(0, 0, 0), previewSunColor,
 			4.0f, 100.0f, wi::scene::LightComponent::DIRECTIONAL);
@@ -583,8 +594,10 @@ namespace openrepublic
 				// Match the camera's complete outward direction so the showcase sun sits
 				// directly behind the camera, including its elevation, at every preset.
 				constexpr float degreesToRadians = XM_PI / 180.0f;
-				const float sunElevationRadians = mapShowcaseCameraElevationDegrees * degreesToRadians;
-				const float cameraYawRadians = mapShowcaseCameraYawDegrees * degreesToRadians;
+				const float sunElevationRadians = (customSun ? mapShowcaseSunElevationDegrees
+					: mapShowcaseCameraElevationDegrees) * degreesToRadians;
+				const float cameraYawRadians = (mapShowcaseCameraYawDegrees +
+					(customSun ? mapShowcaseSunYawOffsetDegrees : 0.0f)) * degreesToRadians;
 				const float horizontalSun = std::cos(sunElevationRadians);
 				const XMFLOAT3 sunDirection(
 					std::sin(cameraYawRadians) * horizontalSun,
@@ -608,7 +621,7 @@ namespace openrepublic
 			{
 				// The sun is already aligned with the camera's outward ray. Raise its
 				// direct contribution so camera-facing building surfaces read as sunlit.
-				light->intensity = 6.0f;
+				light->intensity = customSun ? 12.0f : 6.0f;
 				light->forced_shadow_resolution = 2048;
 				light->SetCastShadow(true);
 				light->SetVolumetricCloudsEnabled(true);
@@ -776,7 +789,7 @@ namespace openrepublic
 					created = preview::CreateMapRegionPreview(previewWorld, *mapPlacement, mapContentRoot,
 						mapRadiusMeters, mapRegionModelLevel, mapShowcaseEnhancedLook,
 						nmfPreviewCameraTarget, nmfPreviewCameraDistance,
-						description, error, &regionInstances);
+						description, error, &regionInstances, &showcaseEnvironment);
 					geometryAuditSummary = "map region preview (per-model audits are in the records above)";
 				}
 				else
@@ -884,28 +897,51 @@ namespace openrepublic
 					weather.zenith = XMFLOAT3(0.45f, 0.55f, 0.75f);
 					if (mapRegionPreview && mapShowcaseEnhancedLook)
 					{
-						weather.ambient = XMFLOAT3(0.62f, 0.67f, 0.75f);
+						// Physically based sky: sun-driven scattering, aerial perspective on distant
+						// terrain, soft volumetric clouds that also shade the ground.
+						weather.ambient = XMFLOAT3(0.30f, 0.34f, 0.42f);
 						weather.horizon = XMFLOAT3(0.56f, 0.68f, 0.84f);
 						weather.zenith = XMFLOAT3(0.20f, 0.40f, 0.72f);
-						weather.skyExposure = 0.90f;
-						weather.SetHeightFog(false);
+						weather.skyExposure = 1.0f;
+						weather.SetRealisticSky(true);
+						weather.SetRealisticSkyAerialPerspective(true);
+						weather.SetRealisticSkyHighQuality(true);
+						weather.SetRealisticSkyReceiveShadow(true);
 						weather.SetOverrideFogColor(false);
+						weather.SetHeightFog(true);
+						weather.fogStart = 600.0f;
+						weather.fogDensity = 0.00035f;
+						weather.fogHeightStart = showcaseEnvironment.hasWater ? showcaseEnvironment.waterLevel : -50.0f;
+						weather.fogHeightEnd = (showcaseEnvironment.hasWater ? showcaseEnvironment.waterLevel : 0.0f) + 140.0f;
 						weather.SetVolumetricClouds(true);
-						weather.volumetricCloudParameters.cloudStartHeight = 700.0f;
-						weather.volumetricCloudParameters.cloudThickness = 2400.0f;
-						weather.volumetricCloudParameters.layerFirst.coverageAmount = 0.48f;
-						weather.volumetricCloudParameters.layerFirst.coverageMinimum = 0.06f;
+						weather.SetVolumetricCloudsCastShadow(true);
+						weather.SetVolumetricCloudsReceiveShadow(true);
+						weather.volumetricCloudParameters.cloudStartHeight = 1500.0f;
+						weather.volumetricCloudParameters.cloudThickness = 2200.0f;
+						weather.volumetricCloudParameters.layerFirst.coverageAmount = 0.42f;
+						weather.volumetricCloudParameters.layerFirst.coverageMinimum = 0.10f;
 						weather.sunColor = previewSunColor;
+						if (showcaseEnvironment.hasWater)
+						{
+							weather.SetOceanEnabled(true);
+							weather.oceanParameters.waterHeight = showcaseEnvironment.waterLevel;
+							weather.oceanParameters.wave_amplitude = 90.0f;
+							weather.oceanParameters.wind_speed = 160.0f;
+							weather.oceanParameters.patch_length = 140.0f;
+							weather.oceanParameters.choppy_scale = 0.8f;
+							weather.oceanParameters.waterColor = XMFLOAT4(0.02f, 0.10f, 0.12f, 0.85f);
+							weather.oceanParameters.extinctionColor = XMFLOAT4(0.10f, 0.55f, 0.65f, 1.0f);
+						}
 						if (const wi::scene::TransformComponent* sunTransform = previewWorld.transforms.GetComponent(sun))
 						{
 							// The renderer and Wicked's sky both use the light's local +Y
 							// direction: from the scene toward the sun.
 							weather.sunDirection = sunTransform->GetUp();
-							wilog("[OpenRepublic] Showcase sun aligned to camera-side daylight: direction=(%.3f, %.3f, %.3f), camera yaw=%.2f deg",
+							wilog("[OpenRepublic] Showcase sun direction=(%.3f, %.3f, %.3f), camera yaw=%.2f deg, sun elevation=%s",
 								weather.sunDirection.x, weather.sunDirection.y, weather.sunDirection.z,
-								mapShowcaseCameraYawDegrees);
+								mapShowcaseCameraYawDegrees, customSun ? "custom" : "camera-aligned");
 						}
-						wilog("[OpenRepublic] Enhanced map showcase look: camera-side daylight, graded blue sky, lighter volumetric cloud cover, SSAO/FXAA/bloom, and deterministic height-mesh terrain tinting; source terrain textures and vegetation remain unimported.");
+						wilog("[OpenRepublic] Enhanced map showcase look: physically based sky with aerial perspective, volumetric clouds and valley fog, extended real-heightmap landscape with a lake, procedural trees and terrain/road detail textures (OpenRepublic presentation assets; WRSR terrain textures and vegetation remain unimported).");
 					}
 				}
 				else
@@ -1049,6 +1085,21 @@ namespace openrepublic
 		renderPath->scene = &previewWorld;
 		renderPath->setBloomEnabled(false);
 		renderPath->setDepthOfFieldEnabled(false);
+		if (mapShowcaseCaptureMode && mapShowcaseEnhancedLook)
+		{
+			// Showcase defaults; an explicit --graphics string overrides them below.
+			const bool rayTracing = wi::graphics::GetDevice() != nullptr &&
+				wi::graphics::GetDevice()->CheckCapability(wi::graphics::GraphicsDeviceCapability::RAYTRACING);
+			renderPath->setBloomEnabled(true);
+			renderPath->setBloomThreshold(1.6f);
+			renderPath->setAO(rayTracing ? wi::RenderPath3D::AO_RTAO : wi::RenderPath3D::AO_HBAO);
+			renderPath->setSSREnabled(true);
+			renderPath->setRaytracedReflectionsEnabled(rayTracing);
+			renderPath->setFXAAEnabled(true);
+			renderPath->setSharpenFilterEnabled(true);
+			renderPath->setSharpenFilterAmount(0.25f);
+			renderPath->setExposure(1.6f);
+		}
 		if (graphicsSettings)
 		{
 			ApplyGraphicsSettings(*renderPath, *graphicsSettings);

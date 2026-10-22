@@ -3,6 +3,8 @@ add_executable(OpenRepublic WIN32
     ContentPreview.cpp
     EconomyOverlay.cpp
     SyntheticRegionFixture.cpp
+    ShowcaseEnvironment.cpp
+    ShowcaseEnvironment.h
     EconomyOverlay.h
     ContentPreview.h
     LocalEconomyPipeEndpoint.cpp

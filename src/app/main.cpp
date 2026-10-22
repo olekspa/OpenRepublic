@@ -176,6 +176,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	float mapShowcaseCameraElevationDegrees = 24.5f;
 	float mapShowcaseCameraDistanceScale = 1.5f;
 	bool mapShowcaseCameraArgumentSeen = false;
+	float mapShowcaseSunElevationDegrees = std::numeric_limits<float>::quiet_NaN();
+	float mapShowcaseSunYawOffsetDegrees = 0.0f;
 	double nmfCaptureZoom = 1.0;
 	bool nmfCaptureZoomArgumentSeen = false;
 	std::optional<double> nmfCaptureElevationDegrees;
@@ -402,6 +404,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				mapShowcaseCameraYawDegrees = static_cast<float>(camera[0]);
 				mapShowcaseCameraElevationDegrees = static_cast<float>(camera[1]);
 				mapShowcaseCameraDistanceScale = static_cast<float>(camera[2]);
+			}
+			else if (std::wstring_view(arguments[i]) == L"--showcase-sun")
+			{
+				// --showcase-sun <elevation 2..80> <yaw offset from the camera direction -180..180>
+				std::array<double, 2> sun{};
+				if (i + 2 >= argumentCount ||
+					!ParseFiniteDouble(arguments[i + 1], sun[0]) || !ParseFiniteDouble(arguments[i + 2], sun[1]) ||
+					sun[0] < 2.0 || sun[0] > 80.0 || sun[1] < -180.0 || sun[1] > 180.0)
+				{
+					nmfCaptureArgumentError = "--showcase-sun requires elevation-degrees 2..80 and yaw-offset-degrees -180..180";
+					i = std::min(i + 2, argumentCount - 1);
+					continue;
+				}
+				i += 2;
+				mapShowcaseSunElevationDegrees = static_cast<float>(sun[0]);
+				mapShowcaseSunYawOffsetDegrees = static_cast<float>(sun[1]);
 			}
 			else if (std::wstring_view(arguments[i]) == L"--building-type" && i + 1 < argumentCount)
 			{
@@ -928,6 +946,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	const bool nmfCaptureMode = !nmfCapturePaths.empty();
 	const bool mapShowcaseCaptureMode = !mapShowcaseCapturePath.empty();
 	application.SetNmfCapturePaths(std::move(nmfCapturePaths));
+	application.SetMapShowcaseSun(mapShowcaseSunElevationDegrees, mapShowcaseSunYawOffsetDegrees);
 	application.SetMapShowcaseCapture(std::move(mapShowcaseCapturePath), mapShowcaseEnhancedLook,
 		mapShowcaseCameraYawDegrees, mapShowcaseCameraElevationDegrees, mapShowcaseCameraDistanceScale);
 	application.SetTerrainProbePath(std::move(terrainProbePath));

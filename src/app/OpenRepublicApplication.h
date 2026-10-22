@@ -4,6 +4,7 @@
 #include "openrepublic/agent_api/agent_api.h"
 #include "openrepublic/compat/region_import.h"
 #include "EconomyOverlay.h"
+#include "ShowcaseEnvironment.h"
 #include "openrepublic/content/map_placement.h"
 #include "openrepublic/economy_api/economy_api.h"
 #include "openrepublic/runtime/graphics_settings.h"
@@ -13,6 +14,7 @@
 #include "LocalEconomyPipeEndpoint.h"
 
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -37,6 +39,7 @@ namespace openrepublic
 		void SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
 			bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel);
 		void SetSyntheticRegionFixture();
+		void SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees);
 		void SetMapShowcaseCapture(std::filesystem::path outputPath, bool enhancedLook,
 			float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale);
 		void SetNmfUnlitPreview(bool enabled);
@@ -126,6 +129,11 @@ namespace openrepublic
 		float mapShowcaseCameraYawDegrees = 45.0f;
 		float mapShowcaseCameraElevationDegrees = 24.5f;
 		float mapShowcaseCameraDistanceScale = 1.5f;
+		// Sun placement for the enhanced look: elevation above the horizon and the horizontal
+		// angle from the camera's outward direction. NaN keeps the camera-aligned legacy sun.
+		float mapShowcaseSunElevationDegrees = std::numeric_limits<float>::quiet_NaN();
+		float mapShowcaseSunYawOffsetDegrees = 0.0f;
+		preview::ShowcaseEnvironmentInfo showcaseEnvironment;
 		float cameraSpeedScale = 1.0f;
 		std::string economyHost;
 		int economyPort = 0;

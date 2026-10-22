@@ -141,6 +141,8 @@ namespace openrepublic
 				cameraTarget.x + cameraDistance * direction.x,
 				cameraTarget.y + cameraDistance * direction.y,
 				cameraTarget.z + cameraDistance * direction.z);
+			camera->zNearP = 0.5f;
+			camera->zFarP = 40000.0f;
 			camera->Eye = eye;
 			XMStoreFloat3(&camera->At, XMVector3Normalize(XMLoadFloat3(&cameraTarget) - XMLoadFloat3(&eye)));
 			camera->Up = XMFLOAT3(0.0f, 1.0f, 0.0f);
