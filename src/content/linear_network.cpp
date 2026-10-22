@@ -79,10 +79,34 @@ bool ExtractLinearNetwork(std::string_view bytes, LinearNetwork& output, std::st
         candidate.nodes.push_back(std::move(node));
         offset += kNodeBlockBytes + words * 4;
     }
-    if (segmentCount != 0) {
-        candidate.segmentDiagnostic = "segment record layout is not yet established for this network family; " +
-                                      std::to_string(segmentCount) + " segments left unparsed";
+
+    // Reuse the independently bounded segment walker already used for road.bin.
+    // Keep the linear node decoder's full four-array view; the road view is only
+    // used to validate endpoint indices and obtain safely decoded XYZ points.
+    RoadNetwork geometry;
+    std::string geometryError;
+    if (!ExtractRoadNetwork(bytes, geometry, &geometryError))
+        return Fail(error, "linear segment decode failed: " + geometryError);
+    candidate.segments.reserve(geometry.segments.size());
+    for (std::size_t i = 0; i < geometry.segments.size(); ++i) {
+        const auto& source = geometry.segments[i];
+        LinearNetworkSegment segment;
+        segment.nodeA = source.nodeA;
+        segment.nodeB = source.nodeB;
+        segment.points = source.polyline;
+        for (const auto& point : segment.points) {
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
+                return Fail(error, "linear segment " + std::to_string(i) + " has a non-finite point");
+            if (std::abs(point.x) > MaxLinearNetworkWorldCoordinate ||
+                std::abs(point.y) > MaxLinearNetworkWorldCoordinate ||
+                std::abs(point.z) > MaxLinearNetworkWorldCoordinate)
+                return Fail(error, "linear segment " + std::to_string(i) + " is outside the world bounds");
+        }
+        candidate.segments.push_back(std::move(segment));
     }
+    candidate.segmentGeometryComplete = geometry.segmentGeometryComplete;
+    candidate.unparsedSegmentCount = geometry.unparsedSegmentCount;
+    candidate.segmentDiagnostic = geometry.segmentGeometryDiagnostic;
     output = std::move(candidate);
     if (error) error->clear();
     return true;
