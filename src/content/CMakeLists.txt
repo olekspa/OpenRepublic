@@ -12,6 +12,7 @@ add_library(OpenRepublicContent STATIC
     nmf_preview_geometry.cpp
     terrain_dds.cpp
     terrain_preview.cpp
+    text_table.cpp
 )
 target_include_directories(OpenRepublicContent PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(OpenRepublicContent PUBLIC cxx_std_17)
