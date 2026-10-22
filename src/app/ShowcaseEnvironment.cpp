@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <sstream>
 
@@ -475,7 +476,7 @@ namespace openrepublic::preview
 		const XMFLOAT3 meadow(0.22f, 0.30f, 0.09f);
 		const XMFLOAT3 dry(0.34f, 0.31f, 0.14f);
 		const XMFLOAT3 forestFloor(0.055f, 0.105f, 0.045f);
-		const XMFLOAT3 rock(0.22f, 0.22f, 0.22f);
+		const XMFLOAT3 rock(0.19f, 0.205f, 0.23f); // cool grey cancels the warm tint of the ground tile
 		const XMFLOAT3 snow(0.78f, 0.80f, 0.84f);
 		const XMFLOAT3 sand(0.40f, 0.35f, 0.24f);
 
@@ -490,7 +491,7 @@ namespace openrepublic::preview
 			color = Mix(color, sand, 1.0f - SmoothStep(data.waterLevel + 0.3f, data.waterLevel + 2.6f, height));
 		}
 		// The real WRSR ground tile is much darker on average than the procedural one.
-		const float detail = (0.95f + fine * 0.1f) * (RealGroundAlbedoValid() ? 3.2f : 1.45f);
+		const float detail = (0.95f + fine * 0.1f) * (RealGroundAlbedoValid() ? 3.2f - 0.9f * rockMask : 1.45f);
 		return XMFLOAT3(color.x * detail, color.y * detail, color.z * detail);
 	}
 
