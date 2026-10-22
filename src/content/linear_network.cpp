@@ -112,4 +112,46 @@ bool ExtractLinearNetwork(std::string_view bytes, LinearNetwork& output, std::st
     return true;
 }
 
+bool ExtractPowerLinePolylineCandidates(
+    const LinearNetwork& network,
+    std::vector<PowerLinePolylineCandidate>& output,
+    std::string* error) {
+    if (!network.segmentGeometryComplete || network.unparsedSegmentCount != 0 ||
+        network.segments.size() != network.segmentCount) {
+        return Fail(error, "power-line segment geometry is incomplete");
+    }
+
+    std::vector<PowerLinePolylineCandidate> candidate;
+    candidate.reserve(network.segments.size());
+    for (std::size_t i = 0; i < network.segments.size(); ++i) {
+        const auto& segment = network.segments[i];
+        if (segment.nodeA >= network.nodes.size() || segment.nodeB >= network.nodes.size()) {
+            return Fail(error, "power-line segment " + std::to_string(i) +
+                                   " references a missing node");
+        }
+
+        PowerLinePolylineCandidate line;
+        line.nodeA = segment.nodeA;
+        line.nodeB = segment.nodeB;
+        line.points = segment.points;
+        for (const auto& point : line.points) {
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+                return Fail(error, "power-line segment " + std::to_string(i) +
+                                       " has a non-finite point");
+            }
+            if (std::abs(point.x) > MaxLinearNetworkWorldCoordinate ||
+                std::abs(point.y) > MaxLinearNetworkWorldCoordinate ||
+                std::abs(point.z) > MaxLinearNetworkWorldCoordinate) {
+                return Fail(error, "power-line segment " + std::to_string(i) +
+                                       " is outside the world bounds");
+            }
+        }
+        candidate.push_back(std::move(line));
+    }
+
+    output = std::move(candidate);
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace openrepublic::content
