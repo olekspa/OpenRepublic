@@ -69,3 +69,10 @@ if(OPENREPUBLIC_GLB_SEMANTIC_AVAILABLE)
     target_compile_features(OpenRepublicGlbSemanticTests PRIVATE cxx_std_17)
     add_test(NAME OpenRepublicGlbSemanticTests COMMAND OpenRepublicGlbSemanticTests)
 endif()
+
+add_executable(OpenRepublicBuildingTypesTests
+    building_types_tests.cpp
+)
+target_link_libraries(OpenRepublicBuildingTypesTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicBuildingTypesTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicBuildingTypesTests COMMAND OpenRepublicBuildingTypesTests)

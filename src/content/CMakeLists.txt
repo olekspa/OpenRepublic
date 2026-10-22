@@ -1,4 +1,5 @@
 add_library(OpenRepublicContent STATIC
+    building_types.cpp
     glb_container.cpp
     mtl_dependencies.cpp
     mtl_preview_color.cpp

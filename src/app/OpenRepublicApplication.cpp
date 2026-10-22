@@ -579,12 +579,10 @@ namespace openrepublic
 		// Directory of the sibling MTL relative to the first supplied content root that
 		// contains it (generic '/' separators). Empty when no root yields a non-empty
 		// relative directory; `$TEXTURE_MTL` entries then stay unresolved.
-		std::string MtlDirectoryRelativeToRoots(const std::filesystem::path& nmfPath,
+		std::string MtlDirectoryRelativeToRoots(const std::filesystem::path& mtlPath,
 			const std::vector<std::filesystem::path>& roots)
 		{
 			std::error_code error;
-			std::filesystem::path mtlPath = nmfPath;
-			mtlPath.replace_extension(".mtl");
 			const std::filesystem::path directory = std::filesystem::weakly_canonical(mtlPath.parent_path(), error);
 			if (error)
 			{
@@ -609,11 +607,16 @@ namespace openrepublic
 			return {};
 		}
 
-		bool LoadSiblingNmfMtl(const std::filesystem::path& nmfPath,
+		// Reads the explicit material path, or the NMF's sibling `.mtl` when empty.
+		bool LoadNmfMtl(const std::filesystem::path& nmfPath, const std::filesystem::path& explicitMtlPath,
 			openrepublic::content::MtlDocument& document, std::string& status)
 		{
-			std::filesystem::path mtlPath = nmfPath;
-			mtlPath.replace_extension(".mtl");
+			std::filesystem::path mtlPath = explicitMtlPath;
+			if (mtlPath.empty())
+			{
+				mtlPath = nmfPath;
+				mtlPath.replace_extension(".mtl");
+			}
 			std::error_code fileSizeError;
 			const std::uintmax_t fileBytes = std::filesystem::file_size(mtlPath, fileSizeError);
 			if (fileSizeError)
@@ -1073,6 +1076,7 @@ namespace openrepublic
 			wi::ecs::Entity& meshEntity, XMFLOAT3& previewCameraTarget, float& previewCameraDistance,
 			bool unlitDiagnostic, bool materialUnlitDiagnostic,
 			const std::vector<std::filesystem::path>& textureRoots,
+			const std::filesystem::path& explicitMtlPath,
 			std::string& description, std::string& geometryAuditSummary,
 			std::string& error)
 		{
@@ -1094,7 +1098,7 @@ namespace openrepublic
 			{
 				mtlStatus = "neutral unlit geometry diagnostic bypasses sibling MTL parsing";
 			}
-			else if (LoadSiblingNmfMtl(nmfPath, mtlDocument, mtlStatus))
+			else if (LoadNmfMtl(nmfPath, explicitMtlPath, mtlDocument, mtlStatus))
 			{
 				std::string bindingError;
 				// Mirrors the build-scoped loader selection rule (single section, exact
@@ -1106,7 +1110,9 @@ namespace openrepublic
 					mtlDocument = {};
 					mtlStatus = "NMF/MTL identifiers could not be selected within the bounded profile; diagnostic colors are used";
 				}
-				else if (const std::string mtlDirectory = MtlDirectoryRelativeToRoots(nmfPath, textureRoots);
+				else if (const std::string mtlDirectory = MtlDirectoryRelativeToRoots(
+					explicitMtlPath.empty() ? std::filesystem::path(nmfPath).replace_extension(".mtl") : explicitMtlPath,
+					textureRoots);
 					!mtlDirectory.empty())
 				{
 					// `$TEXTURE_MTL` paths are relative to the MTL's own directory.
@@ -1659,6 +1665,11 @@ namespace openrepublic
 		nmfTextureRoots = std::move(roots);
 	}
 
+	void OpenRepublicApplication::SetNmfMaterialPath(std::filesystem::path path)
+	{
+		nmfMaterialPath = std::move(path);
+	}
+
 	void OpenRepublicApplication::SetNmfUnlitPreview(bool enabled)
 	{
 		nmfUnlitPreview = enabled;
@@ -1934,7 +1945,7 @@ namespace openrepublic
 				std::string error;
 				if (CreateNmfStaticPreview(previewWorld, nmfProbePath, meshEntity,
 					nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfUnlitPreview,
-					nmfMaterialUnlitPreview, nmfTextureRoots,
+					nmfMaterialUnlitPreview, nmfTextureRoots, nmfMaterialPath,
 					description, geometryAuditSummary, error))
 				{
 					nmfPreviewLoaded = true;

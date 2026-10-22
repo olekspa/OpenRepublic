@@ -414,6 +414,13 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - **UNKNOWN:** 64-bit loader parity, texture slots 1/2, emissive materials, `buildingtypes.ini` model/LOD selection. **D-005:** NMF runtime stays local and unpublished.
 - Next: parse `buildingtypes.ini` blocks as data (MODEL/MODEL_LOD/MATERIAL) so a building type, not a file pair, drives the preview.
 
+## Building types drive the preview (21 October 2026)
+
+- Added `ParseBuildingTypes` / `ResolveBuildingTypeAssets` (`building_types.h/.cpp`) and CLI `--content-root`, `--building-type`, `--building-lod`. The type's model and explicit MATERIAL feed the existing preview; roots are contained and traversal/drive paths rejected. Parser, rejection and containment cases are covered by `OpenRepublicBuildingTypesTests`.
+- A throwaway harness (outside the repo) confirmed the real file parses (489 types) and every model, material and LOD reference resolves. Captures of `residental_brick_3` (LOD0/1) and `panelak_kvp1` show textured buildings.
+- **VERIFIED:** client Release CTest 16/16, headless Release CTest 15/15 after the final source change. **UNKNOWN:** loader semantics of the ini (comment prefix, LOD numbers, emissive use). **D-005:** runtime stays local and unpublished.
+- Next: either trace the ini loader in SOVIET64 for LOD/emissive meaning, or start placing a type at a terrain position.
+
 ## Pause status — 21 October 2026
 
 - At the project owner's request, development is paused with the master playable-alpha goal still incomplete. No further code work is planned in this checkpoint.

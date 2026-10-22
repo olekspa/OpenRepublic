@@ -23,6 +23,7 @@ namespace openrepublic
 		void SetGlbProbePath(std::filesystem::path path);
 		void SetNmfProbePath(std::filesystem::path path);
 		void SetNmfTextureRoots(std::vector<std::filesystem::path> roots);
+		void SetNmfMaterialPath(std::filesystem::path path);
 		void SetNmfUnlitPreview(bool enabled);
 		void SetNmfMaterialUnlitPreview(bool enabled);
 		void SetNmfCapturePaths(std::vector<std::filesystem::path> paths);
@@ -70,6 +71,7 @@ namespace openrepublic
 		std::filesystem::path glbProbePath;
 		std::filesystem::path nmfProbePath;
 		std::vector<std::filesystem::path> nmfTextureRoots;
+		std::filesystem::path nmfMaterialPath;
 		bool nmfUnlitPreview = false;
 		bool nmfMaterialUnlitPreview = false;
 		std::vector<std::filesystem::path> nmfCapturePaths;

@@ -1,10 +1,14 @@
 #include "OpenRepublicApplication.h"
+#include "openrepublic/content/building_types.h"
 #include "openrepublic/content/mtl_dependencies.h"
 
 #include <windows.h>
 #include <shellapi.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <string>
 #include <array>
 #include <cerrno>
 #include <cmath>
@@ -82,6 +86,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::filesystem::path sceneProbePath;
 	std::filesystem::path glbProbePath;
 	std::filesystem::path nmfProbePath;
+	std::filesystem::path nmfMaterialPath;
+	std::filesystem::path contentRoot;
+	std::string buildingTypeName;
+	int buildingModelLevel = 0;
 	std::vector<std::filesystem::path> nmfTextureRoots;
 	bool nmfUnlitPreview = false;
 	bool nmfMaterialUnlitPreview = false;
@@ -110,6 +118,37 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			else if (std::wstring_view(arguments[i]) == L"--nmf-probe" && i + 1 < argumentCount)
 			{
 				nmfProbePath = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--content-root" && i + 1 < argumentCount)
+			{
+				contentRoot = arguments[++i];
+			}
+			else if (std::wstring_view(arguments[i]) == L"--building-type" && i + 1 < argumentCount)
+			{
+				const std::wstring wide = arguments[++i];
+				if (wide.empty() || std::any_of(wide.begin(), wide.end(), [](wchar_t value) { return value <= 0x20 || value > 0x7e; }))
+				{
+					nmfCaptureArgumentError = "--building-type requires a printable ASCII type name without spaces";
+				}
+				else
+				{
+					for (const wchar_t value : wide)
+					{
+						buildingTypeName.push_back(static_cast<char>(value));
+					}
+				}
+			}
+			else if (std::wstring_view(arguments[i]) == L"--building-lod" && i + 1 < argumentCount)
+			{
+				const std::wstring_view level = arguments[++i];
+				if (level == L"0" || level == L"1" || level == L"2")
+				{
+					buildingModelLevel = level[0] - L'0';
+				}
+				else
+				{
+					nmfCaptureArgumentError = "--building-lod requires 0, 1 or 2";
+				}
 			}
 			else if (std::wstring_view(arguments[i]) == L"--nmf-texture-root")
 			{
@@ -257,6 +296,71 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		}
 		LocalFree(arguments);
 	}
+	if (nmfCaptureArgumentError.empty() && (!buildingTypeName.empty() || !contentRoot.empty()))
+	{
+		// Resolve a building type from the content root's building-type data file
+		// (OBSERVED location: buildings/buildingtypes.ini). The type's model and
+		// MATERIAL replace --nmf-probe and the sibling-MTL lookup.
+		std::error_code rootError;
+		if (buildingTypeName.empty() || contentRoot.empty())
+		{
+			nmfCaptureArgumentError = "--building-type and --content-root must be supplied together";
+		}
+		else if (!nmfProbePath.empty())
+		{
+			nmfCaptureArgumentError = "--building-type cannot be combined with --nmf-probe";
+		}
+		else if (!contentRoot.is_absolute() || !std::filesystem::is_directory(contentRoot, rootError) || rootError)
+		{
+			nmfCaptureArgumentError = "--content-root requires an existing absolute local content directory";
+		}
+		else
+		{
+			const std::filesystem::path iniPath = contentRoot / "buildings" / "buildingtypes.ini";
+			const std::uintmax_t iniBytes = std::filesystem::file_size(iniPath, rootError);
+			std::string iniText;
+			if (rootError || iniBytes > openrepublic::content::MaxBuildingTypesInputBytes)
+			{
+				nmfCaptureArgumentError = "buildings/buildingtypes.ini is missing or exceeds the 8 MiB profile limit";
+			}
+			else
+			{
+				iniText.resize(static_cast<std::size_t>(iniBytes));
+				std::ifstream iniStream(iniPath, std::ios::binary);
+				iniStream.read(iniText.data(), static_cast<std::streamsize>(iniText.size()));
+				if (!iniStream || iniStream.gcount() != static_cast<std::streamsize>(iniText.size()))
+				{
+					nmfCaptureArgumentError = "buildings/buildingtypes.ini could not be read completely";
+				}
+			}
+			openrepublic::content::BuildingTypesDocument buildingTypes;
+			openrepublic::content::BuildingTypeAssetPaths assets;
+			std::string buildingError;
+			if (nmfCaptureArgumentError.empty() &&
+				!openrepublic::content::ParseBuildingTypes(iniText, buildingTypes, &buildingError))
+			{
+				nmfCaptureArgumentError = "building-type data is outside the bounded profile: " + buildingError;
+			}
+			const auto* buildingType = nmfCaptureArgumentError.empty()
+				? openrepublic::content::FindBuildingType(buildingTypes, buildingTypeName) : nullptr;
+			if (nmfCaptureArgumentError.empty() && buildingType == nullptr)
+			{
+				nmfCaptureArgumentError = "building type was not found in buildings/buildingtypes.ini";
+			}
+			else if (nmfCaptureArgumentError.empty() &&
+				!openrepublic::content::ResolveBuildingTypeAssets(
+					*buildingType, buildingModelLevel, contentRoot, assets, &buildingError))
+			{
+				nmfCaptureArgumentError = "building type assets could not be resolved: " + buildingError;
+			}
+			else if (nmfCaptureArgumentError.empty())
+			{
+				nmfProbePath = assets.model;
+				nmfMaterialPath = assets.material;
+				nmfTextureRoots.insert(nmfTextureRoots.begin(), contentRoot);
+			}
+		}
+	}
 	if (nmfCaptureArgumentError.empty())
 	{
 		for (const auto& root : nmfTextureRoots)
@@ -370,6 +474,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	application.SetGlbProbePath(std::move(glbProbePath));
 	application.SetNmfProbePath(std::move(nmfProbePath));
 	application.SetNmfTextureRoots(std::move(nmfTextureRoots));
+	application.SetNmfMaterialPath(std::move(nmfMaterialPath));
 	application.SetNmfUnlitPreview(nmfUnlitPreview);
 	application.SetNmfMaterialUnlitPreview(nmfMaterialUnlitPreview);
 	application.SetNmfCaptureZoom(static_cast<float>(nmfCaptureZoom));
