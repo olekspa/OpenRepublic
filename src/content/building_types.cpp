@@ -173,6 +173,9 @@ bool ParseBuildingTypes(const std::string& text, BuildingTypesDocument& output, 
                     return Fail(error, "non-finite trailing number for " + name + where());
                 reference.trailingNumber = number;
             }
+            reference.loaderNumber = reference.trailingNumber
+                ? *reference.trailingNumber
+                : (name == "MODEL_LOD" ? 1000.0 : 2000.0);
             (name == "MODEL_LOD" ? open->lod1 : open->lod2) = std::move(reference);
         } else if (name == "MODEL") {
             open->model = args[0];

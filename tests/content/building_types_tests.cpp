@@ -64,6 +64,9 @@ void TestParsesSyntheticDocument() {
               alpha->lod1->trailingNumber && *alpha->lod1->trailingNumber == 1000.0 && alpha->lod2 &&
               !alpha->lod2->trailingNumber,
           "LOD references keep their optional trailing number");
+    Check(alpha != nullptr && alpha->lod1 && alpha->lod1->loaderNumber == 1000.0 && alpha->lod2 &&
+              alpha->lod2->loaderNumber == 2000.0,
+          "a missing LOD number falls back to the loader defaults (1000 / 2000)");
     Check(alpha != nullptr && alpha->otherDirectives.size() == 2 &&
               alpha->otherDirectives[0].name == "LIFE" && alpha->otherDirectives[1].name == "LIGHT",
           "unrecognized directives are preserved in order and comment-like lines are skipped");

@@ -19,9 +19,13 @@ struct BuildingTypeDirective {
 struct BuildingTypeModelReference {
     // Opaque content-root-relative path token as written in the data file.
     std::string path;
-    // Second argument of MODEL_LOD / MODEL_LOD2 when present. Its meaning (for
-    // example a switch distance) is not established.
+    // Second argument of MODEL_LOD / MODEL_LOD2 when present in the data.
     std::optional<double> trailingNumber;
+    // Value the build-scoped loader uses: the trailing number when present,
+    // otherwise its initial default (1000 for MODEL_LOD, 2000 for MODEL_LOD2).
+    // The loader reads it with `%f`; what consumes it (presumably a LOD switch
+    // distance, in unknown units) was not traced.
+    double loaderNumber = 0.0;
 };
 
 struct BuildingTypeDefinition {
@@ -39,7 +43,10 @@ struct BuildingTypeDefinition {
 struct BuildingTypesDocument {
     std::vector<BuildingTypeDefinition> types;
     bool terminated = false;          // trailing `$END` seen
-    std::size_t commentLikeLines = 0; // lines whose first token starts with "--"
+    // Lines whose first token starts with "--". The game has no comment syntax:
+    // its token loop skips any unrecognized token, so such a line is skipped
+    // token by token. OpenRepublic skips the whole line and counts it.
+    std::size_t commentLikeLines = 0;
 };
 
 constexpr std::size_t MaxBuildingTypesInputBytes = 8u * 1024u * 1024u;
@@ -49,8 +56,8 @@ constexpr std::size_t MaxBuildingTypeDirectives = 4096;
 // Parses the line-oriented `$TYPE <name>` ... `END` block format observed in
 // one WRSR build's building-type data file (OBSERVED, single build). Leading
 // whitespace is ignored; blank lines are skipped; lines whose first token
-// starts with "--" are skipped and counted (treating them as comments is
-// INFERRED from commented-out LIGHT lines). Recognized single-occurrence
+// starts with "--" are skipped and counted (equivalent to the game skipping
+// those unrecognized tokens). Recognized single-occurrence
 // directives are MODEL, MODEL_LOD, MODEL_LOD2, MATERIAL, MODELEMISSIVE and
 // MATERIALEMISSIVE; a repeat or wrong argument count is an error. Everything
 // else inside a block is preserved. Duplicate type names, nesting, stray
