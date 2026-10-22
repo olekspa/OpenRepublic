@@ -398,6 +398,14 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - **UNKNOWN:** slot 1/2 (specular/bump) semantics, `_TC1`, alpha/colour space, orientation against the game world frame. **D-005:** NMF runtime stays local and unpublished.
 - Next: second structurally different model, then specular/bump loader trace; keep unmatched-view caveats.
 
+## Second-model verification — residential brick block (21 October 2026)
+
+- Geometry/bounds/winding checks repeat cleanly on `residental_brick_3` (all three LODs; different vertex flags and two submaterials); the app imports LOD0 and renders a closed building with default framing. Details and limits are in the ledger section "Second model".
+- Material binding is the open gap: this model's MTL name (`lambert1`) matches neither NMF submaterial, so the app keeps diagnostic colours. A corpus survey shows name mismatches are common (124/259), `$TEXTURE_MTL` is a separate directive, and `buildingtypes.ini` ties MODEL/MODEL_LOD/MATERIAL/MATERIALEMISSIVE together. No fallback was invented.
+- Software-render evidence reconfirms unflipped `_TC0` UVs. Capture zoom 2.0 fails depth coverage on this elongated model; default framing works.
+- No source change in this increment beyond the earlier winding commit; tests unchanged (client 15/15, headless 14/14 from the previous run).
+- Next: trace the loader's submaterial-to-MTL matching and `$TEXTURE_MTL` path base; parse `buildingtypes.ini` blocks as data.
+
 ## Pause status — 21 October 2026
 
 - At the project owner's request, development is paused with the master playable-alpha goal still incomplete. No further code work is planned in this checkpoint.
