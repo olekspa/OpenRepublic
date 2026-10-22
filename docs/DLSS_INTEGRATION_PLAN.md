@@ -1,6 +1,6 @@
 ﻿# Streamline integration plan for Wicked Engine
 
-**Status: opt-in runtime code compiles and Streamline/NGX initializes on the RTX 5070 Ti, but DLSS dispatch has not succeeded.** A private OpenRepublic build and windowed capture run used the official signed v2.14.16 runtime. NGX accepted a locally supplied project identity, but the app applies graphics settings while the render path still has a `0×0` display size. `slDLSSGetOptimalSettings` returned result `25` for that size and the renderer disabled DLSS before token/tag/evaluate calls. Frame Generation remains unimplemented.
+**Status: the opt-in path compiles and DLSS evaluates successfully in a private windowed OpenRepublic run on the RTX 5070 Ti.** Patch 0003 defers setup until physical dimensions are known and retries setup when output dimensions/resources differ. Using the official signed Streamline v2.14.16 runtime, `slInit`, `slSetD3DDevice`, optimal settings, constants, and `slEvaluateFeature(kFeatureDLSS)` returned success; the showcase capture contains the rendered scene. The FSR2 comparison run crashed before writing a capture. Dynamic motion quality, resize behavior, and GPU/frame time remain unverified. Frame Generation remains unimplemented.
 
 ## Scope and pinned inputs
 
@@ -13,11 +13,11 @@
 
 ## Patch contents
 
-`0001-streamline-sdk-build-boundary.patch` adds the OFF-by-default `OPENREPUBLIC_STREAMLINE_DIR` option plus `OPENREPUBLIC_STREAMLINE_SDK_ROOT`; it consumes SDK headers in place and copies no NVIDIA files. `0002-streamline-dlss-runtime.patch` is layered after 0001. It adds Windows/D3D12-only startup and render-path calls. Both remain inert in default builds.
+`0001-streamline-sdk-build-boundary.patch` adds the OFF-by-default `OPENREPUBLIC_STREAMLINE_DIR` option plus `OPENREPUBLIC_STREAMLINE_SDK_ROOT`; it consumes SDK headers in place and copies no NVIDIA files. `0002-streamline-dlss-runtime.patch` is layered after 0001. `0003-streamline-deferred-resize.patch` is layered after 0002 and fixes lazy sizing/resource allocation. All remain inert in default builds.
 
 Patch 0002 loads `sl.interposer.dll` by an absolute executable-directory path before Wicked loads DXGI/D3D12, calls `slInit` with `kFeatureDLSS`, uses interposer factory/device creation exports when present, calls `slSetD3DDevice`, and shuts down after `WaitForGPU`. It exposes native D3D12 handles and converts the tracked engine texture layout to `D3D12_RESOURCE_STATES`. `RenderPath3D::setDLSSEnabled(true)` requests Balanced dimensions through `slDLSSGetOptimalSettings`, updates render scale, allocates display-size output resources, and schedules DLSS at the existing FSR2 postprocess location. The per-frame path supplies a token, camera constants, depth/motion/color input/color output tags and `slEvaluateFeature(kFeatureDLSS)`; it uses auto exposure because no validated Streamline exposure texture mapping was established.
 
-OpenRepublic can connect `runtime::Upscaler::Dlss` to the render-path flag in a private app build. The runtime integration was exercised with SDK binaries, but zero-sized early settings application currently disables DLSS before the scene has a display size; see the status table below.
+OpenRepublic's `runtime::Upscaler::Dlss` was connected to the render-path flag in the private app copy. The initial early settings call can occur at `0×0`; patch 0003 keeps that request pending and initializes after the first nonzero physical size. A later resize is detected by comparing DLSS output resource dimensions with the current physical dimensions and calling the same setup path. A resize event was not exercised in this run.
 
 ## Concrete integration sequence
 
@@ -25,7 +25,7 @@ OpenRepublic can connect `runtime::Upscaler::Dlss` to the render-path flag in a 
 2. **Initialize before DXGI/D3D12.** In an opt-in Windows build, the patch loads `sl.interposer.dll` from the executable directory and calls `slInit` before Wicked loads DXGI/D3D12. It requests D3D12, `kFeatureDLSS`, plugin directories (`plugins` then executable directory) and frame-based resource tagging. It does not call from `DllMain`. Missing DLLs or initialization failure leave the existing renderer path available.
 3. **Bind device and check feature support.** After Wicked creates its device, the patch calls `slSetD3DDevice`. The per-frame DLSS function calls `slIsFeatureSupported` with the adapter LUID and returns to the non-DLSS path on failure. The patch attempts to use the interposer's `CreateDXGIFactory2` and `D3D12CreateDevice` exports; successful proxy/present behavior has not been verified.
 4. **Submit a per-view frame.** The implementation obtains one `FrameToken` for a DLSS dispatch, sets camera matrices/jitter constants, tags a viewport's depth, velocity, HDR input/output color, then calls `slEvaluateFeature(kFeatureDLSS)` on Wicked's command list. It removes the projection jitter before providing matrices. Reversed depth is source-verified in Wicked's camera code. Motion-vector scale and jitter interpretation remain inferred from the FSR2 integration and need runtime validation.
-5. **Use DLSS at the HDR postprocess point.** The patch currently selects Balanced mode, obtains optimal dimensions with `slDLSSGetOptimalSettings`, scales the render path, and creates display-sized output resources. It evaluates in the existing FSR2 slot, before tone mapping. It enables `useAutoExposure`; it does not tag an exposure resource because Wicked's scalar exposure and luminance texture have not been shown to meet the Streamline texture contract. Correct output state, resize and temporal history are not yet runtime-verified.
+5. **Use DLSS at the HDR postprocess point.** The patch currently selects Balanced mode, obtains optimal dimensions with `slDLSSGetOptimalSettings`, scales the render path, and creates display-sized output resources. Patch 0003 defers this sequence at zero size and retries on size/resource mismatch. It evaluates in the existing FSR2 slot, before tone mapping. It enables `useAutoExposure`; it does not tag an exposure resource because Wicked's scalar exposure and luminance texture have not been shown to meet the Streamline texture contract. Runtime evaluation succeeded at 731×434 input and 1260×748 output. Resize behavior and temporal image correctness remain unverified.
 6. **Fail safely and close the module.** API failures return to the ordinary temporal/postprocess path; `slShutdown` is called after the graphics queue is drained. The patch does not yet validate NVIDIA DLL signatures, explicitly report all failure reasons to OpenRepublic, or handle device loss beyond normal fallback. Interposer present behavior and plugin resource lifetime need runtime testing.
 7. **Keep Frame Generation out of scope.** DLSS-G, Reflex markers and HUD/UI composition are not implemented. The patch requests only DLSS SR.
 
@@ -37,7 +37,7 @@ OpenRepublic can connect `runtime::Upscaler::Dlss` to the render-path flag in a 
 | --- | --- | --- |
 | `Upscaler::None` | Do not evaluate a Streamline feature | Existing path |
 | `Upscaler::Fsr2Quality/Balanced/Performance/UltraPerformance` | Preserve existing FSR2 modes | Existing engine path |
-| `Upscaler::Dlss` | Selects `RenderPath3D::setDLSSEnabled(true)` in the private run copy; patch currently uses Balanced mode and `slDLSSGetOptimalSettings` | **OBSERVED:** setting is wired in private copy; rejected at zero display size before dispatch |
+| `Upscaler::Dlss` | Selects `RenderPath3D::setDLSSEnabled(true)` in the private run copy; patch uses Balanced mode and `slDLSSGetOptimalSettings` | **OBSERVED:** setting wired; 0×0 request remains pending, then `slEvaluateFeature` succeeds at 731×434 → 1260×748 |
 | `GraphicsSettings::sharpen` | Map only if Streamline DLSS options offer the corresponding control in the selected SDK version, otherwise keep OpenRepublic's post-sharpen pass | Requires version-specific review |
 | Frame generation | Separate future setting; do not overload `Upscaler::Dlss` | Not implemented; lacks HUD-less/UI buffers and present contract |
 
@@ -58,27 +58,30 @@ The patch expects `sl.interposer.dll` beside the executable. Plugin search paths
 
 ## Verification record and acceptance gates
 
-- **VERIFIED:** patches 0001 and 0002 apply in sequence to a fresh copy at pinned revision `4f93f3fd4f337aeb38dbfe410701b83024ccdd42`.
-- **VERIFIED (compile):** configured the private OpenRepublic copy with Visual Studio 2022, Release, `OPENREPUBLIC_STREAMLINE_DIR=ON`, and the private source SDK include tree. Built the full `OpenRepublic` client and Wicked Engine library against v2.14.16 headers.
-- **OBSERVED (windowed smoke):** ran the patched Windows template app in a visible window for about two seconds; its main window appeared. Closing it returned process exit `-1073741819` (`0xC0000005`, access violation). This establishes a short renderer startup attempt only; it is not a clean shutdown acceptance result. The template does not enable `RenderPath3D::setDLSSEnabled`.
-- **VERIFIED (source):** Wicked camera projection is reverse-Z and `wiRenderer.cpp` sets FSR2 motion-vector scale to `(1,1)` and notes jitter cancellation is already baked into the velocity buffer. **INFERRED:** Streamline's `motionVectorsJittered=true` and same scale are correct for this resource; validate with runtime visuals.
-- **OBSERVED (runtime):** in the private OpenRepublic run, `slInit result=0`, `slSetD3DDevice result=0`, NGX reported `FeatureInitResult = NvNGXFeatureInitSuccess` and assigned application ID `100721531`. These are initialization results, not proof of DLSS output.
-- **OBSERVED (failure):** `slGetFeatureFunction(slDLSSGetOptimalSettings)` returned `0`; the function pointer was non-null. But the render path's physical output dimensions were `0×0`; `slDLSSGetOptimalSettings` returned result `25`, with `0×0` optimal size. `setDLSSEnabled` then rejected DLSS. The frame token, tags and `slEvaluateFeature` were not reached.
-- **OBSERVED (run/capture):** the full OpenRepublic app ran windowed, exited with code `0`, and wrote a private showcase PNG. This was a fallback-rendered capture, not DLSS output. Capture paths and full logs are retained in private research notes, outside Git.
-- **UNKNOWN:** image correctness, motion-vector units/jitter semantics under DLSS, GPU frame time, successful dispatch, resize/device loss and clean shutdown behavior. An instrumented CPU call-time sample was not obtained because dispatch never occurred.
-- **VERIFIED (source correction needed):** graphics settings are applied before the render path has non-zero physical dimensions. The current setter treats the zero-sized settings request as failure; it must defer/retry setup after resize before DLSS can be evaluated.
+- **VERIFIED:** patches 0001, 0002, and 0003 apply in sequence to a clean copy of the pinned revision. Patch 0003 also passed `git apply --check` after 0001+0002.
+- **VERIFIED (compile):** configured the private OpenRepublic copy with Visual Studio 2022, Release, `OPENREPUBLIC_STREAMLINE_DIR=ON`, and the private SDK v2.14.16 headers. Built the full `OpenRepublic` client and Wicked Engine library after patch 0003.
+- **OBSERVED (windowed run):** the private OpenRepublic app ran with `--graphics upscaler=dlss`, target map/building arguments, and showcase capture. Process exited `0`; captured `dlss-map-building61-success.png` (2,505,936 bytes). The static image shows the map scene without gross corruption. This does not establish temporal stability or equivalence to FSR2.
+- **OBSERVED (runtime):** `slInit result=0 initialized=true`; `slSetD3DDevice result=0`; NGX reported `FeatureInitResult = NvNGXFeatureInitSuccess` and application ID `100721531`. `slDLSSGetOptimalSettings result=0` reported render 731×434 for display 1260×748. `slSetConstants result=0` and repeated `slEvaluateFeature(kFeatureDLSS) result=0` records were observed; shutdown returned `0`.
+- **OBSERVED (fixes):** before patch 0003, optimal settings failed at `0×0` (result 25). Deferral fixed that ordering. A later dimension check caught that the earlier scale calculation truncated one input dimension to 433 where optimal settings required 434; using the larger axis ratio yields 731×434. A DLSS dispatch also initially lacked a valid `rtVelocity`; patch 0003 includes DLSS in the velocity-target allocation condition. The final run evaluated successfully with that target allocated.
+- **VERIFIED (source), INFERRED (mapping):** Wicked `wiRenderer.cpp` sets FSR2 motion-vector scale to `(1,1)` and comments that jitter cancellation is baked into its velocity buffer. NVIDIA's [DLSS programming guide](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS.md) describes `(1,1)` for normalized `[-1,1]` motion vectors and inverse-render-dimension scaling for pixel-space vectors. Matching FSR2's scale and `motionVectorsJittered=true` remains an inference; no camera-motion/ghosting acceptance test was completed.
+- **OBSERVED (comparison attempt):** the FSR2 showcase attempt exited `-1073741819` (`0xC0000005`) and produced no FSR2 PNG. Therefore no DLSS-vs-FSR2 image comparison is available. The failure cause was not diagnosed in this task.
+- **OBSERVED (timing):** the instrumentation measures CPU duration around `slEvaluateFeature`, not frame or GPU time. The first call was about 32.86 ms; later sampled calls were about 0.16–0.23 ms. At dispatch count 2,820 the rolling/aggregate CPU call mean was approximately 0.237 ms. This is not an end-to-end frame-time measurement.
+- **UNKNOWN:** whether temporal output is free of ghosting, exact velocity normalization/jitter semantics, visual parity against FSR2, GPU/frame time, runtime resize behavior, and device-loss handling. Runtime diagnostics and captures remain in the private research folder and are not committed.
+- **VERIFIED (source fix):** zero-size settings now retain `dlssRequested`; `Update`/postprocess retry after physical dimensions become nonzero. `ResizeBuffers` replays requested/enabled state, and output-resource mismatch triggers reconfiguration. No actual resize interaction was performed.
 - **Previous baseline evidence:** the earlier headless OpenRepublic Release CTest passed 36/36 before this runtime-patch follow-up; no headless source changed in this follow-up.
 
 | Acceptance item | Result |
 | --- | --- |
 | Client and Wicked Engine compiled | **YES** (private VS2022 Release build) |
 | `slInit` succeeded | **YES** (`0`) |
-| DLSS evaluated | **NO** (zero-size optimal-settings failure before token/tags/evaluation) |
-| DLSS image correct, including velocity units | **NO / UNKNOWN** (no DLSS output observed) |
-| Frame time measured | **NO** (no DLSS dispatch; no GPU frame-time instrumentation) |
-| App run and capture | **YES**, fallback-rendered PNG only |
+| DLSS evaluated | **YES** (`slEvaluateFeature` result `0`, input 731×434, output 1260×748) |
+| DLSS image correct, including velocity units | **UNKNOWN** (static scene capture exists; no FSR2 comparison or motion/ghosting test) |
+| Frame time measured | **NO** (CPU dispatch-call time observed; no GPU or end-to-end frame-time measurement) |
+| App run and capture | **YES**, windowed OpenRepublic run exited `0`; DLSS capture written |
+| FSR2 comparison capture | **NO** (attempt exited `0xC0000005`; no PNG) |
+| Resize retry verified | **NO** (implemented; not exercised) |
 
-**Acceptance still required:** defer DLSS setup until after non-zero display dimensions, rebuild and rerun; record per-frame tags/evaluate result and output dimensions; inspect the DLSS capture against FSR2; verify motion-vector semantics, resize, fallback and clean shutdown. DLSS-G requires separate UI-composition and present-path work and is not covered by this patch.
+**Acceptance still required:** produce a successful FSR2 capture for side-by-side comparison; test moving-camera/object temporal behavior and validate velocity semantics; measure GPU and end-to-end frame time; exercise resize, fallback and clean shutdown. DLSS-G requires separate UI-composition and present-path work and is not covered by this patch.
 
 ## Sources
 
