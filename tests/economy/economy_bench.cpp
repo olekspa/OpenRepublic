@@ -23,8 +23,8 @@ int main() {
         std::cout << threads << " thread(s): " << buildings << " buildings, " << ms / 100 << " ms/tick\n";
     }
     // Haul movement: one road row with farm/mill pairs and a truck per order.
-    for (const int pairs : {100, 400}) {
-        World w(catalog, 2100, 8);
+    for (const int pairs : {100, 400, 1500}) {
+        World w(catalog, 12500, 8);
         for (int x = 1; x < 4 * pairs * 2; ++x)
             w.BuildRoad({x, 1}, {x + 1, 1});
         for (int i = 0; i < pairs * 2; ++i)

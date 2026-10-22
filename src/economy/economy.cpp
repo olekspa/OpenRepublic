@@ -169,17 +169,16 @@ std::size_t Slot(const BuildingTypeDef &t, ResourceId r) {
             return i;
     return t.storage.size();
 }
+// Buildings stay sorted by id: ids are issued in increasing order, removal keeps order, and each tick re-sorts.
 Building *Find(State &s, BuildingId id) {
-    for (auto &x : s.buildings)
-        if (x.id == id)
-            return &x;
-    return nullptr;
+    const auto it = std::lower_bound(s.buildings.begin(), s.buildings.end(), id,
+                                     [](const Building &b, BuildingId value) { return b.id < value; });
+    return it != s.buildings.end() && it->id == id ? &*it : nullptr;
 }
 const Building *Find(const State &s, BuildingId id) {
-    for (const auto &x : s.buildings)
-        if (x.id == id)
-            return &x;
-    return nullptr;
+    const auto it = std::lower_bound(s.buildings.begin(), s.buildings.end(), id,
+                                     [](const Building &b, BuildingId value) { return b.id < value; });
+    return it != s.buildings.end() && it->id == id ? &*it : nullptr;
 }
 Road *FindRoad(State &s, RoadId id) {
     for (auto &x : s.roads)
