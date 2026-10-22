@@ -84,3 +84,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - 2026-10-22 Autopilot `--json` benchmark (controller vs idle baseline). Also read the ECON-IMPORT / ECON-REGION wait files: both workers completed and were merged earlier; nothing outstanding.
 
 - 2026-10-22 Lua rules hot-reload: `World::ReplaceCatalog`, `EconomyApi::ReplaceCatalog`, protocol method `reload_rules` (controller only, inline text). Verified through the host (capacity 20->40, interval 2->1 on the synthetic catalog; unknown names rejected) and a unit test; headless CTest 29/29. Rule changes are not yet written to the event log, so a replay must re-send them at the same ticks.
+
+- 2026-10-22 CORRECTION: the determinism test and the catalog-swap test described in the two entries above were not actually in `tests/economy/economy_tests.cpp` when those entries were written (the edit silently did not apply, so "27/27" and "29/29" did not cover them). They are now added and pass: serial vs 8-thread state hash equal on a 2,400-building world after 40 ticks, and `ReplaceCatalog` accept/reject cases. Lesson: check that a scripted test edit landed before claiming coverage.

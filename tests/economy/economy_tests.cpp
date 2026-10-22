@@ -211,6 +211,50 @@ int main() {
               "unknown removal is rejected");
         Check(!w.Step(100001).accepted && w.Tick() == 3, "step bound rejects without advancing");
     }
+    {
+        // Parallel production must be bit-identical to the serial path.
+        auto run = [&](unsigned threads) {
+            SetProductionThreads(threads);
+            World w(catalog, 260, 260);
+            for (int gx = 0; gx < 60; ++gx)
+                for (int gz = 0; gz < 40; ++gz)
+                    w.PlaceBuilding(static_cast<BuildingTypeId>((gx + gz) % 2 == 0 ? 0 : 1), {2 + gx * 4, 3 + gz * 6});
+            for (std::uint32_t i = 0; i < 40; ++i)
+                w.Step();
+            const auto snap = w.Snapshot();
+            return std::make_pair(snap.stateHash, snap.buildings.size());
+        };
+        const auto serial = run(1);
+        const auto parallel = run(8);
+        SetProductionThreads(0);
+        Check(serial.second >= 1024, "parallel determinism world exceeds the threading threshold");
+        Check(serial == parallel, "parallel production matches serial production bit for bit");
+    }
+    {
+        // Rules swap: identical structure is accepted, a different one is not.
+        const std::string base = WriteCatalogText(catalog);
+        std::string text = base;
+        const auto at = text.find("store ");
+        Check(at != std::string::npos, "catalog text has a store line");
+        const auto end = text.find('\n', at);
+        const std::string line = text.substr(at, end - at);
+        const auto lastSpace = line.rfind(' ');
+        text.replace(at, end - at,
+                     line.substr(0, lastSpace + 1) + std::to_string(std::stoull(line.substr(lastSpace + 1)) * 2));
+        Catalog doubled, different;
+        ParseError pe;
+        Check(ParseCatalogText(text, doubled, pe), "doubled-capacity catalog parses");
+        std::string moreResources = base;
+        moreResources.insert(moreResources.find("resource "), "resource zzz_extra\n");
+        Check(ParseCatalogText(moreResources, different, pe), "different catalog parses");
+        World w(catalog, 16, 8);
+        PlaceChain(w);
+        std::string err;
+        Check(w.ReplaceCatalog(doubled, err), "same-structure catalog with new capacity is accepted");
+        Check(&w.GetCatalog() == &doubled, "world now references the replacement catalog");
+        Check(!w.ReplaceCatalog(different, err) && !err.empty(), "different structure is rejected");
+        Check(&w.GetCatalog() == &doubled, "a rejected swap leaves the catalog in place");
+    }
     if (failures) {
         std::cerr << failures << " economy checks failed\n";
         return EXIT_FAILURE;
