@@ -109,6 +109,7 @@ def main():
             plan = host.call("advise")
             submitted = 0
             world_now = host.call("world")["world"]
+            batch = []
             for need in plan["unservedInputs"]:
                 if not need["producers"]:
                     maker = raw_producer_type(catalog, need["resource"])
@@ -123,10 +124,12 @@ def main():
                 key = (command["source"], command["destination"], command["resource"])
                 if key in ordered:
                     continue
-                world = host.call("world")
-                host.call("submit", revision=world["world"]["revision"], command=command)
+                batch.append({k: command[k] for k in ("source", "destination", "resource", "vehicleType")})
                 ordered.add(key)
                 submitted += 1
+            for start in range(0, len(batch), 64):
+                revision = host.call("world")["world"]["revision"]
+                host.call("create_haul_orders", revision=revision, orders=batch[start:start + 64])
             stepped = host.call("step", ticks=args.ticks)
             world = host.call("world")["world"]
             running = sum(1 for b in world["buildings"] if b["stallReason"] == "running")
