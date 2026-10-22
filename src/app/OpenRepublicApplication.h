@@ -22,8 +22,12 @@ namespace openrepublic
 		void SetSceneProbePath(std::filesystem::path path);
 		void SetGlbProbePath(std::filesystem::path path);
 		void SetNmfProbePath(std::filesystem::path path);
+		void SetNmfTextureRoots(std::vector<std::filesystem::path> roots);
 		void SetNmfUnlitPreview(bool enabled);
+		void SetNmfMaterialUnlitPreview(bool enabled);
 		void SetNmfCapturePaths(std::vector<std::filesystem::path> paths);
+		void SetNmfCaptureZoom(float zoom);
+		void SetNmfCaptureElevationDegrees(std::optional<float> elevationDegrees);
 		void SetTerrainProbePath(std::filesystem::path path);
 		void SetTerrainProbeTransform(std::optional<openrepublic::content::TerrainTransform> transform,
 			std::string error = {});
@@ -65,8 +69,12 @@ namespace openrepublic
 		std::filesystem::path sceneProbePath;
 		std::filesystem::path glbProbePath;
 		std::filesystem::path nmfProbePath;
+		std::vector<std::filesystem::path> nmfTextureRoots;
 		bool nmfUnlitPreview = false;
+		bool nmfMaterialUnlitPreview = false;
 		std::vector<std::filesystem::path> nmfCapturePaths;
+		float nmfCaptureZoom = 1.0f;
+		std::optional<float> nmfCaptureElevationDegrees;
 		bool nmfCaptureMode = false;
 		std::filesystem::path terrainProbePath;
 		std::optional<openrepublic::content::TerrainTransform> terrainProbeTransform;

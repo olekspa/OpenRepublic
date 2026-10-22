@@ -3,7 +3,9 @@
 #include "wiHelper.h"
 #include "openrepublic/content/glb_container.h"
 #include "openrepublic/content/glb_semantic.h"
+#include "openrepublic/content/mtl_dependencies.h"
 #include "openrepublic/content/mtl_preview_color.h"
+#include "openrepublic/content/mtl_preview_texture.h"
 #include "openrepublic/content/mtl_submaterial_binding.h"
 #include "openrepublic/content/mtl_syntax.h"
 #include "openrepublic/content/nmf_geometry.h"
@@ -20,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -31,6 +34,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace openrepublic
@@ -72,6 +76,8 @@ namespace openrepublic
 		constexpr double kRawPreviewVerticalScale = 5.0;
 		constexpr double kMaxTerrainPreviewHeight = 1000.0;
 		constexpr std::uintmax_t kMaxNmfPreviewMtlBytes = 4u * 1024u * 1024u;
+		constexpr std::uintmax_t kMaxNmfPreviewTextureBytes = 64u * 1024u * 1024u;
+		constexpr std::uintmax_t kMaxNmfPreviewTextureBytesTotal = 256u * 1024u * 1024u;
 		constexpr XMFLOAT4 kNmfDebugMaterialPalette[] = {
 			XMFLOAT4(0.70f, 0.35f, 0.24f, 1.0f),
 			XMFLOAT4(0.28f, 0.52f, 0.72f, 1.0f),
@@ -93,17 +99,31 @@ namespace openrepublic
 		{
 		public:
 			explicit NmfPreviewCaptureRenderPath(std::vector<std::filesystem::path> outputPaths,
-				const XMFLOAT3& cameraTarget, float cameraDistance)
-				: outputPaths(std::move(outputPaths)), cameraTarget(cameraTarget), cameraDistance(cameraDistance)
+				const XMFLOAT3& cameraTarget, float cameraDistance, float cameraZoom,
+				std::optional<float> cameraElevationDegrees)
+				: outputPaths(std::move(outputPaths)), cameraTarget(cameraTarget), cameraDistance(cameraDistance),
+				cameraZoom(cameraZoom), cameraElevationDegrees(cameraElevationDegrees)
 			{
 			}
 
 			void SetDiagnosticCameraView(std::size_t index)
 			{
-				static constexpr std::array<XMFLOAT3, 3> cameraDirections = {
+				// Preserve the existing first five diagnostic views, then complete a
+				// uniform-elevation cardinal sweep so an unknown source front axis is
+				// less likely to hide the facade from every capture. Two quarter-step
+				// views around -Z provide a closer three-quarter reference candidate.
+				static constexpr std::array<XMFLOAT3, 11> cameraDirections = {
 					XMFLOAT3(0.6432f, 0.4153f, 0.6432f),  // diagonal A
 					XMFLOAT3(1.0f, 0.0f, 0.0f),          // level +X diagnostic side
 					XMFLOAT3(-0.6432f, 0.4153f, 0.6432f), // diagonal B
+					XMFLOAT3(0.6432f, 0.4153f, -0.6432f), // diagonal C, opposite Z side
+					XMFLOAT3(-0.6432f, 0.4153f, -0.6432f), // diagonal D, opposite Z side
+					XMFLOAT3(0.9096f, 0.4153f, 0.0f),    // elevated +X
+					XMFLOAT3(0.0f, 0.4153f, 0.9096f),    // elevated +Z
+					XMFLOAT3(-0.9096f, 0.4153f, 0.0f),   // elevated -X
+					XMFLOAT3(0.0f, 0.4153f, -0.9096f),   // elevated -Z
+					XMFLOAT3(0.3482f, 0.4153f, -0.8404f), // -Z oblique from +X
+					XMFLOAT3(-0.3482f, 0.4153f, -0.8404f), // -Z oblique from -X
 				};
 
 				if (camera == nullptr || index >= cameraDirections.size())
@@ -111,8 +131,23 @@ namespace openrepublic
 					return;
 				}
 
-				const float distance = std::max(cameraDistance, 12.0f);
-				const XMFLOAT3 direction = cameraDirections[index];
+				const float distance = std::max(cameraDistance, 12.0f) / cameraZoom;
+				XMFLOAT3 direction = cameraDirections[index];
+				if (cameraElevationDegrees.has_value() && index != 1)
+				{
+					// Rebuild only the pitch: retain each preset's horizontal azimuth.
+					// With no override, the historical direction vectors remain exact.
+					constexpr float degreesToRadians = 0.01745329251994329577f;
+					const float horizontalLength = std::hypot(direction.x, direction.z);
+					if (horizontalLength > 0.0f && std::isfinite(horizontalLength))
+					{
+						const float elevation = *cameraElevationDegrees * degreesToRadians;
+						const float horizontalScale = std::cos(elevation) / horizontalLength;
+						direction.x *= horizontalScale;
+						direction.y = std::sin(elevation);
+						direction.z *= horizontalScale;
+					}
+				}
 				const XMFLOAT3 eye(cameraTarget.x + distance * direction.x,
 					cameraTarget.y + distance * direction.y,
 					cameraTarget.z + distance * direction.z);
@@ -241,6 +276,8 @@ namespace openrepublic
 			std::vector<std::filesystem::path> outputPaths;
 			XMFLOAT3 cameraTarget{};
 			float cameraDistance = 12.0f;
+			float cameraZoom = 1.0f;
+			std::optional<float> cameraElevationDegrees;
 			std::uint32_t warmupFramesRemaining = 60;
 			std::size_t nextCapture = 0;
 		};
@@ -315,6 +352,228 @@ namespace openrepublic
 		const XMFLOAT4& NmfDebugMaterialColor(std::size_t index)
 		{
 			return kNmfDebugMaterialPalette[index % std::size(kNmfDebugMaterialPalette)];
+		}
+
+		bool WindowsPathComponentEqual(const std::filesystem::path& left,
+			const std::filesystem::path& right)
+		{
+			const auto& leftNative = left.native();
+			const auto& rightNative = right.native();
+			if (leftNative.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+				rightNative.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+			{
+				return false;
+			}
+			return CompareStringOrdinal(leftNative.data(), static_cast<int>(leftNative.size()),
+				rightNative.data(), static_cast<int>(rightNative.size()), TRUE) == CSTR_EQUAL;
+		}
+
+		bool WindowsPathIsWithin(const std::filesystem::path& candidate,
+			const std::filesystem::path& root)
+		{
+			auto rootComponent = root.begin();
+			auto candidateComponent = candidate.begin();
+			for (; rootComponent != root.end(); ++rootComponent, ++candidateComponent)
+			{
+				if (candidateComponent == candidate.end() ||
+					!WindowsPathComponentEqual(*candidateComponent, *rootComponent))
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+
+		bool WindowsPathsEqual(const std::filesystem::path& left,
+			const std::filesystem::path& right)
+		{
+			auto leftComponent = left.begin();
+			auto rightComponent = right.begin();
+			for (; leftComponent != left.end() && rightComponent != right.end();
+				++leftComponent, ++rightComponent)
+			{
+				if (!WindowsPathComponentEqual(*leftComponent, *rightComponent))
+				{
+					return false;
+				}
+			}
+			return leftComponent == left.end() && rightComponent == right.end();
+		}
+
+		std::filesystem::path NormalizeHandlePath(std::wstring path)
+		{
+			constexpr std::wstring_view uncPrefix = L"\\\\?\\UNC\\";
+			constexpr std::wstring_view devicePrefix = L"\\\\?\\";
+			if (path.compare(0, uncPrefix.size(), uncPrefix) == 0)
+			{
+				path = L"\\\\" + path.substr(uncPrefix.size());
+			}
+			else if (path.compare(0, devicePrefix.size(), devicePrefix) == 0)
+			{
+				path.erase(0, devicePrefix.size());
+			}
+			return std::filesystem::path(std::move(path));
+		}
+
+		struct ScopedFileHandle
+		{
+			HANDLE value = INVALID_HANDLE_VALUE;
+
+			~ScopedFileHandle()
+			{
+				if (value != INVALID_HANDLE_VALUE)
+				{
+					CloseHandle(value);
+				}
+			}
+		};
+
+		bool ReadNmfTextureFileContained(const std::filesystem::path& expectedPath,
+			const std::vector<std::filesystem::path>& trustedRoots, std::size_t maximumBytes,
+			std::vector<std::uint8_t>& output, std::string& error)
+		{
+			ScopedFileHandle file;
+			file.value = CreateFileW(expectedPath.c_str(), GENERIC_READ, FILE_SHARE_READ,
+				nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+			if (file.value == INVALID_HANDLE_VALUE)
+			{
+				error = "texture candidate could not be opened read-only";
+				return false;
+			}
+
+			std::vector<wchar_t> finalPathBuffer(32768, L'\0');
+			const DWORD finalPathLength = GetFinalPathNameByHandleW(file.value,
+				finalPathBuffer.data(), static_cast<DWORD>(finalPathBuffer.size()),
+				FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+			if (finalPathLength == 0 || finalPathLength >= finalPathBuffer.size())
+			{
+				error = "opened texture path could not be verified";
+				return false;
+			}
+			std::error_code pathError;
+			const auto openedPath = std::filesystem::canonical(
+				NormalizeHandlePath(std::wstring(finalPathBuffer.data(), finalPathLength)), pathError);
+			if (pathError)
+			{
+				error = "opened texture path could not be canonicalized";
+				return false;
+			}
+			const auto expectedCanonicalPath = std::filesystem::canonical(expectedPath, pathError);
+			if (pathError || !WindowsPathsEqual(openedPath, expectedCanonicalPath))
+			{
+				error = "opened texture does not match the resolved local candidate";
+				return false;
+			}
+
+			bool contained = false;
+			for (const auto& root : trustedRoots)
+			{
+				const auto canonicalRoot = std::filesystem::canonical(root, pathError);
+				if (!pathError && WindowsPathIsWithin(openedPath, canonicalRoot))
+				{
+					contained = true;
+					break;
+				}
+				pathError.clear();
+			}
+			if (!contained)
+			{
+				error = "opened texture escaped caller-supplied content roots";
+				return false;
+			}
+
+			FILE_STANDARD_INFO fileInfo{};
+			if (!GetFileInformationByHandleEx(file.value, FileStandardInfo, &fileInfo, sizeof(fileInfo)) ||
+				fileInfo.Directory || fileInfo.EndOfFile.QuadPart <= 0 ||
+				static_cast<unsigned long long>(fileInfo.EndOfFile.QuadPart) > maximumBytes)
+			{
+				error = "texture file is empty, non-regular, or exceeds the bounded image input size";
+				return false;
+			}
+
+			std::vector<std::uint8_t> candidate(static_cast<std::size_t>(fileInfo.EndOfFile.QuadPart));
+			std::size_t offset = 0;
+			while (offset < candidate.size())
+			{
+				const DWORD requestBytes = static_cast<DWORD>(std::min<std::size_t>(
+					candidate.size() - offset, std::numeric_limits<DWORD>::max()));
+				DWORD bytesRead = 0;
+				if (!ReadFile(file.value, candidate.data() + offset, requestBytes, &bytesRead, nullptr) ||
+					bytesRead == 0)
+				{
+					error = "texture file could not be read completely from the verified handle";
+					return false;
+				}
+				offset += bytesRead;
+			}
+
+			output = std::move(candidate);
+			error.clear();
+			return true;
+		}
+
+		bool IsSupportedNmfPreviewImageExtension(const std::filesystem::path& path)
+		{
+			std::string extension = path.extension().string();
+			if (extension.empty() || extension.size() > 16 || extension.front() != '.')
+				return false;
+			extension.erase(extension.begin());
+			std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char value) {
+				return static_cast<char>(std::toupper(value));
+			});
+			for (std::string supported : wi::resourcemanager::GetSupportedImageExtensions())
+			{
+				if (!supported.empty() && supported.front() == '.')
+					supported.erase(supported.begin());
+				std::transform(supported.begin(), supported.end(), supported.begin(), [](unsigned char value) {
+					return static_cast<char>(std::toupper(value));
+				});
+				if (extension == supported)
+					return true;
+			}
+			return false;
+		}
+
+		bool LoadNmfPreviewTexture(const std::filesystem::path& resolvedPath,
+			const std::vector<std::filesystem::path>& trustedRoots, std::size_t remainingBytes,
+			wi::Resource& resource, std::string& resourceName, std::size_t& loadedBytes,
+			std::string& error)
+		{
+			if (!IsSupportedNmfPreviewImageExtension(resolvedPath))
+			{
+				error = "texture candidate extension is not supported by the pinned image loader";
+				return false;
+			}
+
+			std::vector<std::uint8_t> fileBytes;
+			const std::size_t maximumBytes = std::min<std::size_t>(
+				static_cast<std::size_t>(kMaxNmfPreviewTextureBytes), remainingBytes);
+			if (maximumBytes == 0 || !ReadNmfTextureFileContained(
+				resolvedPath, trustedRoots, maximumBytes, fileBytes, error))
+			{
+				if (error.empty())
+					error = "aggregate preview texture memory limit was reached";
+				return false;
+			}
+
+			static std::atomic<std::uint64_t> nextResourceId{0};
+			const std::string generatedName = "openrepublic-nmf-preview-texture-" +
+				std::to_string(nextResourceId.fetch_add(1, std::memory_order_relaxed)) +
+				resolvedPath.extension().string();
+			auto candidateResource = wi::resourcemanager::Load(generatedName,
+				wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA,
+				fileBytes.data(), fileBytes.size());
+			if (!candidateResource.IsValid() || !candidateResource.GetTexture().IsValid())
+			{
+				error = "pinned image loader rejected the bounded local texture bytes";
+				return false;
+			}
+
+			resource = std::move(candidateResource);
+			resourceName = generatedName;
+			loadedBytes = fileBytes.size();
+			error.clear();
+			return true;
 		}
 
 		bool LoadSiblingNmfMtl(const std::filesystem::path& nmfPath,
@@ -779,7 +1038,9 @@ namespace openrepublic
 
 		bool CreateNmfStaticPreview(wi::scene::Scene& scene, const std::filesystem::path& nmfPath,
 			wi::ecs::Entity& meshEntity, XMFLOAT3& previewCameraTarget, float& previewCameraDistance,
-			bool unlitDiagnostic, std::string& description, std::string& geometryAuditSummary,
+			bool unlitDiagnostic, bool materialUnlitDiagnostic,
+			const std::vector<std::filesystem::path>& textureRoots,
+			std::string& description, std::string& geometryAuditSummary,
 			std::string& error)
 		{
 			openrepublic::content::NmfStaticGeometry geometry;
@@ -790,8 +1051,11 @@ namespace openrepublic
 
 			openrepublic::content::MtlDocument mtlDocument;
 			std::vector<openrepublic::content::MtlSubmaterialBinding> mtlBindings;
+			std::vector<openrepublic::content::MtlPreviewBaseColorTexture> baseColorTextures;
 			std::string mtlStatus;
 			bool haveMtlBindings = false;
+			bool haveTextureBindings = false;
+			std::string mtlTextureStatus;
 			if (unlitDiagnostic)
 			{
 				mtlStatus = "neutral unlit geometry diagnostic bypasses sibling MTL parsing";
@@ -806,6 +1070,30 @@ namespace openrepublic
 					mtlDocument = {};
 					mtlStatus = "NMF/MTL identifiers could not be matched within the bounded profile; diagnostic colors are used";
 				}
+			}
+			if (!unlitDiagnostic && !textureRoots.empty() && haveMtlBindings)
+			{
+				openrepublic::content::MtlDependencyManifest dependencyManifest;
+				std::string dependencyError;
+				if (openrepublic::content::BuildMtlDependencyManifest(
+					mtlDocument, textureRoots, dependencyManifest, &dependencyError) ==
+					openrepublic::content::MtlDependencyManifestError::None)
+				{
+					std::string bindingError;
+					haveTextureBindings = openrepublic::content::BuildMtlPreviewBaseColorTextures(
+						mtlDocument, dependencyManifest, baseColorTextures, &bindingError);
+					mtlTextureStatus = haveTextureBindings
+						? "caller-supplied texture roots resolved under the bounded dependency profile"
+						: "slot-0 texture preview binding was rejected by the bounded adapter";
+				}
+				else
+				{
+					mtlTextureStatus = "texture dependency manifest exceeded its bounded input profile";
+				}
+			}
+			else if (!textureRoots.empty())
+			{
+				mtlTextureStatus = "texture preview was unavailable because sibling MTL name binding failed";
 			}
 
 			openrepublic::content::NmfTextureCoordinateStreams textureCoordinates;
@@ -939,6 +1227,13 @@ namespace openrepublic
 			std::size_t invalidDiffuseColorCount = 0;
 			std::size_t missingMtlMatchCount = 0;
 			std::size_t ambiguousMtlMatchCount = 0;
+			std::size_t baseColorTextureCandidateCount = 0;
+			std::size_t baseColorTextureLoadedCount = 0;
+			std::size_t baseColorTextureLoadFailureCount = 0;
+			std::size_t loadedPreviewTextureBytes = 0;
+			std::size_t ambiguousBaseColorTextureCount = 0;
+			std::size_t unresolvedBaseColorTextureCount = 0;
+			std::size_t invalidBaseColorTextureIndexCount = 0;
 			for (std::size_t materialIndex = 0; materialIndex < submaterialEntities.size(); ++materialIndex)
 			{
 				const wi::ecs::Entity materialEntity = submaterialEntities[materialIndex];
@@ -1007,7 +1302,80 @@ namespace openrepublic
 						++missingMtlMatchCount;
 					}
 				}
-				material->CreateRenderData(true);
+				bool expectsBaseColorTexture = false;
+				if (!unlitDiagnostic && haveTextureBindings && haveMtlBindings &&
+					materialIndex < mtlBindings.size() &&
+					mtlBindings[materialIndex].status ==
+						openrepublic::content::MtlSubmaterialBindingStatus::Matched &&
+					mtlBindings[materialIndex].sectionIndex < baseColorTextures.size())
+				{
+					const auto& texture = baseColorTextures[mtlBindings[materialIndex].sectionIndex];
+					switch (texture.status)
+					{
+					case openrepublic::content::MtlPreviewBaseColorTextureStatus::Resolved:
+						if (!texture.resolvedPath.empty() && texture.resolvedPath.is_absolute())
+						{
+							++baseColorTextureCandidateCount;
+							wi::Resource loadedTexture;
+							std::string resourceName;
+							std::size_t imageBytes = 0;
+							std::string loadError;
+							const std::size_t remainingBytes =
+								loadedPreviewTextureBytes >= kMaxNmfPreviewTextureBytesTotal
+									? 0
+									: static_cast<std::size_t>(kMaxNmfPreviewTextureBytesTotal) -
+										loadedPreviewTextureBytes;
+							if (LoadNmfPreviewTexture(texture.resolvedPath, textureRoots, remainingBytes,
+								loadedTexture, resourceName, imageBytes, loadError))
+							{
+								auto& baseColorMap = material->textures[
+									wi::scene::MaterialComponent::BASECOLORMAP];
+								baseColorMap.name = std::move(resourceName);
+								baseColorMap.resource = std::move(loadedTexture);
+								// The indexed source texture-coordinate input is observed;
+								// assigning it as Wicked UV set 0 is an adapter inference.
+								baseColorMap.uvset = 0;
+								material->SetTextureStreamingDisabled(true);
+								expectsBaseColorTexture = true;
+								loadedPreviewTextureBytes += imageBytes;
+							}
+							else
+							{
+								++baseColorTextureLoadFailureCount;
+							}
+						}
+						else
+						{
+							++unresolvedBaseColorTextureCount;
+						}
+						break;
+					case openrepublic::content::MtlPreviewBaseColorTextureStatus::Ambiguous:
+						++ambiguousBaseColorTextureCount;
+						break;
+					case openrepublic::content::MtlPreviewBaseColorTextureStatus::Unresolved:
+						++unresolvedBaseColorTextureCount;
+						break;
+					case openrepublic::content::MtlPreviewBaseColorTextureStatus::InvalidSlotIndex:
+						++invalidBaseColorTextureIndexCount;
+						break;
+					case openrepublic::content::MtlPreviewBaseColorTextureStatus::NoSlotZero:
+						break;
+					}
+				}
+				// Loaded texture bytes have a generated in-memory resource name and are
+				// already retained by ResourceManager. Avoid invalidating/reopening them.
+				material->CreateRenderData(!expectsBaseColorTexture);
+				if (expectsBaseColorTexture)
+				{
+					if (material->textures[wi::scene::MaterialComponent::BASECOLORMAP].GetGPUResource() != nullptr)
+					{
+						++baseColorTextureLoadedCount;
+					}
+					else
+					{
+						++baseColorTextureLoadFailureCount;
+					}
+				}
 			}
 			if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(meshEntity))
 			{
@@ -1052,6 +1420,32 @@ namespace openrepublic
 				mtlBindingSummary =
 					"sibling MTL binding was unavailable, so name matches were not checked and referenced entries remain diagnostic";
 			}
+			std::string textureBindingSummary;
+			if (unlitDiagnostic)
+			{
+				textureBindingSummary = "texture loading was bypassed in neutral unlit diagnostic mode";
+			}
+			else if (textureRoots.empty())
+			{
+				textureBindingSummary = "texture loading is disabled unless caller-supplied --nmf-texture-root values are provided";
+			}
+			else if (haveTextureBindings)
+			{
+				textureBindingSummary = std::to_string(baseColorTextureLoadedCount) + "/" +
+					std::to_string(baseColorTextureCandidateCount) +
+					" unique slot-0 candidates loaded as Wicked base-color maps on inferred UV set 0; " +
+					std::to_string(baseColorTextureLoadFailureCount) + " image loads failed, " +
+					std::to_string(ambiguousBaseColorTextureCount) + " slot-0 references were ambiguous, " +
+					std::to_string(unresolvedBaseColorTextureCount) + " were unresolved, and " +
+					std::to_string(invalidBaseColorTextureIndexCount) + " had non-integer slot tokens; " +
+					"other texture slots remain unmapped";
+			}
+			else
+			{
+				textureBindingSummary = mtlTextureStatus.empty()
+					? "texture dependency binding was unavailable"
+					: mtlTextureStatus;
+			}
 			const std::string normalLengthSummary = previewGeometry.sourceNormalCount == 0
 				? "no source-normal lengths are available"
 				: "source-normal lengths min/mean/max=" +
@@ -1074,7 +1468,8 @@ namespace openrepublic
 			// Keep the bounded geometry counters separate from the verbose UI notice:
 			// Wicked's wilog formatter uses a fixed 1024-byte buffer.
 			geometryAuditSummary =
-				std::string(unlitDiagnostic ? "mode=neutral-unlit" : "mode=regular") +
+				std::string(unlitDiagnostic ? "mode=neutral-unlit" :
+					(materialUnlitDiagnostic ? "mode=material-unlit" : "mode=regular")) +
 				" objects=" + std::to_string(geometry.objects.size()) +
 				" vertices=" + std::to_string(vertexCount) +
 				" source_indices=" + std::to_string(previewGeometry.indices.size()) +
@@ -1089,7 +1484,13 @@ namespace openrepublic
 					std::to_string(static_cast<double>(previewGeometry.sourceMaximum.z) - previewGeometry.sourceMinimum.z) +
 				" exact_zero_area=" + std::to_string(previewGeometry.zeroAreaTriangleCount) +
 				" source_normals=" + std::to_string(previewGeometry.sourceNormalCount) +
-				" normal_lengths_min_mean_max=" + sourceNormalLengthAudit;
+				" normal_lengths_min_mean_max=" + sourceNormalLengthAudit +
+				" slot0_candidates=" + std::to_string(baseColorTextureCandidateCount) +
+				" slot0_loaded=" + std::to_string(baseColorTextureLoadedCount) +
+				" slot0_load_failures=" + std::to_string(baseColorTextureLoadFailureCount) +
+				" slot0_ambiguous=" + std::to_string(ambiguousBaseColorTextureCount) +
+				" slot0_unresolved=" + std::to_string(unresolvedBaseColorTextureCount) +
+				" slot0_invalid_index=" + std::to_string(invalidBaseColorTextureIndexCount);
 			description = "Bounded static NMF geometry preview: " +
 				std::to_string(geometry.objects.size()) + " objects (one LOD each), " +
 				std::to_string(vertexCount) + " vertices, " +
@@ -1103,11 +1504,10 @@ namespace openrepublic
 				std::to_string(previewGeometry.zeroAreaTriangleCount) + "; " + normalLengthSummary +
 				". These are structural diagnostics, not source-convention or fidelity checks. " +
 				std::to_string(mappedSubmaterialCount) + " referenced submaterial-table entries, " +
-				mtlBindingSummary + ". " +
+				mtlBindingSummary + "; " + textureBindingSummary + ". " +
 				mtlStatus + ". " +
-				(unlitDiagnostic ? std::string() : "Textures are not loaded; their slot and path semantics remain unsupported. ") +
 				(unlitDiagnostic ? std::string() :
-					"Build 23935965 labels flag 0x8 _NRM FLOAT3 and flags 0x100/0x200 _TC0/_TC1 eight-byte streams; interpreting each pair as FLOAT2 and assigning Wicked UV sets 0/1 is an inferred preview adapter, while MTL texture-slot use remains unknown. ") +
+					"Build 23935965 labels flag 0x8 _NRM FLOAT3 and flags 0x100/0x200 _TC0/_TC1 eight-byte streams; interpreting each pair as FLOAT2 and assigning Wicked UV sets 0/1 is an inferred preview adapter. The `$TEXTURE` integer is observed as the source texture register index; using slot 0 as Wicked base color on UV set 0 is an inferred preview mapping, and other roles remain unknown. ") +
 				uvSummary +
 				(unlitDiagnostic
 					? std::to_string(sourceNormalCount) + " source normals are present but bypassed in neutral unlit diagnostic mode; MTL colors and UV streams are also bypassed. Common fog and post-processing may still affect the output. "
@@ -1194,15 +1594,42 @@ namespace openrepublic
 		nmfProbePath = std::move(path);
 	}
 
+	void OpenRepublicApplication::SetNmfTextureRoots(std::vector<std::filesystem::path> roots)
+	{
+		nmfTextureRoots = std::move(roots);
+	}
+
 	void OpenRepublicApplication::SetNmfUnlitPreview(bool enabled)
 	{
 		nmfUnlitPreview = enabled;
+	}
+
+	void OpenRepublicApplication::SetNmfMaterialUnlitPreview(bool enabled)
+	{
+		nmfMaterialUnlitPreview = enabled;
 	}
 
 	void OpenRepublicApplication::SetNmfCapturePaths(std::vector<std::filesystem::path> paths)
 	{
 		nmfCaptureMode = !paths.empty();
 		nmfCapturePaths = std::move(paths);
+	}
+
+	void OpenRepublicApplication::SetNmfCaptureZoom(float zoom)
+	{
+		if (std::isfinite(zoom) && zoom >= 0.5f && zoom <= 2.5f)
+		{
+			nmfCaptureZoom = zoom;
+		}
+	}
+
+	void OpenRepublicApplication::SetNmfCaptureElevationDegrees(std::optional<float> elevationDegrees)
+	{
+		if (!elevationDegrees.has_value() ||
+			(std::isfinite(*elevationDegrees) && *elevationDegrees >= 0.0f && *elevationDegrees <= 60.0f))
+		{
+			nmfCaptureElevationDegrees = elevationDegrees;
+		}
 	}
 
 	void OpenRepublicApplication::SetTerrainProbePath(std::filesystem::path path)
@@ -1447,6 +1874,7 @@ namespace openrepublic
 				std::string error;
 				if (CreateNmfStaticPreview(previewWorld, nmfProbePath, meshEntity,
 					nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfUnlitPreview,
+					nmfMaterialUnlitPreview, nmfTextureRoots,
 					description, geometryAuditSummary, error))
 				{
 					nmfPreviewLoaded = true;
@@ -1460,7 +1888,11 @@ namespace openrepublic
 			if (nmfPreviewLoaded)
 			{
 				wilog("[OpenRepublic] NMF geometry audit: %s", geometryAuditSummary.c_str());
-				wilog("[OpenRepublic] NMF limits: UV pair-to-set mapping is inferred; textures are unsupported; source axes, winding, units, normal direction, and visual fidelity remain unverified.");
+				wilog("[OpenRepublic] NMF limits: UV pair-to-set mapping is inferred; slot 0 to Wicked base-color/UV0 is an opt-in inference; other texture slots remain unmapped; source axes, winding, units, normal direction, and visual fidelity remain unverified.");
+				if (nmfMaterialUnlitPreview)
+				{
+					wilog("[OpenRepublic] NMF capture mode: force-unlit while retaining MTL colors, UVs, and optional local slot-0 texture candidates.");
+				}
 			}
 			else
 			{
@@ -1487,14 +1919,16 @@ namespace openrepublic
 
 		if (capturePreview && nmfPreviewLoaded)
 		{
-			if (nmfUnlitPreview)
+			if (nmfUnlitPreview || nmfMaterialUnlitPreview)
 			{
 				// Use Wicked's existing global diagnostic to bypass lighting without
-				// selecting a separate material shader permutation.
+				// selecting a separate material shader permutation. The material-unlit
+				// mode retains MTL colors, UVs, and optional local texture candidates.
 				wi::renderer::SetForceUnlit(true);
 			}
 			renderPath = std::make_unique<NmfPreviewCaptureRenderPath>(std::move(nmfCapturePaths),
-				nmfPreviewCameraTarget, nmfPreviewCameraDistance);
+			nmfPreviewCameraTarget, nmfPreviewCameraDistance, nmfCaptureZoom,
+			nmfCaptureElevationDegrees);
 		}
 		else
 		{

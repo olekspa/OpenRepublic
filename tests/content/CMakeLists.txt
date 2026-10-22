@@ -33,6 +33,13 @@ target_link_libraries(OpenRepublicMtlDependencyTests PRIVATE OpenRepublicContent
 target_compile_features(OpenRepublicMtlDependencyTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicMtlDependencyTests COMMAND OpenRepublicMtlDependencyTests)
 
+add_executable(OpenRepublicMtlPreviewTextureTests
+    mtl_preview_texture_tests.cpp
+)
+target_link_libraries(OpenRepublicMtlPreviewTextureTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicMtlPreviewTextureTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicMtlPreviewTextureTests COMMAND OpenRepublicMtlPreviewTextureTests)
+
 add_executable(OpenRepublicNmfHeaderTests
     nmf_header_tests.cpp
 )

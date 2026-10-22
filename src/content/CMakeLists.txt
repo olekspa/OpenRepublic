@@ -2,6 +2,7 @@ add_library(OpenRepublicContent STATIC
     glb_container.cpp
     mtl_dependencies.cpp
     mtl_preview_color.cpp
+    mtl_preview_texture.cpp
     mtl_submaterial_binding.cpp
     mtl_syntax.cpp
     nmf_geometry.cpp

@@ -1,4 +1,5 @@
 #include "OpenRepublicApplication.h"
+#include "openrepublic/content/mtl_dependencies.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -12,6 +13,7 @@
 #include <optional>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -80,8 +82,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::filesystem::path sceneProbePath;
 	std::filesystem::path glbProbePath;
 	std::filesystem::path nmfProbePath;
+	std::vector<std::filesystem::path> nmfTextureRoots;
 	bool nmfUnlitPreview = false;
+	bool nmfMaterialUnlitPreview = false;
 	std::vector<std::filesystem::path> nmfCapturePaths;
+	double nmfCaptureZoom = 1.0;
+	bool nmfCaptureZoomArgumentSeen = false;
+	std::optional<double> nmfCaptureElevationDegrees;
+	bool nmfCaptureElevationArgumentSeen = false;
 	std::filesystem::path terrainProbePath;
 	std::optional<openrepublic::content::TerrainTransform> terrainProbeTransform;
 	std::string terrainProbeTransformError;
@@ -103,9 +111,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			{
 				nmfProbePath = arguments[++i];
 			}
+			else if (std::wstring_view(arguments[i]) == L"--nmf-texture-root")
+			{
+				if (i + 1 >= argumentCount)
+				{
+					nmfCaptureArgumentError = "--nmf-texture-root requires an absolute local content directory";
+					continue;
+				}
+				if (nmfTextureRoots.size() >= openrepublic::content::MaxMtlDependencyRoots)
+				{
+					nmfCaptureArgumentError = "--nmf-texture-root may be supplied at most 32 times";
+					++i;
+					continue;
+				}
+				nmfTextureRoots.emplace_back(arguments[++i]);
+			}
 			else if (std::wstring_view(arguments[i]) == L"--nmf-unlit-preview")
 			{
 				nmfUnlitPreview = true;
+			}
+			else if (std::wstring_view(arguments[i]) == L"--nmf-material-unlit-preview")
+			{
+				nmfMaterialUnlitPreview = true;
 			}
 			else if (std::wstring_view(arguments[i]) == L"--capture-preview")
 			{
@@ -114,13 +141,63 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 					nmfCaptureArgumentError = "--capture-preview requires an absolute output .png path";
 					continue;
 				}
-				if (nmfCapturePaths.size() >= 3)
+				if (nmfCapturePaths.size() >= 11)
 				{
-					nmfCaptureArgumentError = "--capture-preview may be supplied at most three times";
+					nmfCaptureArgumentError = "--capture-preview may be supplied at most eleven times";
 					++i;
 					continue;
 				}
 				nmfCapturePaths.emplace_back(arguments[++i]);
+			}
+			else if (std::wstring_view(arguments[i]) == L"--capture-preview-zoom")
+			{
+				if (nmfCaptureZoomArgumentSeen)
+				{
+					nmfCaptureArgumentError = "--capture-preview-zoom may only be supplied once";
+					if (i + 1 < argumentCount)
+					{
+						++i;
+					}
+					continue;
+				}
+				nmfCaptureZoomArgumentSeen = true;
+				if (i + 1 >= argumentCount)
+				{
+					nmfCaptureArgumentError = "--capture-preview-zoom requires a finite factor from 0.5 through 2.5";
+					continue;
+				}
+				double zoom = 0.0;
+				if (!ParseFiniteDouble(arguments[++i], zoom) || zoom < 0.5 || zoom > 2.5)
+				{
+					nmfCaptureArgumentError = "--capture-preview-zoom requires a finite factor from 0.5 through 2.5";
+					continue;
+				}
+				nmfCaptureZoom = zoom;
+			}
+			else if (std::wstring_view(arguments[i]) == L"--capture-preview-elevation")
+			{
+				if (nmfCaptureElevationArgumentSeen)
+				{
+					nmfCaptureArgumentError = "--capture-preview-elevation may only be supplied once";
+					if (i + 1 < argumentCount)
+					{
+						++i;
+					}
+					continue;
+				}
+				nmfCaptureElevationArgumentSeen = true;
+				if (i + 1 >= argumentCount)
+				{
+					nmfCaptureArgumentError = "--capture-preview-elevation requires finite degrees from 0 through 60";
+					continue;
+				}
+				double elevation = 0.0;
+				if (!ParseFiniteDouble(arguments[++i], elevation) || elevation < 0.0 || elevation > 60.0)
+				{
+					nmfCaptureArgumentError = "--capture-preview-elevation requires finite degrees from 0 through 60";
+					continue;
+				}
+				nmfCaptureElevationDegrees = elevation;
 			}
 			else if (std::wstring_view(arguments[i]) == L"--terrain-probe" && i + 1 < argumentCount)
 			{
@@ -180,13 +257,53 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		}
 		LocalFree(arguments);
 	}
-	if (nmfUnlitPreview && (nmfProbePath.empty() || nmfCapturePaths.empty()))
+	if (nmfCaptureArgumentError.empty())
 	{
-		nmfCaptureArgumentError = "--nmf-unlit-preview requires --nmf-probe <local.nmf> and at least one --capture-preview output";
+		for (const auto& root : nmfTextureRoots)
+		{
+			std::error_code rootError;
+			if (!root.is_absolute() || !std::filesystem::is_directory(root, rootError) || rootError)
+			{
+				nmfCaptureArgumentError = "--nmf-texture-root requires an existing absolute local content directory";
+				break;
+			}
+		}
 	}
-	else if (nmfUnlitPreview && !terrainProbePath.empty())
+	if (nmfCaptureArgumentError.empty())
 	{
-		nmfCaptureArgumentError = "--nmf-unlit-preview cannot be combined with --terrain-probe";
+		if ((nmfCaptureZoomArgumentSeen || nmfCaptureElevationArgumentSeen) && nmfCapturePaths.empty())
+		{
+			nmfCaptureArgumentError = "capture-preview camera controls require at least one --capture-preview output";
+		}
+		else if (nmfUnlitPreview && (nmfProbePath.empty() || nmfCapturePaths.empty()))
+		{
+			nmfCaptureArgumentError = "--nmf-unlit-preview requires --nmf-probe <local.nmf> and at least one --capture-preview output";
+		}
+		else if (!nmfTextureRoots.empty() && nmfProbePath.empty())
+		{
+			nmfCaptureArgumentError = "--nmf-texture-root requires --nmf-probe <local.nmf>";
+		}
+		else if (!nmfTextureRoots.empty() && nmfUnlitPreview)
+		{
+			nmfCaptureArgumentError = "--nmf-texture-root cannot be combined with --nmf-unlit-preview";
+		}
+		else if (nmfMaterialUnlitPreview &&
+			(nmfProbePath.empty() || nmfCapturePaths.empty()))
+		{
+			nmfCaptureArgumentError = "--nmf-material-unlit-preview requires --nmf-probe <local.nmf> and at least one --capture-preview output";
+		}
+		else if (nmfMaterialUnlitPreview && nmfUnlitPreview)
+		{
+			nmfCaptureArgumentError = "--nmf-material-unlit-preview cannot be combined with --nmf-unlit-preview";
+		}
+		else if (nmfMaterialUnlitPreview && !terrainProbePath.empty())
+		{
+			nmfCaptureArgumentError = "--nmf-material-unlit-preview cannot be combined with --terrain-probe";
+		}
+		else if (nmfUnlitPreview && !terrainProbePath.empty())
+		{
+			nmfCaptureArgumentError = "--nmf-unlit-preview cannot be combined with --terrain-probe";
+		}
 	}
 	if (terrainTransformArgumentSeen && terrainProbePath.empty() && terrainProbeTransformError.empty())
 	{
@@ -252,7 +369,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));
 	application.SetNmfProbePath(std::move(nmfProbePath));
+	application.SetNmfTextureRoots(std::move(nmfTextureRoots));
 	application.SetNmfUnlitPreview(nmfUnlitPreview);
+	application.SetNmfMaterialUnlitPreview(nmfMaterialUnlitPreview);
+	application.SetNmfCaptureZoom(static_cast<float>(nmfCaptureZoom));
+	if (nmfCaptureElevationDegrees.has_value())
+	{
+		application.SetNmfCaptureElevationDegrees(
+			static_cast<float>(*nmfCaptureElevationDegrees));
+	}
 	const bool nmfCaptureMode = !nmfCapturePaths.empty();
 	application.SetNmfCapturePaths(std::move(nmfCapturePaths));
 	application.SetTerrainProbePath(std::move(terrainProbePath));

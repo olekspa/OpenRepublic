@@ -368,3 +368,14 @@ Only these tracked project files were modified for the current M0 increment: `sr
 - No geometry, axis, winding, normal, or material correction was made because a target-matched same-model reference remains unavailable. The latest isolated ModelViewer attempt failed before loading the model with an incomplete relative resource tree; it did not modify the Steam installation. The earlier independent UI observation of ModelViewer rendering a building with its MTL does not substitute for a retained matched-view reference image.
 - **VERIFIED — Windows Release client:** build succeeded and full CTest passed **14/14**. **Headless Release:** build succeeded and full CTest passed **13/13**. Build and test sequences ran sequentially after the final source edit.
 - **UNKNOWN — visual acceptance:** topology, source axes, winding, dimensions, recognition, and material fidelity remain unverified. **PUBLICATION GATE — D-005:** the asset-reading runtime remains local and unpublished; no source assets or captures were added to Git.
+
+## Continuation — private reference and capture integration (21 October 2026)
+
+- A private same-input ModelViewer reference is available for qualitative inspection. It is not camera- or bounds-matched to OpenRepublic, so geometry, orientation, and material fidelity remain **UNKNOWN**.
+- Developer-only capture controls now support up to eleven views with optional camera zoom and elevation. With no overrides, the existing camera directions remain unchanged. Neutral and material-preserving unlit diagnostics remain capture-only.
+- A fresh lower-pitch comparison completed in neutral and material-preserving unlit modes with depth validation passing for each requested view. The captures support capture-path operation only; they remain unmatched to the reference and do not establish fidelity.
+- The geometry audit now distinguishes regular, neutral-unlit, and material-unlit modes; a fresh capture confirmed the label and nonzero depth record.
+- **VERIFIED — Windows Release source/build/test:** the client build succeeded and CTest passed **15/15**; the headless build succeeded and CTest passed **14/14**, sequentially after the capture-path changes. Captures and model-derived data remain private and outside Git.
+- The local texture preview remains an experiment: slot-to-map and slot-to-UV relationships are inferred, not accepted source behavior. No geometry or material correction is justified by the unmatched comparison.
+- **PUBLICATION GATE — D-005:** keep the asset-reading runtime local and unpublished pending rights-holder clarification or appropriate legal review. No original game file or save was modified.
+- Next: use the adjustable capture view for a more comparable reference frame, then make only render-path changes supported by that comparison.
