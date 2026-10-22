@@ -1,5 +1,6 @@
 #include "openrepublic/content/road_network.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -9,6 +10,8 @@ namespace {
 
 constexpr std::size_t kNodeBlockBytes = 0x48;
 constexpr std::size_t kHeaderBytes = 12;
+constexpr std::size_t kSegmentHeaderBytes = 0x88;
+constexpr std::uint32_t kMaxSegmentCollectionCount = 1u << 20;
 
 bool Fail(std::string* error, const std::string& message) {
     if (error) *error = message;
@@ -27,12 +30,157 @@ float ReadF32(std::string_view bytes, std::size_t offset) {
     return value;
 }
 
+bool SkipRecords(std::string_view bytes, std::size_t& offset, std::uint32_t count,
+                 std::size_t stride) {
+    if (offset > bytes.size() || count > kMaxSegmentCollectionCount) return false;
+    if (stride != 0 && static_cast<std::size_t>(count) > (bytes.size() - offset) / stride)
+        return false;
+    const std::size_t amount = static_cast<std::size_t>(count) * stride;
+    offset += amount;
+    return true;
+}
+
+std::optional<std::uint32_t> SharedTypeForSegment(const RoadNetwork& network,
+                                                  std::uint32_t nodeA,
+                                                  std::uint32_t nodeB,
+                                                  std::uint32_t segmentIndex) {
+    const auto find = [&](std::uint32_t from, std::uint32_t to) -> std::optional<std::uint32_t> {
+        const auto& node = network.nodes[from];
+        for (std::size_t i = 0; i < node.neighbors.size(); ++i) {
+            if (node.neighbors[i] == to && i < node.segmentIds.size() &&
+                node.segmentIds[i] == segmentIndex && i < node.typeIds.size())
+                return node.typeIds[i];
+        }
+        return std::nullopt;
+    };
+    const auto a = find(nodeA, nodeB);
+    const auto b = find(nodeB, nodeA);
+    return a && b && *a == *b ? a : std::nullopt;
+}
+
+bool DecodeSegments(std::string_view bytes, std::size_t& offset, RoadNetwork& network,
+                    std::string* error) {
+    network.segments.reserve(network.segmentCount);
+    for (std::uint32_t i = 0; i < network.segmentCount; ++i) {
+        if (offset > bytes.size() || kSegmentHeaderBytes > bytes.size() - offset)
+            return Fail(error, "road segment " + std::to_string(i) + " header is truncated");
+
+        const std::size_t header = offset;
+        const std::uint32_t pointCount = ReadU32(bytes, header);
+        const std::uint32_t nodeA = ReadU32(bytes, header + 4);
+        const std::uint32_t nodeB = ReadU32(bytes, header + 8);
+        if (nodeA >= network.nodes.size() || nodeB >= network.nodes.size())
+            return Fail(error, "road segment " + std::to_string(i) + " references a missing node");
+        if (pointCount > MaxRoadPolylinePoints)
+            return Fail(error, "road segment " + std::to_string(i) + " point count exceeds the limit");
+
+        // This family serializes a 0xcc-byte prefix followed by three arrays
+        // sized from a runtime vector that is not represented by an on-disk
+        // count. Stop before it; searching for a later header would be unsafe.
+        if (ReadU32(bytes, header + 0x34) != 0) {
+            network.segmentGeometryDiagnostic =
+                "segment " + std::to_string(i) + " has an opaque nested-vector payload at header +0x34";
+            network.unparsedSegmentCount = network.segmentCount - i;
+            return true;
+        }
+
+        // The writer emits the point records after the preceding segment
+        // collections. All lengths here are explicit header counts.
+        std::size_t cursor = header + kSegmentHeaderBytes;
+        const auto skip = [&](std::size_t& pos, std::size_t countOffset, std::size_t stride) {
+            return SkipRecords(bytes, pos, ReadU32(bytes, header + countOffset), stride);
+        };
+        if (!skip(cursor, 0x0c, 4) || !skip(cursor, 0x24, 0x2c0) ||
+            !skip(cursor, 0x28, 0x2c0) || !skip(cursor, 0x2c, 0x2c0) ||
+            !skip(cursor, 0x30, 0x14))
+            return Fail(error, "road segment " + std::to_string(i) + " has a truncated or excessive prefix");
+
+        if (!SkipRecords(bytes, cursor, pointCount, 0x18))
+            return Fail(error, "road segment " + std::to_string(i) + " polyline is truncated");
+        const std::size_t pointsOffset = cursor - static_cast<std::size_t>(pointCount) * 0x18;
+
+        RoadSegment segment;
+        segment.nodeA = nodeA;
+        segment.nodeB = nodeB;
+        segment.typeId = SharedTypeForSegment(network, nodeA, nodeB, i);
+        segment.polyline.reserve(pointCount);
+        for (std::uint32_t p = 0; p < pointCount; ++p) {
+            const std::size_t pos = pointsOffset + static_cast<std::size_t>(p) * 0x18;
+            RoadPoint point{ReadF32(bytes, pos), ReadF32(bytes, pos + 4), ReadF32(bytes, pos + 8)};
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
+                return Fail(error, "road segment " + std::to_string(i) + " has a non-finite point");
+            segment.polyline.push_back(point);
+        }
+        network.segments.push_back(std::move(segment));
+
+        // Continue past the remaining fixed-stride collections to the next
+        // segment. The +0x85 conditional collection is not safely skippable:
+        // its serialized byte count is a truncated char-sized value.
+        const std::size_t familyCounts[] = {0x10, 0x1c, 0x20, 0x14, 0x18, 0x80};
+        bool tailOk = true;
+        for (const std::size_t countOffset : familyCounts)
+            tailOk = tailOk && skip(cursor, countOffset, 0x30);
+        tailOk = tailOk && skip(cursor, 0x70, 4) && skip(cursor, 0x74, 4) &&
+                 SkipRecords(bytes, cursor, ReadU32(bytes, header + 0x7c), 1);
+        if (!tailOk)
+            return Fail(error, "road segment " + std::to_string(i) + " has a truncated or excessive tail");
+        if (static_cast<unsigned char>(bytes[header + 0x85]) != 0) {
+            network.segmentGeometryDiagnostic =
+                "segment " + std::to_string(i) + " has an unsupported conditional tail at header +0x85";
+            network.unparsedSegmentCount = network.segmentCount - i - 1;
+            return true;
+        }
+        if (!SkipRecords(bytes, cursor, 6, 4))
+            return Fail(error, "road segment " + std::to_string(i) + " trailing vectors are truncated");
+        offset = cursor;
+    }
+    network.segmentGeometryComplete = true;
+    network.unparsedSegmentCount = 0;
+    return true;
+}
+
 } // namespace
+
+std::vector<RoadPoint> SampleRoadPolyline(const std::vector<RoadPoint>& polyline,
+                                         std::size_t sampleCount) {
+    if (polyline.empty() || sampleCount == 0) return {};
+    if (sampleCount == 1 || polyline.size() == 1) return {polyline.front()};
+
+    std::vector<double> cumulative(polyline.size(), 0.0);
+    for (std::size_t i = 1; i < polyline.size(); ++i) {
+        const double dx = static_cast<double>(polyline[i].x) - polyline[i - 1].x;
+        const double dy = static_cast<double>(polyline[i].y) - polyline[i - 1].y;
+        const double dz = static_cast<double>(polyline[i].z) - polyline[i - 1].z;
+        cumulative[i] = cumulative[i - 1] + std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    const double total = cumulative.back();
+    if (!(total > 0.0)) return std::vector<RoadPoint>(sampleCount, polyline.front());
+
+    std::vector<RoadPoint> samples;
+    samples.reserve(sampleCount);
+    std::size_t segment = 1;
+    for (std::size_t i = 0; i < sampleCount; ++i) {
+        const double distance = total * static_cast<double>(i) / static_cast<double>(sampleCount - 1);
+        while (segment + 1 < cumulative.size() && cumulative[segment] < distance) ++segment;
+        const double span = cumulative[segment] - cumulative[segment - 1];
+        const double t = span > 0.0 ? (distance - cumulative[segment - 1]) / span : 0.0;
+        const auto lerp = [t](float a, float b) {
+            return static_cast<float>(static_cast<double>(a) +
+                                      (static_cast<double>(b) - a) * t);
+        };
+        samples.push_back({lerp(polyline[segment - 1].x, polyline[segment].x),
+                           lerp(polyline[segment - 1].y, polyline[segment].y),
+                           lerp(polyline[segment - 1].z, polyline[segment].z)});
+    }
+    return samples;
+}
 
 bool ExtractRoadNetwork(std::string_view bytes, RoadNetwork& output, std::string* error) {
     if (bytes.size() < kHeaderBytes) return Fail(error, "road file is shorter than its header");
     const std::uint32_t nodeCount = ReadU32(bytes, 0);
     if (nodeCount > MaxRoadNodes) return Fail(error, "road node count exceeds the limit");
+    if (ReadU32(bytes, 4) > MaxRoadSegments)
+        return Fail(error, "road segment count exceeds the limit");
 
     RoadNetwork candidate;
     candidate.segmentCount = ReadU32(bytes, 4);
@@ -88,6 +236,8 @@ bool ExtractRoadNetwork(std::string_view bytes, RoadNetwork& output, std::string
             if (!reverse) ++candidate.asymmetricLinks;
         }
     }
+
+    if (!DecodeSegments(bytes, offset, candidate, error)) return false;
 
     output = std::move(candidate);
     if (error) error->clear();
