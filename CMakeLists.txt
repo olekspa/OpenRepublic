@@ -14,6 +14,7 @@ add_subdirectory(src/sim)
 add_subdirectory(src/agent_api)
 add_subdirectory(src/content)
 add_subdirectory(src/economy)
+add_subdirectory(src/compat)
 add_subdirectory(src/economy_api)
 
 # The stdio Agent API adapter reuses the same MIT-licensed JSON header pinned
@@ -79,6 +80,7 @@ if(OPENREPUBLIC_BUILD_TESTS)
     add_subdirectory(tests/agent_api)
     add_subdirectory(tests/content)
     add_subdirectory(tests/economy)
+    add_subdirectory(tests/compat)
     add_subdirectory(tests/economy_api)
 
     if(OPENREPUBLIC_AGENT_HOST_AVAILABLE)
