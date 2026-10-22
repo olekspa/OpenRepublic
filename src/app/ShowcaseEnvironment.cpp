@@ -473,16 +473,16 @@ namespace openrepublic::preview
 		const XMFLOAT3 meadow(0.22f, 0.30f, 0.09f);
 		const XMFLOAT3 dry(0.34f, 0.31f, 0.14f);
 		const XMFLOAT3 forestFloor(0.055f, 0.105f, 0.045f);
-		const XMFLOAT3 rock(0.30f, 0.28f, 0.25f);
+		const XMFLOAT3 rock(0.26f, 0.25f, 0.23f);
 		const XMFLOAT3 snow(0.78f, 0.80f, 0.84f);
 		const XMFLOAT3 sand(0.40f, 0.35f, 0.24f);
 
 		XMFLOAT3 color = Mix(lush, meadow, SmoothStep(0.3f, 0.7f, broad));
 		color = Mix(color, dry, std::clamp((broad - 0.55f) * 2.0f + elevation * 0.3f, 0.0f, 0.55f));
 		color = Mix(color, forestFloor, forest * 0.9f);
-		const float rockMask = std::max(SmoothStep(0.42f, 0.85f, slope), SmoothStep(0.30f, 0.55f, elevation + (fine - 0.5f) * 0.1f));
+		const float rockMask = std::max(SmoothStep(0.42f, 0.85f, slope), SmoothStep(0.46f, 0.72f, elevation + (fine - 0.5f) * 0.1f));
 		color = Mix(color, rock, rockMask);
-		color = Mix(color, snow, SmoothStep(0.72f, 0.86f, elevation + (fine - 0.5f) * 0.05f) * (1.0f - SmoothStep(0.5f, 0.9f, slope)));
+		color = Mix(color, snow, SmoothStep(0.80f, 0.95f, elevation + (fine - 0.5f) * 0.05f) * (1.0f - SmoothStep(0.5f, 0.9f, slope)));
 		if (data.hasWater)
 		{
 			color = Mix(color, sand, 1.0f - SmoothStep(data.waterLevel + 0.3f, data.waterLevel + 2.6f, height));
