@@ -25,6 +25,12 @@ float ReadF32(std::string_view bytes, std::size_t offset) {
     std::memcpy(&value, bytes.data() + offset, sizeof(value));
     return value;
 }
+
+std::int32_t ReadI32(std::string_view bytes, std::size_t offset) {
+    std::int32_t value = 0;
+    std::memcpy(&value, bytes.data() + offset, sizeof(value));
+    return value;
+}
 } // namespace
 
 bool ExtractLinearNetwork(std::string_view bytes, LinearNetwork& output, std::string* error) {
@@ -70,7 +76,22 @@ bool ExtractLinearNetwork(std::string_view bytes, LinearNetwork& output, std::st
                 return Fail(error, "linear network node " + std::to_string(i) + " arrays are truncated");
             words += static_cast<std::size_t>(counts[c]) * multiplier;
         }
-        std::size_t cursor = offset + kNodeBlockBytes + static_cast<std::size_t>(counts[4]) * 12;
+        std::size_t cursor = offset + kNodeBlockBytes;
+        // OBSERVED static read/write layout: three parallel int32 arrays,
+        // each with counts[4] entries, precede the four existing link arrays.
+        // Only the first array is known to index the source building table;
+        // opaqueA/opaqueB and placement-scanner correspondence stay unknown.
+        node.buildingReferences.reserve(counts[4]);
+        const std::size_t referenceBytes = static_cast<std::size_t>(counts[4]) * 12;
+        const std::size_t referencesEnd = cursor + referenceBytes;
+        for (std::uint32_t j = 0; j < counts[4]; ++j) {
+            LinearNetworkBuildingReference reference;
+            reference.buildingIndex = ReadI32(bytes, cursor + static_cast<std::size_t>(j) * 4);
+            reference.opaqueA = ReadI32(bytes, cursor + static_cast<std::size_t>(counts[4] + j) * 4);
+            reference.opaqueB = ReadI32(bytes, cursor + static_cast<std::size_t>(counts[4] * 2u + j) * 4);
+            node.buildingReferences.push_back(reference);
+        }
+        cursor = referencesEnd;
         for (std::size_t array = 0; array < 4; ++array) {
             node.links[array].reserve(counts[array]);
             for (std::uint32_t j = 0; j < counts[array]; ++j, cursor += 4)
@@ -147,6 +168,51 @@ bool ExtractPowerLinePolylineCandidates(
             }
         }
         candidate.push_back(std::move(line));
+    }
+
+    output = std::move(candidate);
+    if (error) error->clear();
+    return true;
+}
+
+bool ExtractNetworkBuildingAttachmentCandidates(
+    const LinearNetwork& network, std::size_t placementCount,
+    std::vector<NetworkBuildingAttachmentCandidate>& output,
+    std::string* error) {
+    if (placementCount > MaxLinearNetworkNodes)
+        return Fail(error, "network placement count exceeds the limit");
+    if (network.nodes.size() > MaxLinearNetworkNodes)
+        return Fail(error, "linear network node count exceeds the limit");
+
+    std::size_t referenceCount = 0;
+    for (std::size_t i = 0; i < network.nodes.size(); ++i) {
+        const auto& node = network.nodes[i];
+        if (!std::isfinite(node.x) || !std::isfinite(node.y) || !std::isfinite(node.z))
+            return Fail(error, "linear network node " + std::to_string(i) +
+                                   " has a non-finite position");
+        if (std::abs(node.x) > MaxLinearNetworkWorldCoordinate ||
+            std::abs(node.y) > MaxLinearNetworkWorldCoordinate ||
+            std::abs(node.z) > MaxLinearNetworkWorldCoordinate)
+            return Fail(error, "linear network node " + std::to_string(i) +
+                                   " is outside the world bounds");
+        if (node.buildingReferences.size() > MaxLinearNetworkNodes - referenceCount)
+            return Fail(error, "linear network building-reference count exceeds the limit");
+        referenceCount += node.buildingReferences.size();
+    }
+
+    std::vector<NetworkBuildingAttachmentCandidate> candidate;
+    candidate.reserve(referenceCount);
+    for (std::size_t nodeIndex = 0; nodeIndex < network.nodes.size(); ++nodeIndex) {
+        for (const auto& reference : network.nodes[nodeIndex].buildingReferences) {
+            if (reference.buildingIndex < 0 ||
+                static_cast<std::size_t>(reference.buildingIndex) >= placementCount) {
+                return Fail(error, "linear network node " + std::to_string(nodeIndex) +
+                                       " has an invalid source building index");
+            }
+            candidate.push_back({static_cast<std::uint32_t>(nodeIndex),
+                                 static_cast<std::uint32_t>(reference.buildingIndex),
+                                 reference.opaqueA, reference.opaqueB});
+        }
     }
 
     output = std::move(candidate);

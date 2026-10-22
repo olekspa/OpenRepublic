@@ -324,6 +324,29 @@ struct UtilityConnectionSnapshot {
     BuildingId a{};
     BuildingId b{};
 };
+/** Exact unsigned amount used by utility diagnostics; decimal formatting is portable to MSVC. */
+struct UtilityAmount {
+    std::uint64_t low{};
+    std::uint64_t high{};
+};
+std::string FormatUtilityAmount(UtilityAmount amount);
+/** Last-tick measurement for one connected utility component. These observations are not world state. */
+struct UtilityNetworkDiagnostic {
+    ResourceId resource{};
+    BuildingId component{};
+    std::vector<BuildingId> members;
+    UtilityAmount generated;
+    UtilityAmount requested;
+    UtilityAmount consumed;
+    UtilityAmount unused;
+    std::uint64_t starvedRecipes{};
+};
+/** A copy of the most recent completed utility production phase, if one exists. */
+struct UtilityDiagnostics {
+    bool available{};
+    std::uint64_t tick{};
+    std::vector<UtilityNetworkDiagnostic> networks;
+};
 struct WorldSnapshot {
     std::uint32_t gridWidth{};
     std::uint32_t gridDepth{};
@@ -396,6 +419,12 @@ public:
     WorldSnapshot Snapshot() const;
     /** Returns the current disabled, missing-input, output-full, or running explanation. */
     StallRecord Explain(BuildingId building) const;
+    /** Returns last-tick utility observations. Demand includes only enabled recipes whose stock inputs and output
+     * room were available when visited. With atomic multi-utility recipes, each network can show requested demand
+     * even when another required network is short. starvedRecipes counts eligible recipes that lacked this
+     * network's utility; one atomic recipe may be counted in more than one network. The copy is unavailable before
+     * a utility tick and after load or catalog replacement; receipts are excluded from saves and state hashes. */
+    UtilityDiagnostics QueryUtilityDiagnostics() const;
     /** Returns the fixed simulation tick count. */
     std::uint64_t Tick() const noexcept;
     /** Returns the monotonically increasing state revision. */

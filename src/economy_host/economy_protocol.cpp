@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <limits>
 #include <random>
+#include <optional>
 #include <queue>
 #include <set>
 #include <unordered_set>
@@ -109,13 +110,16 @@ bool Parse(std::string_view line, Json &json, std::string &code, std::string &me
   return true;
 }
 
-bool Fields(const Json &object, std::initializer_list<const char *> names, std::string &error) {
+bool Fields(const Json &object, std::initializer_list<const char *> names, std::string &error,
+            std::initializer_list<const char *> optionalNames = {}) {
   if (!object.is_object()) {
     error = "request must be a JSON object";
     return false;
   }
   std::set<std::string> allowed{"id", "protocolVersion", "method", "sessionId"};
   for (const auto *name : names)
+    allowed.emplace(name);
+  for (const auto *name : optionalNames)
     allowed.emplace(name);
   for (auto it = object.begin(); it != object.end(); ++it)
     if (!allowed.count(it.key())) {
@@ -428,6 +432,8 @@ std::string Action(economy_api::Action action) {
     return "connect_utility";
   case A::DisconnectUtility:
     return "disconnect_utility";
+  case A::QueryUtilityDiagnostics:
+    return "query_utility_diagnostics";
   case A::PollCommand:
     return "poll_command";
   case A::ReadEvents:
@@ -636,7 +642,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
       return invalid(message);
     const Json roles = Json::array({"observer", "controller"}), control = Json::array({"controller"});
     Json methods = Json::array();
-    for (const char *name : {"hello", "capabilities", "catalog", "world", "explain", "advise", "rules_history", "poll", "events", "begin_checkpoint", "read_checkpoint"})
+    for (const char *name : {"hello", "capabilities", "catalog", "world", "utility_diagnostics", "explain", "advise", "rules_history", "poll", "events", "begin_checkpoint", "read_checkpoint"})
       methods.push_back(Json{{"name", name}, {"roles", roles}});
     for (const char *name : {"submit", "step", "compact_history"})
       methods.push_back(Json{{"name", name}, {"roles", control}});
@@ -656,6 +662,8 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                                {"maxJsonNodes", MaxJsonNodes},
                                {"maxStepTicks", economy_api::MaxStepTicks},
                                {"maxEntityPageSize", economy_api::MaxEntityPageSize},
+                               {"maxUtilityDiagnosticsPageSize", economy_api::MaxUtilityDiagnosticsPageSize},
+                               {"maxUtilityDiagnosticMembers", economy_api::MaxUtilityDiagnosticMembers},
                                {"maxEventPageSize", economy_api::MaxEventPageSize},
                                {"maxCheckpointBytes", MaxCheckpointBytes},
                                {"maxCheckpointChunkBytes", MaxCheckpointChunkBytes},
@@ -744,6 +752,52 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                    {"hasMore", q.page.hasMore},
                    {"entities", entities}};
       }
+    }
+  } else if (method == "utility_diagnostics") {
+    if (!Fields(req, {"revision", "offset", "limit"}, message, {"buildingId"}))
+      return invalid(message);
+    std::uint64_t revision{}, offset{}, limit{}, buildingIdValue{};
+    std::optional<economy::BuildingId> buildingId;
+    if (!U64(req, "revision", revision, message) ||
+        !Unsigned(req, "offset", UINT32_MAX, offset, message) ||
+        !Unsigned(req, "limit", economy_api::MaxUtilityDiagnosticsPageSize, limit, message))
+      return invalid(message);
+    if (req.contains("buildingId")) {
+      if (!Unsigned(req, "buildingId", UINT32_MAX, buildingIdValue, message))
+        return invalid(message);
+      buildingId = static_cast<economy::BuildingId>(buildingIdValue);
+    }
+    const auto diagnostics = api_->QueryUtilityDiagnostics(revision,
+        static_cast<std::size_t>(offset), static_cast<std::size_t>(limit), buildingId);
+    if (diagnostics.error != economy_api::ErrorCode::None) {
+      out = Json{{"errorCode", Error(diagnostics.error)}};
+    } else {
+      Json networks = Json::array();
+      for (const auto &network : diagnostics.networks) {
+        Json members = Json::array();
+        for (const auto member : network.members)
+          members.push_back(member);
+        networks.push_back(Json{{"resource", network.resource},
+                                {"component", network.component},
+                                {"members", members},
+                                {"memberCount", network.memberCount},
+                                {"membersComplete", network.membersComplete},
+                                {"generated", network.generated},
+                                {"requested", network.requested},
+                                {"consumed", network.consumed},
+                                {"unused", network.unused},
+                                {"starvedRecipes", std::to_string(network.starvedRecipes)}});
+      }
+      out = Json{{"errorCode", "none"},
+                 {"available", diagnostics.available},
+                 {"tick", std::to_string(diagnostics.tick)},
+                 {"revision", std::to_string(diagnostics.revision)},
+                 {"offset", diagnostics.offset},
+                 {"total", diagnostics.total},
+                 {"hasMore", diagnostics.hasMore},
+                 {"networks", networks}};
+      if (buildingId)
+        out["buildingId"] = *buildingId;
     }
   } else if (method == "explain") {
     if (!Fields(req, {"buildingId"}, message))

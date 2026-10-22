@@ -73,6 +73,33 @@ Catalog queries mark resource kinds with `utility`. World queries include
 existing revision/offset/limit contract. Logistics advice does not propose utility
 cargo hauls. Controller action discovery advertises both new commands.
 
+## Measured utility flow
+
+After each completed simulation tick, `World::QueryUtilityDiagnostics()` returns
+the last tick's measured network flows. The `available` flag is false before the
+first measurement and after loading/restoring a world or replacing its catalog;
+advance one tick to obtain a new measurement. These observations are runtime
+diagnostics only: they are excluded from the state hash and native save.
+
+Each resource/component record reports exact decimal amounts for `generated`,
+`requested`, `consumed`, and `unused`, plus `starvedRecipes`. Generated supply is
+the amount actually committed by generators; `generated = consumed + unused`.
+Requested demand counts enabled recipes whose material inputs and material output
+room were eligible at their turn in deterministic production order. Consumers
+short on utility are included in requested demand and counted as starved. A recipe
+short on multiple utility inputs increments the starved count for each short
+resource network, while its existing stall receipt retains the first missing
+resource in recipe input order. Components include connected relay buildings;
+the component ID is its lowest building ID.
+
+Typed callers use `EconomyApi::QueryUtilityDiagnostics(expectedRevision, offset,
+limit, optionalBuildingId)`. The page is revision-checked, limit is 1 through
+128, and an optional building filter matches full component membership before
+network paging. Each returned network includes at most 128 member IDs;
+`memberCount` gives the full count and `membersComplete` says whether the returned
+sample contains all members. This keeps large grids bounded while preserving
+filtering for any building in the component.
+
 In the desktop, choose a building using Set haul source, select a second building,
 choose the utility in the separate utility menu, then Connect utility or
 Disconnect utility. These controls reach the same C++ API in native and app-owned

@@ -10,12 +10,23 @@
 
 namespace openrepublic::content {
 
+struct LinearNetworkBuildingReference {
+    std::int32_t buildingIndex = -1;
+    std::int32_t opaqueA = 0;
+    std::int32_t opaqueB = 0;
+};
+
 struct LinearNetworkNode {
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
     // Four serialized u32 arrays retained without assigning game semantics.
     std::vector<std::uint32_t> links[4];
+    // Static read/write tracing observed three parallel signed arrays before
+    // the four links arrays. The first values index a building table; the
+    // remaining values are preserved without assigning type/flag semantics.
+    // Correspondence to scanner placement indices is not runtime-verified.
+    std::vector<LinearNetworkBuildingReference> buildingReferences;
 };
 
 struct LinearNetworkSegment {
@@ -33,6 +44,16 @@ struct PowerLinePolylineCandidate {
     std::uint32_t nodeA = 0;
     std::uint32_t nodeB = 0;
     std::vector<RoadPoint> points;
+};
+
+// Candidate attachment to a source-indexed placement table. This preserves
+// the serialized building-table index and opaque fields; it does not classify
+// the node as a pole/support or connect a simulation building automatically.
+struct NetworkBuildingAttachmentCandidate {
+    std::uint32_t nodeIndex = 0;
+    std::uint32_t buildingIndex = 0;
+    std::int32_t opaqueA = 0;
+    std::int32_t opaqueB = 0;
 };
 
 struct LinearNetwork {
@@ -65,5 +86,13 @@ bool ExtractLinearNetwork(std::string_view bytes, LinearNetwork& output,
 bool ExtractPowerLinePolylineCandidates(const LinearNetwork& network,
                                        std::vector<PowerLinePolylineCandidate>& output,
                                        std::string* error = nullptr);
+
+// Converts valid serialized building-table references into render/import
+// candidates in source order. placementCount must describe the exact source
+// building table. Invalid references, coordinates or bounds fail transactionally.
+bool ExtractNetworkBuildingAttachmentCandidates(
+    const LinearNetwork& network, std::size_t placementCount,
+    std::vector<NetworkBuildingAttachmentCandidate>& output,
+    std::string* error = nullptr);
 
 } // namespace openrepublic::content

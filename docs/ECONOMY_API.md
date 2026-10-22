@@ -6,7 +6,9 @@ world queries include `utilityConnections` and support bounded kind
 `disconnect_utility` take `resource`, `a`, `b` through the existing strict
 session/revision-bound submit/poll contract. Utility resources cannot be stored
 or hauled. Utility recipes/state/history use native world v4; material-only
-legacy v2/v3 writing remains. The checkpoint wrapper stays v1. See
+legacy v2/v3 writing remains. The checkpoint wrapper stays v1. The additive
+`utility_diagnostics` query reports last-tick flow; its observations are not
+persisted or hashed. See
 [utility contracts](UTILITY_NETWORKS.md) and the [acceptance report](DEVELOPMENT_REPORT_2026-10-22_UTILITIES.md).
 
 `OpenRepublicEconomyApi` exposes the deterministic `economy::World` and immutable
@@ -133,6 +135,23 @@ for `buildings`, `roads`, `vehicles`, or `orders`.
   vehicle capacity and speed. Recipe and storage amounts are decimal strings.
 - `world`: returns revision, tick, state hash, buildings with inventories and
   stall text, roads, vehicles, haul orders and versioned command-history metadata.
+- `utility_diagnostics`: observer/controller query for measured utility flow.
+  It requires decimal-string `revision`, integer `offset`, and integer `limit`
+  from 1 through 128; optional integer `buildingId` filters to the network
+  containing that live building. Filtering uses full membership before paging.
+  The response carries decimal-string `revision` and measurement `tick`,
+  `available`, paging fields, and networks with `resource`, `component`, sampled
+  `members`, full `memberCount`, `membersComplete`, exact decimal-string
+  `generated`, `requested`, `consumed`, `unused`, and decimal-string
+  `starvedRecipes`. At most 128 member IDs are returned per network. `available`
+  is false until the first tick measurement and after restore or catalog reload;
+  advance one tick to measure again. These observations are outside world hash
+  and save state. Requested demand includes enabled recipes with material inputs
+  and output room eligible at their production turn, including consumers that
+  lack utility. `generated` is actual committed production and equals consumed
+  plus unused supply. If a recipe lacks multiple utilities, every short resource
+  network counts it as starved, while the stall receipt keeps the first missing
+  resource in recipe input order.
 - `explain`: requires integer `buildingId`; returns current stall reason and
   explanation text.
 - `advise`: read-only for observers and controllers. Returns the snapshot's

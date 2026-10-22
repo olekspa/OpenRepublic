@@ -30,6 +30,7 @@ namespace openrepublic::preview
 			std::function<void()> toggleRoad;
 			std::function<void()> connectUtility;
 			std::function<void()> disconnectUtility;
+			std::function<void()> utilitySelectionChanged;
 		};
 
 		void Create(wi::gui::GUI& gui, const economy::Catalog& catalog, Callbacks callbacks,

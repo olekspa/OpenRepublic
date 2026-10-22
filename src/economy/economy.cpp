@@ -922,6 +922,82 @@ struct UtilityBudget {
         }
     }
 };
+void AddUtilityAmount(UtilityAmount &total, std::uint64_t amount) noexcept {
+    const auto old = total.low;
+    total.low += amount;
+    if (total.low < old)
+        ++total.high;
+}
+UtilityAmount AddUtilityAmount(UtilityAmount left, UtilityAmount right) noexcept {
+    const auto low = left.low + right.low;
+    const auto carry = low < left.low ? std::uint64_t{1} : std::uint64_t{0};
+    return {low, left.high + right.high + carry};
+}
+std::map<ResourceId, std::map<BuildingId, BuildingId>> UtilityComponents(const State &s);
+UtilityDiagnostics MakeUtilityDiagnostics(const State &s,
+                                           const std::map<UtilityBudgetKey, UtilityBudget> &budget,
+                                           const std::map<UtilityBudgetKey, UtilityAmount> &requested,
+                                           const std::map<UtilityBudgetKey, UtilityAmount> &consumed,
+                                           const std::map<UtilityBudgetKey, std::uint64_t> &starved) {
+    UtilityDiagnostics receipt;
+    receipt.available = true;
+    receipt.tick = s.tick + 1;
+
+    const auto components = UtilityComponents(s);
+    std::map<UtilityBudgetKey, std::vector<BuildingId>> membersByComponent;
+    for (const auto &resource : components)
+        for (const auto &entry : resource.second)
+            membersByComponent[{resource.first, entry.second}].push_back(entry.first);
+
+    std::set<UtilityBudgetKey> used;
+    for (const auto &edge : s.utilityConnections) {
+        const auto resource = components.find(edge.resource);
+        if (resource != components.end())
+            used.emplace(edge.resource, resource->second.at(edge.a));
+    }
+    for (const auto &building : s.buildings) {
+        const auto *type = s.catalog->BuildingType(building.type);
+        for (const auto &recipe : type->recipes) {
+            for (const auto amount : recipe.inputs) {
+                const auto *resource = s.catalog->Resource(amount.resource);
+                if (resource && resource->utility)
+                    used.emplace(amount.resource, components.at(amount.resource).at(building.id));
+            }
+            for (const auto amount : recipe.outputs) {
+                const auto *resource = s.catalog->Resource(amount.resource);
+                if (resource && resource->utility)
+                    used.emplace(amount.resource, components.at(amount.resource).at(building.id));
+            }
+        }
+    }
+    std::map<UtilityBudgetKey, std::size_t> indexByKey;
+    for (const auto &key : used) {
+        UtilityNetworkDiagnostic network;
+        network.resource = key.first;
+        network.component = key.second;
+        network.members = membersByComponent[key];
+        const auto demand = requested.find(key);
+        if (demand != requested.end())
+            network.requested = demand->second;
+        const auto shortage = starved.find(key);
+        if (shortage != starved.end())
+            network.starvedRecipes = shortage->second;
+        indexByKey.emplace(key, receipt.networks.size());
+        receipt.networks.push_back(std::move(network));
+    }
+    for (const auto &key : used) {
+        const auto found = budget.find(key);
+        if (found == budget.end())
+            continue;
+        auto &network = receipt.networks[indexByKey.at(key)];
+        network.unused = {found->second.low, found->second.high};
+        const auto debit = consumed.find(key);
+        if (debit != consumed.end())
+            network.consumed = debit->second;
+        network.generated = AddUtilityAmount(network.unused, network.consumed);
+    }
+    return receipt;
+}
 std::map<ResourceId, std::map<BuildingId, BuildingId>> UtilityComponents(const State &s) {
     std::map<ResourceId, std::map<BuildingId, BuildingId>> result;
     for (const auto &resource : s.catalog->Resources()) {
@@ -958,9 +1034,11 @@ std::map<ResourceId, std::map<BuildingId, BuildingId>> UtilityComponents(const S
 bool IsGenerator(const State &s, const RecipeDef &recipe) {
     return HasUtility(*s.catalog, recipe.outputs);
 }
-void UtilityProductionPhase(State &s) {
+UtilityDiagnostics UtilityProductionPhase(State &s) {
     const auto components = UtilityComponents(s);
     std::map<UtilityBudgetKey, UtilityBudget> budget;
+    std::map<UtilityBudgetKey, UtilityAmount> requested, consumed;
+    std::map<UtilityBudgetKey, std::uint64_t> starved;
     std::vector<bool> running(s.buildings.size()), missing(s.buildings.size()), utilityMissing(s.buildings.size()),
         full(s.buildings.size());
     std::vector<ResourceId> missingResource(s.buildings.size(), InvalidResourceId), fullResource(s.buildings.size(), InvalidResourceId);
@@ -1016,7 +1094,20 @@ void UtilityProductionPhase(State &s) {
             if (IsGenerator(s, recipe))
                 continue;
             if (HasUtility(*s.catalog, recipe.inputs)) {
+                ResourceId stockBlocked{};
+                const bool stockEligible = StockInputs(s, building, *type, recipe, stockBlocked) &&
+                                           StockRoom(s, building, *type, recipe, stockBlocked);
+                if (stockEligible) {
+                    for (const auto input : recipe.inputs) {
+                        const auto *resource = s.catalog->Resource(input.resource);
+                        if (!(resource && resource->utility))
+                            continue;
+                        const auto component = components.at(input.resource).at(building.id);
+                        AddUtilityAmount(requested[{input.resource, component}], input.amount);
+                    }
+                }
                 ResourceId unavailable = InvalidResourceId;
+                std::vector<UtilityBudgetKey> shortNetworks;
                 const auto &byBuilding = components;
                 for (const auto input : recipe.inputs) {
                     const auto *resource = s.catalog->Resource(input.resource);
@@ -1025,11 +1116,15 @@ void UtilityProductionPhase(State &s) {
                     const auto component = byBuilding.at(input.resource).at(building.id);
                     const auto found = budget.find({input.resource, component});
                     if (found == budget.end() || !found->second.Covers(input.amount)) {
-                        unavailable = input.resource;
-                        break;
+                        shortNetworks.emplace_back(input.resource, component);
+                        if (unavailable == InvalidResourceId)
+                            unavailable = input.resource;
                     }
                 }
                 if (unavailable != InvalidResourceId) {
+                    if (stockEligible)
+                        for (const auto &key : shortNetworks)
+                            ++starved[key];
                     missing[bi] = true;
                     utilityMissing[bi] = true;
                     if (missingResource[bi] == InvalidResourceId)
@@ -1054,6 +1149,7 @@ void UtilityProductionPhase(State &s) {
                     if (resource && resource->utility) {
                         const auto component = components.at(input.resource).at(building.id);
                         budget[{input.resource, component}].Consume(input.amount);
+                        AddUtilityAmount(consumed[{input.resource, component}], input.amount);
                     }
                 }
                 ConsumeStock(s, building, *type, recipe);
@@ -1119,8 +1215,9 @@ void UtilityProductionPhase(State &s) {
         else
             building.stall = {building.id, StallReason::Running, InvalidResourceId, 0};
     }
+    return MakeUtilityDiagnostics(s, budget, requested, consumed, starved);
 }
-void AdvanceTick(State &s) {
+UtilityDiagnostics AdvanceTick(State &s) {
     auto pending = std::move(s.pending);
     s.pending.clear();
     for (const auto &p : pending) {
@@ -1134,8 +1231,9 @@ void AdvanceTick(State &s) {
         for (const auto &recipe : type.recipes)
             hasUtilityRecipes = hasUtilityRecipes || HasUtility(*s.catalog, recipe.inputs) ||
                                 HasUtility(*s.catalog, recipe.outputs);
+    UtilityDiagnostics receipt;
     if (hasUtilityRecipes)
-        UtilityProductionPhase(s);
+        receipt = UtilityProductionPhase(s);
     else
         ProductionPhase(s);
     std::sort(s.orders.begin(), s.orders.end(), [](const Order &a, const Order &b) { return a.id < b.id; });
@@ -1143,6 +1241,7 @@ void AdvanceTick(State &s) {
         Haul(s, o);
     ++s.tick;
     ++s.revision;
+    return receipt;
 }
 void HashU(std::uint64_t &h, std::uint64_t x) {
     for (int i = 0; i < 8; ++i) {
@@ -1264,6 +1363,32 @@ bool AmountToken(std::string_view token, std::string &name, std::uint64_t &amoun
 }
 
 } // namespace
+
+std::string FormatUtilityAmount(UtilityAmount amount) {
+    if (amount.high == 0)
+        return std::to_string(amount.low);
+    std::string digits;
+    do {
+        std::uint64_t quotientLow = 0, quotientHigh = 0;
+        unsigned remainder = 0;
+        for (int bit = 127; bit >= 0; --bit) {
+            const bool set = bit >= 64 ? ((amount.high >> (bit - 64)) & 1U) != 0
+                                       : ((amount.low >> bit) & 1U) != 0;
+            remainder = remainder * 2U + (set ? 1U : 0U);
+            if (remainder >= 10U) {
+                remainder -= 10U;
+                if (bit >= 64)
+                    quotientHigh |= std::uint64_t{1} << (bit - 64);
+                else
+                    quotientLow |= std::uint64_t{1} << bit;
+            }
+        }
+        digits.push_back(static_cast<char>('0' + remainder));
+        amount = {quotientLow, quotientHigh};
+    } while (amount.low != 0 || amount.high != 0);
+    std::reverse(digits.begin(), digits.end());
+    return digits;
+}
 
 bool operator==(Cell a, Cell b) noexcept {
     return a.x == b.x && a.z == b.z;
@@ -1748,6 +1873,7 @@ Catalog MakeSyntheticCatalog() {
 
 struct World::Impl {
     State state;
+    UtilityDiagnostics utilityDiagnostics;
 };
 World::World(const Catalog &c, std::uint32_t w, std::uint32_t d) {
     if (!w || !d || w > MaxWorldGridSize || d > MaxWorldGridSize)
@@ -1825,6 +1951,7 @@ bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
         for (std::size_t i = 0; i < b.remaining.size(); ++i)
             b.remaining[i] = std::min(b.remaining[i], nb[b.type].recipes[i].intervalTicks);
     ++impl_->state.revision;
+    impl_->utilityDiagnostics = {};
     return true;
 }
 void SetProductionThreads(unsigned threads) noexcept {
@@ -2005,7 +2132,7 @@ StepResult World::Step(std::uint32_t n) {
               s.pending.size() > UINT64_MAX - s.revision - n))
         return {false, CommandFailure::StepLimitExceeded, "tick or revision counter exhausted"};
     for (std::uint32_t i = 0; i < n; ++i)
-        AdvanceTick(impl_->state);
+        impl_->utilityDiagnostics = AdvanceTick(impl_->state);
     return {true, CommandFailure::None, {}};
 }
 StallRecord World::Explain(BuildingId id) const {
@@ -2013,6 +2140,9 @@ StallRecord World::Explain(BuildingId id) const {
     if (!b)
         return {id, StallReason::MissingInput, InvalidResourceId, 0};
     return b->stall;
+}
+UtilityDiagnostics World::QueryUtilityDiagnostics() const {
+    return impl_->utilityDiagnostics;
 }
 WorldSnapshot World::Snapshot() const {
     const auto &s = impl_->state;
@@ -2527,6 +2657,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
             b.stall = utilityStalls.at(b.id);
     }
     target.impl_->state = std::move(s);
+    target.impl_->utilityDiagnostics = {};
     return true;
 }
 

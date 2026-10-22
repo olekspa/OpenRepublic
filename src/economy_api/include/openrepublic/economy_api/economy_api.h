@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -18,13 +19,15 @@ constexpr std::uint32_t ApiVersion = 0;
 constexpr std::size_t MaxEntityPageSize = 32;
 constexpr std::size_t MaxEventJournalEntries = 128;
 constexpr std::size_t MaxEventPageSize = 32;
+constexpr std::size_t MaxUtilityDiagnosticsPageSize = 128;
+constexpr std::size_t MaxUtilityDiagnosticMembers = 128;
 constexpr std::uint32_t MaxStepTicks = 100000;
 
 enum class Action : std::uint8_t {
     QueryWorld = 1, QueryCatalog, ExplainBuilding, Step, PlaceBuilding, RemoveBuilding,
     BuildRoad, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, CancelHaulOrder,
     PollCommand, ReadEvents, RetargetHaulOrder, ExportCheckpoint, CompactCommandHistory,
-    ConnectUtility, DisconnectUtility
+    ConnectUtility, DisconnectUtility, QueryUtilityDiagnostics
 };
 struct Permissions {
     bool query{true};
@@ -119,6 +122,15 @@ struct UtilityConnectionView {
     std::string resource;
     economy::BuildingId a{}, b{};
 };
+struct UtilityNetworkDiagnosticView {
+    std::string resource;
+    economy::BuildingId component{};
+    std::vector<economy::BuildingId> members;
+    std::size_t memberCount{};
+    bool membersComplete{};
+    std::string generated, requested, consumed, unused;
+    std::uint64_t starvedRecipes{};
+};
 struct WorldView {
     std::uint32_t apiVersion{ApiVersion};
     std::uint64_t revision{}, tick{}, stateHash{};
@@ -148,6 +160,14 @@ struct EntityPage {
 struct PageQuery {
     ErrorCode error{ErrorCode::None};
     EntityPage page;
+};
+struct UtilityDiagnosticsPage {
+    ErrorCode error{ErrorCode::None};
+    bool available{};
+    std::uint64_t tick{}, revision{};
+    std::size_t offset{}, total{};
+    bool hasMore{};
+    std::vector<UtilityNetworkDiagnosticView> networks;
 };
 struct Explanation {
     ErrorCode error{ErrorCode::None};
@@ -221,6 +241,10 @@ public:
     /** Returns one bounded collection page, rejecting stale revisions and unknown kinds. */
     PageQuery QueryWorld(std::uint64_t expectedRevision, const std::string& kind,
         std::size_t offset, std::size_t limit) const;
+    /** Pages measured utility-network flows; unavailable history remains distinct from zero flow. */
+    UtilityDiagnosticsPage QueryUtilityDiagnostics(std::uint64_t expectedRevision,
+        std::size_t offset, std::size_t limit,
+        std::optional<economy::BuildingId> buildingId = std::nullopt) const;
     /** Returns the current stall record and a human-readable explanation for a building. */
     Explanation Explain(economy::BuildingId id) const;
     /** Queues placement by exact catalog type name if revision and permissions allow it. */

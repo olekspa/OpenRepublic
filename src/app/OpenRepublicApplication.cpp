@@ -1619,7 +1619,8 @@ namespace openrepublic
 						[this] { QueueNativeOrderChange(false); },
 						[this] { QueueNativeRoadToggle(); },
 						[this] { QueueNativeUtilityConnection(true); },
-						[this] { QueueNativeUtilityConnection(false); } });
+						[this] { QueueNativeUtilityConnection(false); },
+						[this] { UpdateRegionStatus(); } });
 					nativeToolsReady = true;
 					RefreshNativeHaulChoices();
 				}
@@ -1640,7 +1641,8 @@ namespace openrepublic
 						[this] { QueueNativeOrderChange(true); },
 						[this] { QueueNativeOrderChange(false); }, {},
 						[this] { QueueNativeUtilityConnection(true); },
-						[this] { QueueNativeUtilityConnection(false); } }, false);
+						[this] { QueueNativeUtilityConnection(false); },
+						[this] { UpdateRegionStatus(); } }, false);
 					nativeToolsReady = true;
 					RefreshNativeHaulChoices();
 				}
@@ -2010,6 +2012,42 @@ namespace openrepublic
 		UpdateStatusLabel();
 	}
 
+	std::string OpenRepublicApplication::SelectedUtilityStatus(bool expanded) const
+	{
+		const auto* world = ActiveOwnedEconomyWorld();
+		if (!world || !regionEconomyApi || !selectedRegionBuildingId ||
+			std::none_of(world->GetCatalog().Resources().begin(), world->GetCatalog().Resources().end(),
+				[](const auto& resource) { return resource.utility; })) return {};
+		const auto page = regionEconomyApi->QueryUtilityDiagnostics(world->Revision(), 0, 128,
+			static_cast<economy::BuildingId>(*selectedRegionBuildingId));
+		if (page.error != economy_api::ErrorCode::None) return "Utility measurements unavailable for this selection.";
+		if (!page.available) return "Utility measurements unavailable; advance one tick to measure supply and demand.";
+		if (page.networks.empty()) return {};
+		const auto* chosenResource = world->GetCatalog().Resource(nativeEconomyTools.SelectedUtilityResource());
+		const auto chosen = std::find_if(page.networks.begin(), page.networks.end(), [&](const auto& network) {
+			return chosenResource && network.resource == chosenResource->name;
+		});
+		std::ostringstream text;
+		const auto append = [&](const auto& network) {
+			text << "Utility " << network.resource << " at tick " << page.tick
+				<< ": generated " << network.generated << ", used " << network.consumed
+				<< ", eligible demand " << network.requested << ", unused " << network.unused
+				<< ", short recipes " << network.starvedRecipes;
+			if (expanded) text << " (grid OR-" << network.component << ", " << network.memberCount << " buildings)";
+		};
+		if (expanded)
+		{
+			for (const auto& network : page.networks)
+			{
+				if (text.tellp() > 0) text << "\n";
+				append(network);
+			}
+			if (page.hasMore) text << "\nMore measured networks are available through utility_diagnostics paging.";
+		}
+		else append(chosen != page.networks.end() ? *chosen : page.networks.front());
+		return text.str();
+	}
+
 	void OpenRepublicApplication::UpdateRegionStatus()
 	{
 		if (!mapRegionPreview || (!economyOverlay && !regionEconomyApi))
@@ -2121,6 +2159,8 @@ namespace openrepublic
 			const std::string action = economyOverlay->GetActionStatus();
 			if (!action.empty()) text << "\n" << action;
 		}
+		const std::string utilityStatus = SelectedUtilityStatus(nativeDetailsExpanded);
+		if (!utilityStatus.empty()) text << "\n" << utilityStatus;
 		std::string statusText = text.str();
 		if (nativeToolsReady && !nativeDetailsExpanded && ActiveOwnedEconomyWorld())
 		{
@@ -2136,6 +2176,7 @@ namespace openrepublic
 				const auto selected = GetRegionBuildingForInstance(selectedRegionBuildingEntity);
 				if (selected) compact << "\nSelected OR-" << selected->id << " " << selected->type << ": " << selected->stallReason;
 			}
+			if (!utilityStatus.empty()) compact << "\n" << utilityStatus;
 			statusText = compact.str();
 		}
 		simulationStatus.SetText(statusText);
@@ -2145,7 +2186,7 @@ namespace openrepublic
 			const float viewportHeight = static_cast<float>(renderPath->GetLogicalHeight());
 			const float statusWidth = std::max(240.0f, std::min(900.0f, viewportWidth - 36.0f));
 			const bool ownedStatus = nativeToolsReady && ActiveOwnedEconomyWorld();
-			const float statusHeightCap = ownedStatus ? (nativeDetailsExpanded ? 230.0f : 80.0f) : 420.0f;
+			const float statusHeightCap = ownedStatus ? (nativeDetailsExpanded ? 230.0f : (utilityStatus.empty() ? 80.0f : 120.0f)) : 420.0f;
 			const float availableHeight = std::max(60.0f, viewportHeight - (nativeToolsReady ? nativeStatusTop : 54.0f) - 24.0f);
 			const float targetStatusHeight = ownedStatus
 				? std::min(statusHeightCap, std::max(60.0f, viewportHeight - 36.0f))

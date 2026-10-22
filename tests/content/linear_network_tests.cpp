@@ -20,6 +20,9 @@ void U32(std::string& out, std::uint32_t value) {
 void F32(std::string& out, float value) {
     out.append(reinterpret_cast<const char*>(&value), sizeof(value));
 }
+void I32(std::string& out, std::int32_t value) {
+    out.append(reinterpret_cast<const char*>(&value), sizeof(value));
+}
 void AppendNode(std::string& bytes, float x, std::uint32_t neighbor) {
     const std::size_t start = bytes.size();
     F32(bytes, x); F32(bytes, 2.0f); F32(bytes, -3.0f);
@@ -35,6 +38,19 @@ std::string NodeFile() {
     U32(bytes, 1); U32(bytes, 1); U32(bytes, 1); U32(bytes, 1); U32(bytes, 0);
     bytes.resize(12 + 0x48, '\0');
     U32(bytes, 0); U32(bytes, 0); U32(bytes, 5); U32(bytes, 11);
+    return bytes;
+}
+std::string BuildingReferenceFile() {
+    std::string bytes;
+    U32(bytes, 1); U32(bytes, 0); U32(bytes, 0);
+    F32(bytes, 10.0f); F32(bytes, 20.0f); F32(bytes, 30.0f);
+    U32(bytes, 1); U32(bytes, 1); U32(bytes, 1); U32(bytes, 1); U32(bytes, 4);
+    bytes.resize(12 + 0x48, '\0');
+    // Three parallel arrays, deliberately distinct from an interleaved layout.
+    for (const auto value : {2, -1, 0, 3}) I32(bytes, value);
+    for (const auto value : {101, 102, 103, 104}) I32(bytes, value);
+    for (const auto value : {-201, -202, -203, -204}) I32(bytes, value);
+    U32(bytes, 0); U32(bytes, 0); U32(bytes, 0); U32(bytes, 0);
     return bytes;
 }
 std::string PolylineFile() {
@@ -112,6 +128,87 @@ int main(int argc, char** argv) {
     Check(n.nodes[0].links[0] == std::vector<std::uint32_t>{0} &&
               n.nodes[0].links[3] == std::vector<std::uint32_t>{11},
           "four arrays are retained without semantic assumptions");
+
+    const bool parsedBuildingReferences = ExtractLinearNetwork(BuildingReferenceFile(), n, &error);
+    Check(parsedBuildingReferences, "three parallel signed building-reference arrays parse");
+    if (!parsedBuildingReferences || n.nodes.empty() || n.nodes[0].buildingReferences.size() != 4)
+        return 1;
+    Check(n.nodes.size() == 1 && n.nodes[0].buildingReferences.size() == 4 &&
+              n.nodes[0].buildingReferences[0].buildingIndex == 2 &&
+              n.nodes[0].buildingReferences[0].opaqueA == 101 &&
+              n.nodes[0].buildingReferences[0].opaqueB == -201 &&
+              n.nodes[0].buildingReferences[1].buildingIndex == -1 &&
+              n.nodes[0].buildingReferences[1].opaqueA == 102 &&
+              n.nodes[0].buildingReferences[1].opaqueB == -202 &&
+              n.nodes[0].buildingReferences[3].buildingIndex == 3 &&
+              n.nodes[0].buildingReferences[3].opaqueA == 104 &&
+              n.nodes[0].buildingReferences[3].opaqueB == -204,
+          "parallel arrays retain order and signed opaque values, including invalid indices");
+    Check(n.nodes[0].links[0] == std::vector<std::uint32_t>{0} &&
+              n.nodes[0].links[1] == std::vector<std::uint32_t>{0} &&
+              n.nodes[0].links[2] == std::vector<std::uint32_t>{0} &&
+              n.nodes[0].links[3] == std::vector<std::uint32_t>{0},
+          "existing link arrays remain aligned after building-reference arrays");
+
+    LinearNetwork attachmentNetwork;
+    const bool parsedAttachmentFixture =
+        ExtractLinearNetwork(BuildingReferenceFile(), attachmentNetwork, &error);
+    Check(parsedAttachmentFixture, "attachment helper fixture parses");
+    if (!parsedAttachmentFixture || attachmentNetwork.nodes.empty() ||
+        attachmentNetwork.nodes[0].buildingReferences.size() != 4)
+        return 1;
+    // Invalid source indices are intentionally retained by the decoder, but
+    // the adapter rejects them because it is bound to an exact placement table.
+    std::vector<NetworkBuildingAttachmentCandidate> attachments{{77, 88, 99, 111}};
+    Check(!ExtractNetworkBuildingAttachmentCandidates(attachmentNetwork, 4, attachments, &error) &&
+              !error.empty() && attachments.size() == 1 && attachments[0].nodeIndex == 77,
+          "invalid signed reference fails adapter transactionally");
+    attachmentNetwork.nodes[0].buildingReferences.erase(
+        attachmentNetwork.nodes[0].buildingReferences.begin() + 1);
+    Check(ExtractNetworkBuildingAttachmentCandidates(attachmentNetwork, 4, attachments, &error) &&
+              attachments.size() == 3 && attachments[0].nodeIndex == 0 &&
+              attachments[0].buildingIndex == 2 && attachments[0].opaqueA == 101 &&
+              attachments[0].opaqueB == -201 && attachments[1].buildingIndex == 0 &&
+              attachments[1].opaqueA == 103 && attachments[1].opaqueB == -203 &&
+              attachments[2].buildingIndex == 3,
+          "valid candidates preserve source order and opaque values");
+    const auto validAttachments = attachments;
+    Check(!ExtractNetworkBuildingAttachmentCandidates(attachmentNetwork, 3, attachments, &error) &&
+              !error.empty() && attachments.size() == validAttachments.size() &&
+              attachments[0].buildingIndex == validAttachments[0].buildingIndex,
+          "out-of-placement-range index fails transactionally");
+    Check(!ExtractNetworkBuildingAttachmentCandidates(attachmentNetwork,
+                                                       MaxLinearNetworkNodes + 1,
+                                                       attachments, &error) &&
+              !error.empty() && attachments.size() == validAttachments.size(),
+          "excessive placement source count is rejected transactionally");
+    LinearNetwork excessiveReferences;
+    excessiveReferences.nodes.push_back({});
+    excessiveReferences.nodes[0].buildingReferences.resize(MaxLinearNetworkNodes + 1);
+    Check(!ExtractNetworkBuildingAttachmentCandidates(excessiveReferences, 0, attachments, &error) &&
+              !error.empty() && attachments.size() == validAttachments.size(),
+          "excessive total candidate count is rejected transactionally");
+    attachmentNetwork.nodes[0].x = std::numeric_limits<float>::infinity();
+    Check(!ExtractNetworkBuildingAttachmentCandidates(attachmentNetwork, 4, attachments, &error) &&
+              !error.empty() && attachments.size() == validAttachments.size(),
+          "non-finite manually constructed node position is rejected transactionally");
+    attachmentNetwork.nodes[0].x = MaxLinearNetworkWorldCoordinate + 1.0f;
+    Check(!ExtractNetworkBuildingAttachmentCandidates(attachmentNetwork, 4, attachments, &error) &&
+              !error.empty() && attachments.size() == validAttachments.size(),
+          "out-of-bounds manually constructed node position is rejected transactionally");
+    attachmentNetwork.nodes[0].x = 10.0f;
+    attachmentNetwork.nodes[0].buildingReferences.clear();
+    Check(ExtractNetworkBuildingAttachmentCandidates(attachmentNetwork, 0, attachments, &error) &&
+              attachments.empty(),
+          "empty network attachment set clears output successfully");
+
+    auto truncatedReferences = BuildingReferenceFile();
+    truncatedReferences.resize(truncatedReferences.size() - 4);
+    LinearNetwork preservedAttachments;
+    preservedAttachments.nodes.push_back({});
+    Check(!ExtractLinearNetwork(truncatedReferences, preservedAttachments, &error) &&
+              !error.empty() && preservedAttachments.nodes.size() == 1,
+          "truncated third parallel array fails transactionally");
 
     Check(ExtractLinearNetwork(PolylineFile(), n, &error), "segment point records parse");
     Check(n.segmentGeometryComplete && n.segments.size() == 1 &&

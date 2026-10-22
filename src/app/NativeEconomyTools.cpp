@@ -243,6 +243,9 @@ namespace openrepublic::preview
 		StyleCombo(utilityResource_);
 		if (utilityResource_.GetItemCount() != 0)
 			utilityResource_.SetSelectedWithoutCallback(0);
+		utilityResource_.OnSelect([this](const wi::gui::EventArgs&) {
+			if (callbacks_.utilitySelectionChanged) callbacks_.utilitySelectionChanged();
+		});
 
 		connectUtility_.Create("NativeEconomyConnectUtility");
 		connectUtility_.SetText("Connect utility");

@@ -87,7 +87,8 @@ Capabilities EconomyApi::DiscoverCapabilities() const {
         return c;
     }
     c.actions = {Action::QueryWorld, Action::QueryCatalog, Action::ExplainBuilding,
-        Action::PollCommand, Action::ReadEvents, Action::ExportCheckpoint};
+        Action::PollCommand, Action::ReadEvents, Action::ExportCheckpoint,
+        Action::QueryUtilityDiagnostics};
     if (permissions_.control && permissions_.query) {
         c.actions.insert(c.actions.end(), {Action::Step, Action::PlaceBuilding, Action::RemoveBuilding,
             Action::BuildRoad, Action::SetRoadEnabled, Action::SetBuildingEnabled,
@@ -256,6 +257,69 @@ PageQuery EconomyApi::QueryWorld(std::uint64_t revision, const std::string& kind
     p.nextOffset = offset + std::min(limit, p.total - offset);
     p.hasMore = p.nextOffset < p.total;
     return {ErrorCode::None, std::move(p)};
+}
+UtilityDiagnosticsPage EconomyApi::QueryUtilityDiagnostics(std::uint64_t expectedRevision,
+    std::size_t offset, std::size_t limit,
+    std::optional<economy::BuildingId> buildingId) const {
+    UtilityDiagnosticsPage page;
+    if (!permissions_.query) {
+        page.error = ErrorCode::PermissionDenied;
+        return page;
+    }
+    if (limit == 0 || limit > MaxUtilityDiagnosticsPageSize) {
+        page.error = ErrorCode::InvalidPageLimit;
+        return page;
+    }
+    const auto snapshot = world_->Snapshot();
+    if (snapshot.revision != expectedRevision) {
+        page.error = ErrorCode::StaleRevision;
+        return page;
+    }
+    if (buildingId && std::none_of(snapshot.buildings.begin(), snapshot.buildings.end(),
+            [buildingId](const auto& building) { return building.id == *buildingId; })) {
+        page.error = ErrorCode::InvalidArgument;
+        return page;
+    }
+
+    const auto diagnostics = world_->QueryUtilityDiagnostics();
+    page.available = diagnostics.available;
+    page.tick = diagnostics.tick;
+    page.revision = snapshot.revision;
+    page.offset = offset;
+    std::vector<const economy::UtilityNetworkDiagnostic*> networks;
+    networks.reserve(diagnostics.networks.size());
+    for (const auto& network : diagnostics.networks) {
+        if (!buildingId || std::find(network.members.begin(), network.members.end(), *buildingId) !=
+                network.members.end()) {
+            networks.push_back(&network);
+        }
+    }
+    page.total = networks.size();
+    if (offset > page.total) {
+        page.error = ErrorCode::InvalidArgument;
+        return page;
+    }
+    const auto count = std::min(limit, page.total - offset);
+    page.networks.reserve(count);
+    for (std::size_t index = offset; index < offset + count; ++index) {
+        const auto& network = *networks[index];
+        const auto* resource = catalog_->Resource(network.resource);
+        UtilityNetworkDiagnosticView view;
+        view.resource = resource ? resource->name : "unknown";
+        view.component = network.component;
+        view.memberCount = network.members.size();
+        const auto sampleSize = std::min(network.members.size(), MaxUtilityDiagnosticMembers);
+        view.members.assign(network.members.begin(), network.members.begin() + sampleSize);
+        view.membersComplete = sampleSize == network.members.size();
+        view.generated = economy::FormatUtilityAmount(network.generated);
+        view.requested = economy::FormatUtilityAmount(network.requested);
+        view.consumed = economy::FormatUtilityAmount(network.consumed);
+        view.unused = economy::FormatUtilityAmount(network.unused);
+        view.starvedRecipes = network.starvedRecipes;
+        page.networks.push_back(std::move(view));
+    }
+    page.hasMore = offset + count < page.total;
+    return page;
 }
 Explanation EconomyApi::Explain(economy::BuildingId id) const {
     if (!permissions_.query) {
