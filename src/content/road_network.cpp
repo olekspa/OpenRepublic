@@ -74,18 +74,9 @@ bool DecodeSegments(std::string_view bytes, std::size_t& offset, RoadNetwork& ne
         if (pointCount > MaxRoadPolylinePoints)
             return Fail(error, "road segment " + std::to_string(i) + " point count exceeds the limit");
 
-        // This family serializes a 0xcc-byte prefix followed by three arrays
-        // sized from a runtime vector that is not represented by an on-disk
-        // count. Stop before it; searching for a later header would be unsafe.
-        if (ReadU32(bytes, header + 0x34) != 0) {
-            network.segmentGeometryDiagnostic =
-                "segment " + std::to_string(i) + " has an opaque nested-vector payload at header +0x34";
-            network.unparsedSegmentCount = network.segmentCount - i;
-            return true;
-        }
-
         // The writer emits the point records after the preceding segment
-        // collections. All lengths here are explicit header counts.
+        // collections. The +0x34 subrecords carry their three-array length in
+        // each serialized 0xcc prefix at +0xc4.
         std::size_t cursor = header + kSegmentHeaderBytes;
         const auto skip = [&](std::size_t& pos, std::size_t countOffset, std::size_t stride) {
             return SkipRecords(bytes, pos, ReadU32(bytes, header + countOffset), stride);
@@ -94,6 +85,22 @@ bool DecodeSegments(std::string_view bytes, std::size_t& offset, RoadNetwork& ne
             !skip(cursor, 0x28, 0x2c0) || !skip(cursor, 0x2c, 0x2c0) ||
             !skip(cursor, 0x30, 0x14))
             return Fail(error, "road segment " + std::to_string(i) + " has a truncated or excessive prefix");
+
+        const std::uint32_t nestedCount = ReadU32(bytes, header + 0x34);
+        if (nestedCount > kMaxSegmentCollectionCount)
+            return Fail(error, "road segment " + std::to_string(i) + " has too many nested records");
+        for (std::uint32_t nested = 0; nested < nestedCount; ++nested) {
+            if (cursor > bytes.size() || 0xcc > bytes.size() - cursor)
+                return Fail(error, "road segment " + std::to_string(i) + " nested record is truncated");
+            const std::uint32_t arrayCount = ReadU32(bytes, cursor + 0xc4);
+            if (arrayCount > kMaxSegmentCollectionCount)
+                return Fail(error, "road segment " + std::to_string(i) + " nested array count exceeds the limit");
+            cursor += 0xcc;
+            if (!SkipRecords(bytes, cursor, arrayCount, 4) ||
+                !SkipRecords(bytes, cursor, arrayCount, 4) ||
+                !SkipRecords(bytes, cursor, arrayCount, 4))
+                return Fail(error, "road segment " + std::to_string(i) + " nested arrays are truncated");
+        }
 
         if (!SkipRecords(bytes, cursor, pointCount, 0x18))
             return Fail(error, "road segment " + std::to_string(i) + " polyline is truncated");
@@ -114,8 +121,10 @@ bool DecodeSegments(std::string_view bytes, std::size_t& offset, RoadNetwork& ne
         network.segments.push_back(std::move(segment));
 
         // Continue past the remaining fixed-stride collections to the next
-        // segment. The +0x85 conditional collection is not safely skippable:
-        // its serialized byte count is a truncated char-sized value.
+        // segment. The writer narrows the +0x85 reference-vector length to a
+        // byte but serializes using the full runtime count, so nonzero values
+        // cannot be skipped safely. The final two vectors are always written;
+        // the reader consumes them only when +0x84 is one.
         const std::size_t familyCounts[] = {0x10, 0x1c, 0x20, 0x14, 0x18, 0x80};
         bool tailOk = true;
         for (const std::size_t countOffset : familyCounts)
@@ -124,9 +133,10 @@ bool DecodeSegments(std::string_view bytes, std::size_t& offset, RoadNetwork& ne
                  SkipRecords(bytes, cursor, ReadU32(bytes, header + 0x7c), 1);
         if (!tailOk)
             return Fail(error, "road segment " + std::to_string(i) + " has a truncated or excessive tail");
-        if (static_cast<unsigned char>(bytes[header + 0x85]) != 0) {
+        if (static_cast<unsigned char>(bytes[header + 0x85]) != 0 ||
+            static_cast<unsigned char>(bytes[header + 0x84]) != 1) {
             network.segmentGeometryDiagnostic =
-                "segment " + std::to_string(i) + " has an unsupported conditional tail at header +0x85";
+                "segment " + std::to_string(i) + " has an unsupported conditional tail (+0x84/+0x85)";
             network.unparsedSegmentCount = network.segmentCount - i - 1;
             return true;
         }
