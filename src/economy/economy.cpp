@@ -1,6 +1,8 @@
 ﻿#include "openrepublic/economy/economy.h"
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 #include <charconv>
 #include <limits>
 #include <map>
@@ -620,6 +622,35 @@ void Haul(State &s, Order &o) {
         v->cursor = 0;
     }
 }
+std::atomic<unsigned> g_productionThreads{0};
+constexpr std::size_t kParallelBuildingThreshold = 1024;
+// Production only touches its own building (catalog is read-only), so chunks can run concurrently
+// and the result does not depend on the chunking. Haul movement stays serial: it couples buildings.
+void ProductionPhase(State &s) {
+    unsigned threads = g_productionThreads.load();
+    if (threads == 0)
+        threads = std::max(1u, std::thread::hardware_concurrency());
+    const std::size_t n = s.buildings.size();
+    if (threads <= 1 || n < kParallelBuildingThreshold) {
+        for (auto &b : s.buildings)
+            Production(s, b);
+        return;
+    }
+    threads = static_cast<unsigned>(std::min<std::size_t>(threads, n / 256));
+    std::vector<std::thread> pool;
+    const std::size_t chunk = (n + threads - 1) / threads;
+    for (unsigned t = 1; t < threads; ++t) {
+        const std::size_t begin = t * chunk, end = std::min(n, begin + chunk);
+        pool.emplace_back([&s, begin, end] {
+            for (std::size_t i = begin; i < end; ++i)
+                Production(s, s.buildings[i]);
+        });
+    }
+    for (std::size_t i = 0; i < std::min(n, chunk); ++i)
+        Production(s, s.buildings[i]);
+    for (auto &th : pool)
+        th.join();
+}
 void AdvanceTick(State &s) {
     auto pending = std::move(s.pending);
     s.pending.clear();
@@ -629,8 +660,7 @@ void AdvanceTick(State &s) {
     }
     std::sort(s.buildings.begin(), s.buildings.end(),
               [](const Building &a, const Building &b) { return a.id < b.id; });
-    for (auto &b : s.buildings)
-        Production(s, b);
+    ProductionPhase(s);
     std::sort(s.orders.begin(), s.orders.end(), [](const Order &a, const Order &b) { return a.id < b.id; });
     for (auto &o : s.orders)
         Haul(s, o);
@@ -1211,6 +1241,9 @@ World &World::operator=(World &&other) noexcept {
 }
 const Catalog &World::GetCatalog() const noexcept {
     return *impl_->state.catalog;
+}
+void SetProductionThreads(unsigned threads) noexcept {
+    g_productionThreads = threads;
 }
 std::uint64_t World::Tick() const noexcept {
     return impl_->state.tick;

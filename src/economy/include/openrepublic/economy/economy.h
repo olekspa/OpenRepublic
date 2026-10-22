@@ -300,6 +300,10 @@ struct WorldSnapshot {
     std::vector<HaulOrderSnapshot> orders;
 };
 
+/** Worker threads for the per-building production phase (0 = hardware concurrency, 1 = serial).
+ *  Results are bit-identical for every setting: buildings are independent in that phase. */
+void SetProductionThreads(unsigned threads) noexcept;
+
 class World final {
 public:
     /** Constructs an empty bounded grid; catalog must outlive the world. */
