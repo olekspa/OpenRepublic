@@ -1,0 +1,451 @@
+From ba7510bb0b7b0a1e39ac55fee96768d2c21df2b1 Mon Sep 17 00:00:00 2001
+From: OpenRepublic contributors <dev@openrepublic.invalid>
+Date: Thu, 22 Oct 2026 08:38:23 -0400
+Subject: [PATCH] add opt-in Streamline DLSS SR runtime path
+
+---
+ WickedEngine/wiGraphicsDevice_DX12.cpp |  75 +++++++++
+ WickedEngine/wiGraphicsDevice_DX12.h   |   5 +
+ WickedEngine/wiRenderPath3D.cpp        | 204 ++++++++++++++++++++++++-
+ WickedEngine/wiRenderPath3D.h          |   3 +
+ 4 files changed, 286 insertions(+), 1 deletion(-)
+
+diff --git a/WickedEngine/wiGraphicsDevice_DX12.cpp b/WickedEngine/wiGraphicsDevice_DX12.cpp
+index 27f80fa1..ac8c533e 100644
+--- a/WickedEngine/wiGraphicsDevice_DX12.cpp
++++ b/WickedEngine/wiGraphicsDevice_DX12.cpp
+@@ -32,6 +32,9 @@ DEFINE_GUID(D3D12_VIDEO_DECODE_PROFILE_HEVC_MAIN, 0x5b11d51b, 0x2f4c, 0x4452, 0x
+ #include <sstream>
+ #include <algorithm>
+ #include <intrin.h> // _BitScanReverse64
++#ifdef OPENREPUBLIC_STREAMLINE
++#include "sl.h"
++#endif
+ 
+ using namespace Microsoft::WRL;
+ 
+@@ -53,6 +56,57 @@ namespace dx12_internal
+ 	static PFN_DXGI_GET_DEBUG_INTERFACE1 DXGIGetDebugInterface1 = nullptr;
+ #endif
+ 	static PFN_D3D12_CREATE_DEVICE D3D12CreateDevice = nullptr;
++#ifdef OPENREPUBLIC_STREAMLINE
++	static HMODULE streamline_module = nullptr;
++	static sl::Result (*streamline_init)(const sl::Preferences&, uint64_t) = nullptr;
++	static sl::Result (*streamline_shutdown)() = nullptr;
++	static sl::Result (*streamline_set_device)(void*) = nullptr;
++	static bool streamline_initialized = false;
++
++	static void InitializeStreamline()
++	{
++		wchar_t executable[MAX_PATH]{};
++		GetModuleFileNameW(nullptr, executable, MAX_PATH);
++		std::wstring folder(executable);
++		folder = folder.substr(0, folder.find_last_of(L"\\/"));
++		const std::wstring interposer_path = folder + L"\\sl.interposer.dll";
++		streamline_module = LoadLibraryExW(interposer_path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
++		if (!streamline_module)
++		{
++			wi::helper::DebugOut("Streamline disabled: sl.interposer.dll not found next to executable\n");
++			return;
++		}
++		streamline_init = reinterpret_cast<decltype(streamline_init)>(GetProcAddress(streamline_module, "slInit"));
++		streamline_shutdown = reinterpret_cast<decltype(streamline_shutdown)>(GetProcAddress(streamline_module, "slShutdown"));
++		streamline_set_device = reinterpret_cast<decltype(streamline_set_device)>(GetProcAddress(streamline_module, "slSetD3DDevice"));
++		if (!streamline_init || !streamline_shutdown || !streamline_set_device)
++		{
++			wi::helper::DebugOut("Streamline disabled: required exports missing\n");
++			FreeLibrary(streamline_module);
++			streamline_module = nullptr;
++			return;
++		}
++		const sl::Feature features[] = { sl::kFeatureDLSS };
++		const std::wstring plugin_folder = folder + L"\\plugins";
++		const wchar_t* paths[] = { plugin_folder.c_str(), folder.c_str() };
++		sl::Preferences preferences{};
++		preferences.pathsToPlugins = paths;
++		preferences.numPathsToPlugins = 2;
++		preferences.featuresToLoad = features;
++		preferences.numFeaturesToLoad = 1;
++		preferences.flags = sl::PreferenceFlags::eUseFrameBasedResourceTagging;
++		preferences.renderAPI = sl::RenderAPI::eD3D12;
++		preferences.logLevel = sl::LogLevel::eDefault;
++		const sl::Result result = streamline_init(preferences, sl::kSDKVersion);
++		streamline_initialized = result == sl::Result::eOk;
++		wi::helper::DebugOut(streamline_initialized ? "Streamline initialized\n" : "Streamline initialization failed\n");
++		if (!streamline_initialized)
++		{
++			FreeLibrary(streamline_module);
++			streamline_module = nullptr;
++		}
++	}
++#endif
+ 	static PFN_D3D12_CREATE_VERSIONED_ROOT_SIGNATURE_DESERIALIZER D3D12CreateVersionedRootSignatureDeserializer = nullptr;
+ 	static PFN_D3D12_SERIALIZE_ROOT_SIGNATURE D3D12SerializeRootSignature = nullptr;
+ #endif // PLATFORM_WINDOWS_DESKTOP
+@@ -2239,6 +2293,9 @@ std::mutex queue_locker;
+ 		validationMode = validationMode_;
+ 
+ #ifdef PLATFORM_WINDOWS_DESKTOP
++		#ifdef OPENREPUBLIC_STREAMLINE
++		InitializeStreamline();
++#endif
+ 		HMODULE dxgi = LoadLibraryEx(L"dxgi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+ 		if (dxgi == nullptr)
+ 		{
+@@ -2258,6 +2315,9 @@ std::mutex queue_locker;
+ 		}
+ 
+ 		CreateDXGIFactory2 = (PFN_CREATE_DXGI_FACTORY_2)wiGetProcAddress(dxgi, "CreateDXGIFactory2");
++#ifdef OPENREPUBLIC_STREAMLINE
++		if (streamline_initialized) { auto fn = reinterpret_cast<PFN_CREATE_DXGI_FACTORY_2>(GetProcAddress(streamline_module, "CreateDXGIFactory2")); if (fn) CreateDXGIFactory2 = fn; }
++#endif
+ 		assert(CreateDXGIFactory2 != nullptr);
+ 		if (CreateDXGIFactory2 == nullptr)
+ 		{
+@@ -2276,6 +2336,9 @@ std::mutex queue_locker;
+ #endif
+ 
+ 		D3D12CreateDevice = (PFN_D3D12_CREATE_DEVICE)wiGetProcAddress(dx12, "D3D12CreateDevice");
++#ifdef OPENREPUBLIC_STREAMLINE
++		if (streamline_initialized) { auto fn = reinterpret_cast<PFN_D3D12_CREATE_DEVICE>(GetProcAddress(streamline_module, "D3D12CreateDevice")); if (fn) D3D12CreateDevice = fn; }
++#endif
+ 		assert(D3D12CreateDevice != nullptr);
+ 		if (D3D12CreateDevice == nullptr)
+ 		{
+@@ -2472,6 +2535,9 @@ std::mutex queue_locker;
+ 			wilog_messagebox("D3D12: Device couldn't be created!");
+ 			wi::platform::Exit();
+ 		}
++#ifdef OPENREPUBLIC_STREAMLINE
++		if (streamline_initialized && streamline_set_device(device.Get()) != sl::Result::eOk) { wi::helper::DebugOut("Streamline slSetD3DDevice failed\n"); streamline_shutdown(); streamline_initialized = false; }
++#endif
+ 
+ 		if (validationMode != ValidationMode::Disabled)
+ 		{
+@@ -3086,6 +3152,11 @@ std::mutex queue_locker;
+ 	GraphicsDevice_DX12::~GraphicsDevice_DX12()
+ 	{
+ 		WaitForGPU();
++#ifdef OPENREPUBLIC_STREAMLINE
++		if (streamline_initialized) streamline_shutdown();
++		if (streamline_module) FreeLibrary(streamline_module);
++		streamline_module = nullptr;
++#endif
+ 
+ #ifdef PLATFORM_WINDOWS_DESKTOP
+ 		std::ignore = UnregisterWait(deviceRemovedWaitHandle);
+@@ -7871,6 +7942,10 @@ std::mutex queue_locker;
+ 	{
+ 		return to_internal(texture)->resource.Get();
+ 	}
++#ifdef OPENREPUBLIC_STREAMLINE
++	D3D12_RESOURCE_STATES GraphicsDevice_DX12::GetTextureInternalResourceState(const Texture* texture) { return _ParseResourceState(texture->desc.layout); }
++	ID3D12GraphicsCommandList* GraphicsDevice_DX12::GetNativeGraphicsCommandList(CommandList cmd) { return GetCommandList(cmd).GetGraphicsCommandList(); }
++#endif
+ 	ID3D12CommandQueue* GraphicsDevice_DX12::GetGraphicsCommandQueue()
+ 	{
+ 		return queues[QUEUE_GRAPHICS].queue.Get();
+diff --git a/WickedEngine/wiGraphicsDevice_DX12.h b/WickedEngine/wiGraphicsDevice_DX12.h
+index 4d67e5bf..2e363e23 100644
+--- a/WickedEngine/wiGraphicsDevice_DX12.h
++++ b/WickedEngine/wiGraphicsDevice_DX12.h
+@@ -469,6 +469,11 @@ namespace wi::graphics
+ 		}
+ 
+ 		ID3D12Resource* GetTextureInternalResource(const Texture* texture);
++#ifdef OPENREPUBLIC_STREAMLINE
++		D3D12_RESOURCE_STATES GetTextureInternalResourceState(const Texture* texture);
++		ID3D12GraphicsCommandList* GetNativeGraphicsCommandList(CommandList cmd);
++		ID3D12Device* GetNativeDevice() const { return device.Get(); }
++#endif
+ 		ID3D12CommandQueue* GetGraphicsCommandQueue();
+ 
+ 		struct DescriptorHeapGPU
+diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
+index 06fc31b5..90de5e8c 100644
+--- a/WickedEngine/wiRenderPath3D.cpp
++++ b/WickedEngine/wiRenderPath3D.cpp
+@@ -4,6 +4,11 @@
+ #include "wiHelper.h"
+ #include "wiTextureHelper.h"
+ #include "wiProfiler.h"
++#if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
++#include "wiGraphicsDevice_DX12.h"
++#include "sl.h"
++#include "sl_dlss.h"
++#endif
+ 
+ using namespace wi::graphics;
+ using namespace wi::enums;
+@@ -12,6 +17,133 @@ using namespace wi::ecs;
+ 
+ namespace wi
+ {
++#if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
++	static bool EvaluateStreamlineDLSS(const CameraComponent& camera, const CameraComponent& previousCamera,
++		const Texture& inputColor, const Texture& depth, const Texture& motionVectors, const Texture& output, CommandList cmd, uint32_t outputWidth, uint32_t outputHeight, bool reset)
++	{
++		HMODULE module = GetModuleHandleW(L"sl.interposer.dll");
++		if (!module) return false;
++		auto getToken = reinterpret_cast<PFun_slGetNewFrameToken*>(GetProcAddress(module, "slGetNewFrameToken"));
++		auto setConstants = reinterpret_cast<PFun_slSetConstants*>(GetProcAddress(module, "slSetConstants"));
++		auto setTags = reinterpret_cast<PFun_slSetTagForFrame*>(GetProcAddress(module, "slSetTagForFrame"));
++		auto evaluate = reinterpret_cast<PFun_slEvaluateFeature*>(GetProcAddress(module, "slEvaluateFeature"));
++		auto getFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(GetProcAddress(module, "slGetFeatureFunction"));
++		if (!getToken || !setConstants || !setTags || !evaluate || !getFeatureFunction) return false;
++
++		auto* device = static_cast<GraphicsDevice_DX12*>(wi::graphics::GetDevice());
++		if (!device) return false;
++		const LUID luid = device->GetNativeDevice()->GetAdapterLuid();
++		sl::AdapterInfo adapter{};
++		auto luidCopy = luid;
++		adapter.deviceLUID = reinterpret_cast<uint8_t*>(&luidCopy);
++		adapter.deviceLUIDSizeInBytes = sizeof(luidCopy);
++		auto isSupported = reinterpret_cast<PFun_slIsFeatureSupported*>(GetProcAddress(module, "slIsFeatureSupported"));
++		if (!isSupported || isSupported(sl::kFeatureDLSS, adapter) != sl::Result::eOk) return false;
++
++		PFun_slDLSSGetOptimalSettings* getOptimal = nullptr;
++		PFun_slDLSSSetOptions* setOptions = nullptr;
++		void* function = nullptr;
++		if (getFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", function) != sl::Result::eOk) return false;
++		getOptimal = reinterpret_cast<PFun_slDLSSGetOptimalSettings*>(function);
++		function = nullptr;
++		if (getFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", function) != sl::Result::eOk) return false;
++		setOptions = reinterpret_cast<PFun_slDLSSSetOptions*>(function);
++
++		const sl::ViewportHandle viewport(1);
++		sl::DLSSOptions options{};
++		options.mode = sl::DLSSMode::eBalanced;
++		options.outputWidth = outputWidth;
++		options.outputHeight = outputHeight;
++		options.colorBuffersHDR = sl::Boolean::eTrue;
++		options.useAutoExposure = sl::Boolean::eTrue;
++		sl::DLSSOptimalSettings optimal{};
++		if (getOptimal(options, optimal) != sl::Result::eOk || optimal.optimalRenderWidth != inputColor.desc.width || optimal.optimalRenderHeight != inputColor.desc.height)
++			return false; // resource recreation for a changed optimal size must happen before dispatch
++		if (setOptions(viewport, options) != sl::Result::eOk) return false;
++
++		sl::FrameToken* token = nullptr;
++		if (getToken(token, nullptr) != sl::Result::eOk || token == nullptr) return false;
++
++		auto toSLMatrix = [](const XMFLOAT4X4& src, sl::float4x4& dst)
++		{
++			const float* data = &src._11;
++			for (uint32_t row = 0; row < 4; ++row)
++				for (uint32_t col = 0; col < 4; ++col)
++					(&dst[row].x)[col] = data[row * 4 + col];
++		};
++		XMFLOAT4X4 projection = camera.Projection;
++		projection._41 -= camera.jitter.x;
++		projection._42 -= camera.jitter.y;
++		XMFLOAT4X4 previousProjection = previousCamera.Projection;
++		previousProjection._41 -= previousCamera.jitter.x;
++		previousProjection._42 -= previousCamera.jitter.y;
++		const XMMATRIX viewToClip = XMLoadFloat4x4(&projection);
++		const XMMATRIX clipToView = XMMatrixInverse(nullptr, viewToClip);
++		const XMMATRIX currentViewProjection = camera.GetView() * viewToClip;
++		const XMMATRIX previousViewProjection = previousCamera.GetView() * XMLoadFloat4x4(&previousProjection);
++		const XMMATRIX clipToPreviousClip = XMMatrixInverse(nullptr, currentViewProjection) * previousViewProjection;
++		const XMMATRIX previousClipToClip = XMMatrixInverse(nullptr, clipToPreviousClip);
++		XMFLOAT4X4 clipToViewStore{}, clipToPreviousStore{}, previousToClipStore{};
++		XMStoreFloat4x4(&clipToViewStore, clipToView);
++		XMStoreFloat4x4(&clipToPreviousStore, clipToPreviousClip);
++		XMStoreFloat4x4(&previousToClipStore, previousClipToClip);
++		sl::Constants constants{};
++		toSLMatrix(projection, constants.cameraViewToClip);
++		toSLMatrix(clipToViewStore, constants.clipToCameraView);
++		toSLMatrix(clipToPreviousStore, constants.clipToPrevClip);
++		toSLMatrix(previousToClipStore, constants.prevClipToClip);
++		constants.jitterOffset = { camera.jitter.x * inputColor.desc.width * 0.5f, camera.jitter.y * inputColor.desc.height * -0.5f };
++		constants.mvecScale = { 1.0f, 1.0f };
++		constants.cameraPos = { camera.Eye.x, camera.Eye.y, camera.Eye.z };
++		constants.cameraUp = { camera.Up.x, camera.Up.y, camera.Up.z };
++		const XMVECTOR rightVector = camera.GetRight();
++		XMFLOAT3 right{};
++		XMStoreFloat3(&right, rightVector);
++		constants.cameraRight = { right.x, right.y, right.z };
++		XMFLOAT3 forward{};
++		XMStoreFloat3(&forward, XMVector3Normalize(camera.GetAt() - camera.GetEye()));
++		constants.cameraFwd = { forward.x, forward.y, forward.z };
++		constants.cameraNear = camera.zNearP;
++		constants.cameraFar = camera.zFarP;
++		constants.cameraFOV = camera.fov;
++		constants.cameraAspectRatio = camera.width / camera.height;
++		constants.depthInverted = sl::Boolean::eTrue;
++		constants.cameraMotionIncluded = sl::Boolean::eTrue;
++		constants.motionVectors3D = sl::Boolean::eFalse;
++		constants.motionVectorsJittered = sl::Boolean::eTrue;
++		constants.reset = reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
++		if (setConstants(constants, *token, viewport) != sl::Result::eOk) return false;
++
++		auto makeResource = [device](const Texture& texture)
++		{
++			ID3D12Resource* nativeResource = device->GetTextureInternalResource(&texture);
++			sl::Resource result(sl::ResourceType::eTex2d, nativeResource,
++				static_cast<uint32_t>(device->GetTextureInternalResourceState(&texture)));
++			result.width = texture.desc.width;
++			result.height = texture.desc.height;
++			result.nativeFormat = static_cast<uint32_t>(nativeResource->GetDesc().Format);
++			return result;
++		};
++		sl::Resource colorResource = makeResource(inputColor);
++		sl::Resource depthResource = makeResource(depth);
++		sl::Resource motionResource = makeResource(motionVectors);
++		sl::Resource outputResource = makeResource(output);
++		sl::Extent renderExtent{ 0, 0, inputColor.desc.width, inputColor.desc.height };
++		sl::Extent outputExtent{ 0, 0, output.desc.width, output.desc.height };
++		sl::ResourceTag tags[] = {
++			{ &colorResource, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent },
++			{ &depthResource, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent },
++			{ &motionResource, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent },
++			{ &outputResource, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &outputExtent },
++		};
++		ID3D12GraphicsCommandList* nativeCommandList = device->GetNativeGraphicsCommandList(cmd);
++		auto* commandBuffer = reinterpret_cast<sl::CommandBuffer*>(nativeCommandList);
++		if (setTags(*token, viewport, tags, static_cast<uint32_t>(std::size(tags)), commandBuffer) != sl::Result::eOk) return false;
++		const sl::BaseStructure* inputs[] = { &viewport };
++		if (evaluate(sl::kFeatureDLSS, *token, inputs, 1, commandBuffer) != sl::Result::eOk) return false;
++		return true;
++	}
++#endif
+ 	static constexpr float foreground_depth_range = 0.01f;
+ 
+ 	void RenderPath3D::DeleteGPUResources()
+@@ -330,6 +462,7 @@ namespace wi
+ 		setRaytracedDiffuseEnabled(raytracedDiffuseEnabled);
+ 		setFSREnabled(fsrEnabled);
+ 		setFSR2Enabled(fsr2Enabled);
++		setDLSSEnabled(dlssEnabled);
+ 		setEyeAdaptionEnabled(eyeAdaptionEnabled);
+ 		setReflectionsEnabled(reflectionsEnabled);
+ 		setBloomEnabled(bloomEnabled);
+@@ -423,7 +556,7 @@ namespace wi
+ 		{
+ 			camera->jitter = fsr2Resources.GetJitter();
+ 		}
+-		else if (wi::renderer::GetTemporalAAEnabled() && wi::renderer::GetWireframeMode() == wi::renderer::WIREFRAME_DISABLED)
++		else if ((wi::renderer::GetTemporalAAEnabled() || getDLSSEnabled()) && wi::renderer::GetWireframeMode() == wi::renderer::WIREFRAME_DISABLED)
+ 		{
+ 			const XMFLOAT4& halton = wi::math::GetHaltonSequence(wi::graphics::GetDevice()->GetFrameCount() % 256);
+ 			camera->jitter.x = (halton.x * 2 - 1) / (float)internalResolution.x;
+@@ -2347,6 +2480,17 @@ namespace wi
+ 
+ 		// 1.) HDR post process chain
+ 		{
++#if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
++			if (getDLSSEnabled() && rtFSR[0].IsValid() && EvaluateStreamlineDLSS(*camera, camera_previous, *rt_read, depthBuffer_Copy, rtVelocity, rtFSR[0], cmd, GetPhysicalWidth(), GetPhysicalHeight(), first_frame))
++			{
++				// Streamline may change command-list state; restore Wicked's bindings before later passes.
++				wi::renderer::BindCameraCB(*camera, camera_previous, camera_reflection, cmd);
++				wi::renderer::BindCommonResources(cmd);
++				rt_read = &rtFSR[0];
++				rt_write = &rtFSR[1];
++			}
++			else
++#endif
+ 			if (getFSR2Enabled() && fsr2Resources.IsValid())
+ 			{
+ 				wi::renderer::Postprocess_FSR2(
+@@ -3001,6 +3145,7 @@ namespace wi
+ 	void RenderPath3D::setFSR2Enabled(bool value)
+ 	{
+ 		fsr2Enabled = value;
++		if (value) dlssEnabled = false;
+ 
+ 		if (fsr2Enabled)
+ 		{
+@@ -3040,6 +3185,63 @@ namespace wi
+ 		motionblurResources = {};
+ 		depthoffieldResources = {};
+ 	}
++	void RenderPath3D::setDLSSEnabled(bool value)
++	{
++#if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
++		if (!value)
++		{
++			dlssEnabled = false;
++			if (!getFSREnabled()) { rtFSR[0] = {}; rtFSR[1] = {}; }
++			return;
++		}
++		HMODULE module = GetModuleHandleW(L"sl.interposer.dll");
++		auto getFeatureFunction = module ? reinterpret_cast<PFun_slGetFeatureFunction*>(GetProcAddress(module, "slGetFeatureFunction")) : nullptr;
++		if (!getFeatureFunction) { dlssEnabled = false; return; }
++		void* function = nullptr;
++		if (getFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", function) != sl::Result::eOk || !function) { dlssEnabled = false; return; }
++		auto getOptimal = reinterpret_cast<PFun_slDLSSGetOptimalSettings*>(function);
++		sl::DLSSOptions options{};
++		options.mode = sl::DLSSMode::eBalanced;
++		options.outputWidth = GetPhysicalWidth();
++		options.outputHeight = GetPhysicalHeight();
++		options.colorBuffersHDR = sl::Boolean::eTrue;
++		options.useAutoExposure = sl::Boolean::eTrue;
++		sl::DLSSOptimalSettings optimal{};
++		if (GetPhysicalWidth() == 0 || GetPhysicalHeight() == 0 || getOptimal(options, optimal) != sl::Result::eOk || optimal.optimalRenderWidth == 0 || optimal.optimalRenderHeight == 0)
++		{
++			dlssEnabled = false;
++			return;
++		}
++		const float targetScale = std::min(float(optimal.optimalRenderWidth) / float(GetPhysicalWidth()), float(optimal.optimalRenderHeight) / float(GetPhysicalHeight()));
++		fsr2Enabled = false;
++		fsr2Resources = {};
++		dlssEnabled = true;
++		if (std::abs(resolutionScale - targetScale) > 0.001f)
++		{
++			resolutionScale = targetScale;
++			ResizeBuffers();
++			return;
++		}
++		if (rtFSR[0].IsValid() && rtFSR[0].desc.width == GetPhysicalWidth() && rtFSR[0].desc.height == GetPhysicalHeight())
++			return;
++		GraphicsDevice* device = wi::graphics::GetDevice();
++		TextureDesc desc;
++		desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
++		desc.format = wi::renderer::format_rendertarget_main;
++		desc.width = GetPhysicalWidth();
++		desc.height = GetPhysicalHeight();
++		device->CreateTexture(&desc, nullptr, &rtFSR[0]);
++		device->CreateTexture(&desc, nullptr, &rtFSR[1]);
++		device->SetName(&rtFSR[0], "renderpath3D.rtDLSS[0]");
++		device->SetName(&rtFSR[1], "renderpath3D.rtDLSS[1]");
++		motionblurResources = {};
++		depthoffieldResources = {};
++#else
++		dlssEnabled = false;
++		(void)value;
++#endif
++	}
++
+ 	void RenderPath3D::setFSR2Preset(FSR2_Preset preset)
+ 	{
+ 		wi::graphics::SamplerDesc desc = wi::renderer::GetSampler(wi::enums::SAMPLER_OBJECTSHADER)->GetDesc();
+diff --git a/WickedEngine/wiRenderPath3D.h b/WickedEngine/wiRenderPath3D.h
+index 6c5683a1..1a58614e 100644
+--- a/WickedEngine/wiRenderPath3D.h
++++ b/WickedEngine/wiRenderPath3D.h
+@@ -89,6 +89,7 @@ namespace wi
+ 		bool sceneUpdateEnabled = true;
+ 		bool fsrEnabled = false;
+ 		bool fsr2Enabled = false;
++		bool dlssEnabled = false;
+ 		bool mesh_blend = true;
+ 		bool crtFilterEnabled = false;
+ 
+@@ -301,6 +302,7 @@ namespace wi
+ 		constexpr bool getSceneUpdateEnabled() const { return sceneUpdateEnabled; }
+ 		constexpr bool getFSREnabled() const { return fsrEnabled; }
+ 		constexpr bool getFSR2Enabled() const { return fsr2Enabled; }
++		constexpr bool getDLSSEnabled() const { return dlssEnabled; }
+ 		constexpr bool getVisibilityComputeShadingEnabled() const { return visibility_shading_in_compute; }
+ 		constexpr bool getMeshBlendEnabled() const { return mesh_blend; }
+ 
+@@ -365,6 +367,7 @@ namespace wi
+ 		constexpr void setMeshBlendEnabled(bool value) { mesh_blend = value; }
+ 		void setFSREnabled(bool value);
+ 		void setFSR2Enabled(bool value);
++		void setDLSSEnabled(bool value);
+ 		void setFSR2Preset(FSR2_Preset preset); // this will modify resolution scaling and sampler lod bias
+ 
+ 		struct CustomPostprocess
+-- 
+2.47.1.windows.2
+
