@@ -1,0 +1,4 @@
+add_executable(OpenRepublicSceneControl_tests scene_control_tests.cpp)
+target_link_libraries(OpenRepublicSceneControl_tests PRIVATE OpenRepublicSceneControl)
+target_include_directories(OpenRepublicSceneControl_tests PRIVATE "${OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR}")
+add_test(NAME SceneControl COMMAND OpenRepublicSceneControl_tests)
