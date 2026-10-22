@@ -11,6 +11,7 @@ add_library(OpenRepublicContent STATIC
     nmf_geometry.cpp
     nmf_header.cpp
     nmf_preview_geometry.cpp
+    linear_network.cpp
     road_network.cpp
     terrain_dds.cpp
     terrain_preview.cpp

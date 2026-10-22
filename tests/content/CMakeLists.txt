@@ -104,3 +104,10 @@ add_executable(OpenRepublicRoadNetworkTests
 target_link_libraries(OpenRepublicRoadNetworkTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicRoadNetworkTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicRoadNetworkTests COMMAND OpenRepublicRoadNetworkTests)
+
+add_executable(OpenRepublicLinearNetworkTests
+    linear_network_tests.cpp
+)
+target_link_libraries(OpenRepublicLinearNetworkTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicLinearNetworkTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicLinearNetworkTests COMMAND OpenRepublicLinearNetworkTests)
