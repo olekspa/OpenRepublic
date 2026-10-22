@@ -1098,7 +1098,11 @@ namespace openrepublic
 			renderPath->setFXAAEnabled(true);
 			renderPath->setSharpenFilterEnabled(true);
 			renderPath->setSharpenFilterAmount(0.25f);
-			renderPath->setExposure(1.5f);
+			// Auto exposure by sun height: low golden sun needs lift, a high noon sun clips the grass.
+			renderPath->setEyeAdaptionEnabled(false);
+			const float sunElevation = std::isfinite(mapShowcaseSunElevationDegrees) ? mapShowcaseSunElevationDegrees : 20.0f;
+			renderPath->setExposure(std::clamp(1.7f - 0.95f * (sunElevation - 10.0f) / 45.0f, 0.75f, 1.8f));
+			wilog("[OpenRepublic] Showcase post effects: exposure %.2f (sun elevation %.1f deg)", renderPath->getExposure(), sunElevation);
 			renderPath->setTonemap(wi::renderer::Tonemap::ACES);
 			renderPath->setLightShaftsEnabled(true);
 			renderPath->setLightShaftsStrength(0.35f);
