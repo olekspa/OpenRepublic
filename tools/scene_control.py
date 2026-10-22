@@ -18,7 +18,7 @@ def main():
     ap.add_argument("--pipe", default="or-scene")
     ap.add_argument("--day-cycle", type=float, default=0.0, help="seconds for one dawn-to-dusk sweep")
     ap.add_argument("method", nargs="?")
-    ap.add_argument("params", nargs="?", default="{}")
+    ap.add_argument("params", nargs="*", default=[], help='JSON object, or key=value pairs (shell-quote friendly), e.g. sunElevationDegrees=60 name=dusk')
     args = ap.parse_args()
     bs = chr(92)
     pipe = open(bs + bs + "." + bs + "pipe" + bs + args.pipe, "r+b", buffering=0)
@@ -40,7 +40,17 @@ def main():
         return 0
     if not args.method:
         ap.error("method or --day-cycle required")
-    print(json.dumps(call(args.method, json.loads(args.params)), indent=2))
+    params = {}
+    if len(args.params) == 1 and args.params[0].lstrip().startswith("{"):
+        params = json.loads(args.params[0])
+    else:
+        for item in args.params:
+            key, _, value = item.partition("=")
+            try:
+                params[key] = json.loads(value)
+            except ValueError:
+                params[key] = value
+    print(json.dumps(call(args.method, params), indent=2))
     return 0
 
 
