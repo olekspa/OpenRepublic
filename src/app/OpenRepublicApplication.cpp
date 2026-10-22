@@ -1396,6 +1396,23 @@ namespace openrepublic
 		{
 			return;
 		}
+		if (mapShowcaseEnhancedLook && mapRegionPreview)
+		{
+			// Frame-time telemetry for the modern look (logged every ~5 s of wall time).
+			static double accumulated = 0.0;
+			static std::uint32_t frames = 0;
+			static float worst = 0.0f;
+			accumulated += dt;
+			++frames;
+			worst = std::max(worst, dt);
+			if (accumulated >= 5.0)
+			{
+				wilog("[OpenRepublic] Modern view: %.1f fps average, worst frame %.1f ms over %u frames", frames / accumulated, worst * 1000.0f, frames);
+				accumulated = 0.0;
+				frames = 0;
+				worst = 0.0f;
+			}
+		}
 		PumpLocalEconomyRequests();
 		if (economyOverlay && mapPlacement)
 		{
