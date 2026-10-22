@@ -50,8 +50,8 @@ int main() {
           "synthetic definitions build a catalog");
 
     const std::vector<compat::PlacedBuildingRef> placements = {
-        {"farm", 0.0, 0.0, 1001},
-        {"MIRRORZ_farm", 20.0, 0.0, 1002},
+        {"farm", 0.0, 0.0, 1001, 8},
+        {"MIRRORZ_farm", 20.0, 0.0, 1002, 3},
         {"unknown", 24.0, 0.0, 1003},
         {"factory", 1.0, 0.0, 1004},
         {"farm", 1000.0, 0.0, 1005},
@@ -84,12 +84,21 @@ int main() {
           "source order, base mirrored type, and accepted building IDs are deterministic");
     Check(firstReport.placedSourceBuildings.size() == 2 &&
               firstReport.placedSourceBuildings[0].sourcePlacementKey == 1001 &&
+              firstReport.placedSourceBuildings[0].sourceBuildingTableIndex == 8 &&
               firstReport.placedSourceBuildings[0].typeName == "farm" &&
               firstReport.placedSourceBuildings[0].buildingId == 1 &&
               firstReport.placedSourceBuildings[1].sourcePlacementKey == 1002 &&
+              firstReport.placedSourceBuildings[1].sourceBuildingTableIndex == 3 &&
               firstReport.placedSourceBuildings[1].typeName == "farm" &&
               firstReport.placedSourceBuildings[1].buildingId == 2,
           "accepted source keys map exactly to economy IDs, including mirrored base type");
+    Check(firstReport.placedNativeBuildings.size() == 2 &&
+              firstReport.placedNativeBuildings[0].sourceBuildingTableIndex == 8 &&
+              firstReport.placedNativeBuildings[0].typeName == "farm" &&
+              firstReport.placedNativeBuildings[0].buildingId == 1 &&
+              firstReport.placedNativeBuildings[1].sourceBuildingTableIndex == 3 &&
+              firstReport.placedNativeBuildings[1].buildingId == 2,
+          "mixed render/native identities populate independent accepted mappings");
     Check(secondReport.placedSourceBuildings.size() == firstReport.placedSourceBuildings.size() &&
               secondReport.placedSourceBuildings[0].sourcePlacementKey ==
                   firstReport.placedSourceBuildings[0].sourcePlacementKey &&
@@ -135,6 +144,55 @@ int main() {
               duplicateReport.notes.size() == 1 &&
               duplicateReport.notes[0].find("duplicate source placement key") != std::string::npos,
           "duplicate-key failure is transactional and reports the reason");
+
+    // The renderer-vector key and exact source building-table identity are
+    // separate namespaces. Duplicate native identities reject before import,
+    // including when one duplicate would later be skipped as unknown/outside.
+    const std::vector<compat::PlacedBuildingRef> duplicateNativeIdentities = {
+        {"farm", 0.0, 0.0, 9001, 17},
+        {"unknown", 1000.0, 0.0, 9002, 17},
+    };
+    economy::World *const beforeDuplicateNative = firstWorld.get();
+    compat::RegionImportReport duplicateNativeReport;
+    Check(!compat::ImportRegionIntoWorld(duplicateNativeIdentities, 0, catalog, options,
+                                         firstWorld, duplicateNativeReport),
+          "duplicate native identities reject even when the duplicate would be skipped");
+    Check(firstWorld.get() == beforeDuplicateNative &&
+              duplicateNativeReport.placedSourceBuildings.empty() &&
+              duplicateNativeReport.placedNativeBuildings.empty() &&
+              duplicateNativeReport.notes.size() == 1 &&
+              duplicateNativeReport.notes[0].find("duplicate source building table index") !=
+                  std::string::npos,
+          "duplicate native identity rejection preserves the prior world transactionally");
+
+    const std::vector<compat::PlacedBuildingRef> noNativeIdentity = {
+        {"farm", 0.0, 0.0, 123456},
+    };
+    std::unique_ptr<economy::World> legacyIdentityWorld;
+    compat::RegionImportReport legacyIdentityReport;
+    Check(compat::ImportRegionIntoWorld(noNativeIdentity, 0, catalog, options,
+                                        legacyIdentityWorld, legacyIdentityReport) &&
+              legacyIdentityReport.placedSourceBuildings.size() == 1 &&
+              legacyIdentityReport.placedSourceBuildings[0].sourcePlacementKey == 123456 &&
+              !legacyIdentityReport.placedSourceBuildings[0].sourceBuildingTableIndex &&
+              legacyIdentityReport.placedNativeBuildings.empty(),
+          "legacy placement keys retain their meaning and leave native identity unset");
+
+    // The headless host has an exact native source identity but no render-vector
+    // key. Its mapping must survive without manufacturing a source key value.
+    const std::vector<compat::PlacedBuildingRef> nativeOnlyIdentity = {
+        {"farm", 0.0, 0.0, std::nullopt, 42},
+    };
+    std::unique_ptr<economy::World> nativeOnlyWorld;
+    compat::RegionImportReport nativeOnlyReport;
+    Check(compat::ImportRegionIntoWorld(nativeOnlyIdentity, 0, catalog, options,
+                                        nativeOnlyWorld, nativeOnlyReport) &&
+              nativeOnlyReport.placedSourceBuildings.empty() &&
+              nativeOnlyReport.placedNativeBuildings.size() == 1 &&
+              nativeOnlyReport.placedNativeBuildings[0].sourceBuildingTableIndex == 42 &&
+              nativeOnlyReport.placedNativeBuildings[0].typeName == "farm" &&
+              nativeOnlyReport.placedNativeBuildings[0].buildingId == 1,
+          "native-only identity maps to the accepted building without a render key");
 
     const std::vector<compat::PlacedBuildingRef> wideRegion = {
         {"farm", 0.0, 0.0},

@@ -1,5 +1,7 @@
 #include "openrepublic/content/building_definition.h"
 
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -8,6 +10,68 @@ using namespace openrepublic::content;
 namespace {
 
 int failures = 0;
+
+int RunCorpus(const std::filesystem::path& root) {
+    std::size_t files = 0;
+    std::size_t parsed = 0;
+    std::size_t failed = 0;
+    std::size_t validConnections = 0;
+    std::size_t invalidConnections = 0;
+
+    try {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+            if (!entry.is_regular_file() || entry.path().extension() != ".ini") continue;
+            ++files;
+            std::error_code sizeError;
+            const auto size = std::filesystem::file_size(entry.path(), sizeError);
+            if (sizeError || size > MaxBuildingDefinitionBytes) {
+                ++failed;
+                continue;
+            }
+            std::ifstream input(entry.path(), std::ios::binary);
+            if (!input) {
+                ++failed;
+                continue;
+            }
+            std::string text;
+            text.reserve(static_cast<std::size_t>(size));
+            char buffer[8192];
+            bool tooLarge = false;
+            while (input) {
+                input.read(buffer, sizeof(buffer));
+                const auto count = static_cast<std::size_t>(input.gcount());
+                if (count > MaxBuildingDefinitionBytes - text.size()) {
+                    tooLarge = true;
+                    break;
+                }
+                text.append(buffer, count);
+            }
+            if (tooLarge || input.bad() || text.size() != size) {
+                ++failed;
+                continue;
+            }
+            BuildingDefinition definition;
+            if (!ParseBuildingDefinition(text, definition)) {
+                ++failed;
+                continue;
+            }
+            ++parsed;
+            for (const auto& connection : definition.electricalConnections) {
+                if (connection.valid)
+                    ++validConnections;
+                else
+                    ++invalidConnections;
+            }
+        }
+    } catch (const std::filesystem::filesystem_error&) {
+        ++failed;
+    }
+
+    std::cout << "files=" << files << " parsed=" << parsed << " failed=" << failed
+              << " valid_connections=" << validConnections
+              << " invalid_connections=" << invalidConnections << '\n';
+    return failed == 0 ? 0 : 1;
+}
 
 void Check(bool condition, const std::string& label) {
     if (!condition) {
@@ -83,11 +147,177 @@ void TestRejectsMalformedTypedDirectives() {
     rejects("$NAME " + std::string(5000, '1') + "\n", "over-long lines are rejected");
 }
 
+void TestElectricalConnectionDeclarations() {
+    const std::string text =
+        "$CONNECTION_ELETRIC_HIGH_INPUT\r\n"
+        "  // comment between points\r\n"
+        "-1.25 0 2.5 // first point\r\n"
+        "\r\n"
+        "3 4.5 6\r\n"
+        "$CONNECTION_ELETRIC_HIGH_OUTPUT\n"
+        "0 1 2\n3 4 5\n"
+        "$CONNECTION_ELETRIC_LOW_INPUT\n"
+        "0 0 0\n1 1 1\n"
+        "$CONNECTION_ELETRIC_LOW_OUTPUT\n"
+        "0 0 0\n1 1 1\n"
+        "$CONNECTION_ELETRIC_HIGH_INPUT_ONLY\n"
+        "0 0 0\n1 1 1\n"
+        "$CONNECTION_ELETRIC_HIGH_OUTPUT_ONLY\n"
+        "0 0 0\n1 1 1\n"
+        "$CONNECTION_ELETRIC_LOW_INPUT_ONLY\n"
+        "0 0 0\n1 1 1\n"
+        "$CONNECTION_ELETRIC_LOW_OUTPUT_ONLY\n"
+        "0 0 0\n1 1 1\n"
+        "$RESOURCE_VISUALIZATION 1\n"
+        "separator\n";
+
+    BuildingDefinition definition;
+    std::string error;
+    Check(ParseBuildingDefinition(text, definition, &error), "all eight electrical spellings parse: " + error);
+    const std::vector<std::string> expected{
+        "$CONNECTION_ELETRIC_HIGH_INPUT", "$CONNECTION_ELETRIC_HIGH_OUTPUT",
+        "$CONNECTION_ELETRIC_LOW_INPUT", "$CONNECTION_ELETRIC_LOW_OUTPUT",
+        "$CONNECTION_ELETRIC_HIGH_INPUT_ONLY", "$CONNECTION_ELETRIC_HIGH_OUTPUT_ONLY",
+        "$CONNECTION_ELETRIC_LOW_INPUT_ONLY", "$CONNECTION_ELETRIC_LOW_OUTPUT_ONLY"};
+    Check(definition.electricalConnections.size() == expected.size(),
+          "all electrical declarations are retained in source order");
+    if (definition.electricalConnections.size() == expected.size()) {
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            const auto& connection = definition.electricalConnections[i];
+            Check(connection.directive == expected[i] && connection.valid && connection.diagnostic.empty() &&
+                      connection.points[0].has_value() && connection.points[1].has_value(),
+                  "electrical directive spelling, coordinates, and validity are retained");
+            Check(connection.line > 0, "electrical declaration preserves source line");
+        }
+        const auto& first = definition.electricalConnections.front();
+        Check((*first.points[0])[0] == -1.25 && (*first.points[0])[1] == 0.0 &&
+                  (*first.points[0])[2] == 2.5 && (*first.points[1])[0] == 3.0 &&
+                  (*first.points[1])[1] == 4.5 && (*first.points[1])[2] == 6.0,
+              "whitespace triples retain coordinate order and CRLF is accepted");
+    }
+    Check(definition.other.size() == 9 && definition.other[0].name == "$CONNECTION_ELETRIC_HIGH_INPUT" &&
+              definition.other[0].arguments.empty() && definition.other[8].name == "$RESOURCE_VISUALIZATION" &&
+              definition.ignoredLines == 17,
+          "electrical and unknown headers remain unchanged and every data row remains counted");
+}
+
+void TestMalformedElectricalRowsAreOptionalDiagnostics() {
+    const std::string text =
+        "$NAME 73\n"
+        "$PRODUCTION food 0.25\n"
+        "$CONNECTION_ELETRIC_HIGH_INPUT\n"
+        "nan 0 0\n"
+        "1 2\n"
+        "$CONNECTION_ELETRIC_LOW_OUTPUT foo\n"
+        "0 0 0\n"
+        "1 1 1\n"
+        "$CONNECTION_ELETRIC_HIGH_OUTPUT\n"
+        "0 0 0 9\n"
+        "1 1 1\n"
+        "$CONNECTION_ELETRIC_LOW_INPUT_ONLY\n"
+        "0 0 0\n"
+        "$CONNECTION_ELETRIC_HIGH_OUTPUT_ONLY\n"
+        "8 8 8\n9 9 9\n"
+        "$UNKNOWN_KEEP these arguments\n"
+        "tail row\n";
+    BuildingDefinition definition;
+    std::string error;
+    Check(ParseBuildingDefinition(text, definition, &error),
+          "malformed optional electrical rows do not reject valid economics: " + error);
+    Check(definition.nameId && *definition.nameId == "73" && definition.production.size() == 1 &&
+              definition.production[0].resource == "food" && definition.production[0].value == 0.25,
+          "economic declarations survive malformed electrical data");
+    Check(definition.electricalConnections.size() == 5, "interrupted blocks are retained and later blocks recover");
+    if (definition.electricalConnections.size() == 5) {
+        const auto& nonfinite = definition.electricalConnections[0];
+        Check(!nonfinite.valid && !nonfinite.points[0] && !nonfinite.points[1] &&
+                  nonfinite.diagnostic.find("malformed coordinate row") != std::string::npos,
+              "non-finite and wrong-arity rows remain missing with diagnostics");
+        const auto& inlineArgs = definition.electricalConnections[1];
+        Check(!inlineArgs.valid && inlineArgs.points[0] && inlineArgs.points[1] &&
+                  inlineArgs.diagnostic.find("inline arguments") != std::string::npos,
+              "inline header arguments diagnose without suppressing captured points");
+        const auto& extraCoordinate = definition.electricalConnections[2];
+        Check(!extraCoordinate.valid && !extraCoordinate.points[0] && extraCoordinate.points[1],
+              "coordinate rows require exactly three finite values");
+        const auto& interrupted = definition.electricalConnections[3];
+        Check(!interrupted.valid && interrupted.points[0] && !interrupted.points[1] &&
+                  interrupted.diagnostic.find("before directive") != std::string::npos,
+              "a following directive interrupts an incomplete block");
+        Check(definition.electricalConnections[4].valid &&
+                  definition.electricalConnections[4].directive == "$CONNECTION_ELETRIC_HIGH_OUTPUT_ONLY",
+              "a valid declaration after malformed blocks is recovered");
+        Check(definition.electricalConnections[3].line < definition.electricalConnections[4].line,
+              "recovered declarations retain their source lines and order");
+    }
+    Check(definition.other.size() == 6 && definition.other[0].name == "$CONNECTION_ELETRIC_HIGH_INPUT" &&
+              definition.other[1].name == "$CONNECTION_ELETRIC_LOW_OUTPUT" &&
+              definition.other[1].arguments.size() == 1 && definition.other[5].name == "$UNKNOWN_KEEP" &&
+              definition.other[5].arguments.size() == 2 && definition.ignoredLines == 10,
+          "unknown directives and ignored-row accounting remain preserved");
+}
+
+void TestMissingElectricalRowsAtEnd() {
+    BuildingDefinition definition;
+    std::string error;
+    Check(ParseBuildingDefinition("$CONNECTION_ELETRIC_LOW_INPUT_ONLY\n0 1 2\n", definition, &error),
+          "end-of-file inside optional electrical block is diagnostic, not fatal");
+    Check(definition.electricalConnections.size() == 1 && !definition.electricalConnections[0].valid &&
+              definition.electricalConnections[0].points[0] && !definition.electricalConnections[0].points[1] &&
+              definition.electricalConnections[0].diagnostic.find("found 1") != std::string::npos,
+          "missing final row is represented explicitly");
+}
+
+void TestElectricalFloatConversionBoundaries() {
+    BuildingDefinition definition;
+    std::string error;
+    const std::string text =
+        "$CONNECTION_ELETRIC_HIGH_INPUT\n"
+        "-4.50.0 6.25\n"
+        "1-2 3\n"
+        "$CONNECTION_ELETRIC_LOW_OUTPUT\n"
+        "1e2-2e-1 .3E+1\n"
+        "0 0 0\n"
+        "$CONNECTION_ELETRIC_LOW_INPUT\n"
+        "0 1 2trailing\n"
+        "3 4 5\n";
+    Check(ParseBuildingDefinition(text, definition, &error),
+          "adjacent float conversions and exponent forms are parsed: " + error);
+    Check(definition.electricalConnections.size() == 3 && definition.electricalConnections[0].valid &&
+              definition.electricalConnections[1].valid,
+          "scanf-style adjacent conversions remain valid declarations");
+    if (definition.electricalConnections.size() == 3) {
+        const auto& adjacent = definition.electricalConnections[0];
+        Check((*adjacent.points[0])[0] == -4.5 && (*adjacent.points[0])[1] == 0.0 &&
+                  (*adjacent.points[0])[2] == 6.25 && (*adjacent.points[1])[0] == 1.0 &&
+                  (*adjacent.points[1])[1] == -2.0 && (*adjacent.points[1])[2] == 3.0,
+              "adjacent signed and decimal forms split at conversion boundaries");
+        const auto& exponent = definition.electricalConnections[1];
+        Check((*exponent.points[0])[0] == 100.0 && (*exponent.points[0])[1] == -0.2 &&
+                  (*exponent.points[0])[2] == 3.0,
+              "exponent forms parse across adjacent conversion boundaries");
+        const auto& trailing = definition.electricalConnections[2];
+        Check(!trailing.valid && !trailing.points[0] && trailing.points[1] &&
+                  !trailing.diagnostic.empty(),
+              "trailing nonnumeric text leaves its coordinate row missing with a diagnostic");
+    }
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc != 1) {
+        if (argc == 3 && std::string(argv[1]) == "--corpus-dir")
+            return RunCorpus(std::filesystem::path(argv[2]));
+        std::cerr << "usage: OpenRepublicBuildingDefinitionTests [--corpus-dir <directory>]\n";
+        return 2;
+    }
     TestTypedExtraction();
     TestRejectsMalformedTypedDirectives();
+    TestElectricalConnectionDeclarations();
+    TestMalformedElectricalRowsAreOptionalDiagnostics();
+    TestMissingElectricalRowsAtEnd();
+    TestElectricalFloatConversionBoundaries();
     if (failures != 0) {
         std::cerr << failures << " building-definition test(s) failed\n";
         return 1;

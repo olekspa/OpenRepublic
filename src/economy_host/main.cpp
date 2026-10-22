@@ -154,7 +154,8 @@ bool BuildRegionWorld(const std::filesystem::path &contentRoot, const std::files
                                               : content::FindDensestPlacement(placements, radius);
   std::vector<compat::PlacedBuildingRef> refs;
   for (const auto &placed : placements)
-    refs.push_back({placed.typeName, placed.X(), placed.Z()});
+    refs.push_back({placed.typeName, placed.X(), placed.Z(), std::nullopt,
+                    placed.sourceBuildingTableIndex});
   compat::RegionImportOptions options;
   options.radiusMeters = radius;
   compat::RegionImportReport imported;

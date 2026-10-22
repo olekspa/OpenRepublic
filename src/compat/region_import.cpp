@@ -61,11 +61,19 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
     }
 
     std::set<std::uint64_t> sourcePlacementKeys;
+    std::set<std::uint32_t> sourceBuildingTableIndices;
     for (const auto &placement : placements) {
         if (placement.sourcePlacementKey &&
             !sourcePlacementKeys.insert(*placement.sourcePlacementKey).second) {
             AddNote(next, options.maxDiagnosticNotes,
                     "Import failed: duplicate source placement key.");
+            report = std::move(next);
+            return false;
+        }
+        if (placement.sourceBuildingTableIndex &&
+            !sourceBuildingTableIndices.insert(*placement.sourceBuildingTableIndex).second) {
+            AddNote(next, options.maxDiagnosticNotes,
+                    "Import failed: duplicate source building table index.");
             report = std::move(next);
             return false;
         }
@@ -217,9 +225,14 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
             const auto &placement = placements[command.first];
             const std::string baseType = BaseTypeName(placement.typeName);
             next.placedBuildings.emplace_back(baseType, result.building);
+            if (placement.sourceBuildingTableIndex) {
+                next.placedNativeBuildings.push_back(
+                    {*placement.sourceBuildingTableIndex, baseType, result.building});
+            }
             if (placement.sourcePlacementKey) {
                 next.placedSourceBuildings.push_back(
-                    {*placement.sourcePlacementKey, baseType, result.building});
+                    {*placement.sourcePlacementKey, baseType, result.building,
+                     placement.sourceBuildingTableIndex});
             }
             ++next.placed;
         } else if (result.failure == economy::CommandFailure::OutOfBounds) {

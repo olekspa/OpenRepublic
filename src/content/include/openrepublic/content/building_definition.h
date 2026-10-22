@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -35,6 +36,18 @@ struct BuildingDefinitionDirective {
     std::size_t line = 0;
 };
 
+// Source declaration only. Directive names and coordinate order are retained
+// exactly as written; `_ONLY` and the coordinates have no interpreted meaning.
+// A malformed declaration remains available with `valid == false` and a
+// diagnostic so optional connection data cannot reject economic definitions.
+struct BuildingElectricalConnection {
+    std::string directive;
+    std::size_t line = 0;
+    std::array<std::optional<std::array<double, 3>>, 2> points{};
+    bool valid = false;
+    std::string diagnostic;
+};
+
 struct BuildingDefinition {
     // `$NAME` numeric token (an opaque text identifier).
     std::optional<std::string> nameId;
@@ -46,7 +59,11 @@ struct BuildingDefinition {
     std::vector<BuildingResourceRate> consumption;
     std::vector<BuildingResourceRate> consumptionPerSecond;
     std::vector<BuildingStorageEntry> storage;
-    // Every other `$` directive, preserved in order and uninterpreted.
+    // Recognized electrical connection declarations, in source order. This
+    // retains source geometry only; it does not identify a native port.
+    std::vector<BuildingElectricalConnection> electricalConnections;
+    // Other `$` directives, including electrical headers for legacy consumers,
+    // preserved in order and uninterpreted.
     std::vector<BuildingDefinitionDirective> other;
     // Non-blank lines that did not start with `$` after comment removal.
     std::size_t ignoredLines = 0;
@@ -61,8 +78,10 @@ constexpr std::size_t MaxBuildingDefinitionDirectives = 65536;
 // rules, data rows following a directive) are counted and ignored. Typed
 // extraction covers `$NAME`, `$TYPE_*`, `$WORKERS_NEEDED`,
 // `$WORKING_VEHICLES_NEEDED`, `$PRODUCTION`, `$CONSUMPTION`,
-// `$CONSUMPTION_PER_SECOND` and the `$STORAGE*` family; a typed directive with
-// the wrong argument count or a non-finite number is an error. No gameplay
+// `$CONSUMPTION_PER_SECOND`, `$STORAGE*`, and the eight
+// `$CONNECTION_ELETRIC_*` electrical declaration spellings. Malformed optional
+// connection geometry is retained with diagnostics and does not fail otherwise
+// valid typed data. A malformed economic typed directive is an error. No gameplay or native-port
 // semantics are claimed. On failure output is unchanged.
 bool ParseBuildingDefinition(const std::string& text, BuildingDefinition& output,
                              std::string* error = nullptr);

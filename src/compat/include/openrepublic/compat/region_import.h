@@ -27,10 +27,22 @@ struct PlacedBuildingRef {
     // Optional caller-owned identity for the source placement. Map adapters can
     // use a placement index from their source package; generic callers may omit it.
     std::optional<std::uint64_t> sourcePlacementKey;
+    // Exact source building-table slot when supplied by a strict native reader.
+    // This is independent from sourcePlacementKey, which may be a render-vector index.
+    std::optional<std::uint32_t> sourceBuildingTableIndex;
 };
 
 struct ImportedBuildingIdentity {
     std::uint64_t sourcePlacementKey{};
+    std::string typeName;
+    economy::BuildingId buildingId{};
+    std::optional<std::uint32_t> sourceBuildingTableIndex;
+};
+
+// Exact source-table identity mapped to an accepted economy building,
+// independent of any renderer or caller-owned placement key.
+struct ImportedNativeBuildingIdentity {
+    std::uint32_t sourceBuildingTableIndex{};
     std::string typeName;
     economy::BuildingId buildingId{};
 };
@@ -50,6 +62,8 @@ struct RegionImportReport {
     std::vector<std::pair<std::string, economy::BuildingId>> placedBuildings;
     // Exact caller-key to economy identity for accepted placements that supplied a key.
     std::vector<ImportedBuildingIdentity> placedSourceBuildings;
+    // Exact native source-table identity for accepted placements that supplied one.
+    std::vector<ImportedNativeBuildingIdentity> placedNativeBuildings;
 };
 
 // Creates a new world transactionally; on invalid input, outWorld is unchanged.

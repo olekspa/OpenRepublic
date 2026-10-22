@@ -311,7 +311,7 @@ namespace openrepublic
 			{
 				const auto& placed = request.allPlacements[index];
 				placements.push_back({ placed.typeName, placed.X(), placed.Z(),
-					static_cast<std::uint64_t>(index) });
+					static_cast<std::uint64_t>(index), placed.sourceBuildingTableIndex });
 			}
 
 			compat::RegionImportOptions importOptions;
