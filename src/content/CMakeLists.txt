@@ -1,4 +1,5 @@
 add_library(OpenRepublicContent STATIC
+    building_definition.cpp
     building_types.cpp
     glb_container.cpp
     mtl_dependencies.cpp

@@ -76,3 +76,10 @@ add_executable(OpenRepublicBuildingTypesTests
 target_link_libraries(OpenRepublicBuildingTypesTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicBuildingTypesTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicBuildingTypesTests COMMAND OpenRepublicBuildingTypesTests)
+
+add_executable(OpenRepublicBuildingDefinitionTests
+    building_definition_tests.cpp
+)
+target_link_libraries(OpenRepublicBuildingDefinitionTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicBuildingDefinitionTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicBuildingDefinitionTests COMMAND OpenRepublicBuildingDefinitionTests)

@@ -104,6 +104,12 @@ Use one entry per claim. Do not collapse observed behavior into a format/API con
 | `MIRRORZ_<type>` names are synthesized by the loader. | OBSERVED (strings and code paths in `Import`) | For each type the loader builds a derived type named `MIRRORZ_%s` with a sign flip applied to a vector component and to light/part data; a few types are named with the prefix explicitly. | Exact transformation not decoded; not implemented. | Decode before supporting mirrored placement. |
 | Directives handled in the same function. | OBSERVED | MODELPARTS, MODELINTERIOR, MODEL_DECK, NODETACHPART, EXACTSPECULAR, REFLECTION, PLANESHADOW, FIELDCOLLISION, VARIABLEMATERIALPARAMS, MATERIALINTERIOR, ISROCK, NOSHADOW, LODSHADOW, LIGHT (`%f %f %f %f`), LIGHT_RGB / LIGHT_RGB_BLICK (seven floats), ALLWAYSVISIBLE, ENABLE_PARTS_SHADOW, DECALS_HOLEFACTOR, EXPLOSION_GROUP, FIREEFFECT, SMOKEPOINT*, collision/water FX and sounds, DERBIS_*. | Argument semantics beyond the scan formats are not established. | Decode per feature when needed. |
 
+## Building gameplay definitions — 22 October 2026 (Claude takeover)
+
+| System | Claim | Status | Evidence | Limits | Next action |
+|---|---|---|---|---|---|
+| `media_soviet/buildings_types/<name>.ini` holds the per-building gameplay definition (not the render model). | OBSERVED (private install text, one build) / VERIFIED (OpenRepublic parser over all 488 files) | Line-oriented `$DIRECTIVE args` format; `//` starts an inline comment; non-directive rows are data lines of a preceding directive. Economic directives: `$WORKERS_NEEDED`, `$PRODUCTION <res> <n>` (85+4 lines, 81 files), `$CONSUMPTION <res> <n>` (70 files), `$CONSUMPTION_PER_SECOND eletric <n>` (38), and a `$STORAGE*` family `<transport class> <amount> [resource]`. Example data: `farm` produces `plants` 0.01; `food_factory` consumes `plants` 0.25 and `water` 0.05 for `food` 0.12 with 170 workers; storage classes are transport classes such as `RESOURCE_TRANSPORT_COVERED`. 45 produced and 39 consumed resource names occur. `ParseBuildingDefinition` extracts these and preserves every other directive. | Time base of the rates, worker/efficiency scaling, storage semantics and vehicle-station behaviour are UNKNOWN; loader not yet traced (SOVIET64 analysis queued). | Trace the definition loader and run controlled in-game observations before assigning rate units. |
+
 ## Rules
 
 - Include the game build and executable/file identity for executable-specific claims. Keep private exact hashes out of public docs unless there is a clear reason to publish them.

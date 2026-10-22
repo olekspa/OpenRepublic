@@ -11,6 +11,9 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **~23:00 [03:00]** `buildingtypes.ini` parser + `--content-root/--building-type/--building-lod`; whole real file (489 types) parses and resolves. Commit `4459c07`.
 - **22:15 EDT [02:15 UTC, 22 Oct]** `C3D_BUILDING::Import` traced: no comment syntax (unknown tokens skipped), `MODEL_LOD`/`MODEL_LOD2` numbers default to 1000/2000, `MODELEMISSIVE` discarded, `MATERIALEMISSIVE` loads a parallel material, `MIRRORZ_` derived types. Ledger updated; parser exposes `loaderNumber`.
 
+- **~22:50 EDT [02:50 UTC]** Architecture review: `src/sim` is a hard-coded Farm/Mill/Storage demo and the app was a 3.3k-line monolith. Extracted content-preview code into `ContentPreview.*` / `NmfPreviewCapture.h` (commit `e0a02df`). Started a Luna `codex exec` worker in worktree `OpenRepublic-wt-economy` (branch `luna/economy-core`) to build a data-driven economy library.
+- **~23:10 EDT [03:10 UTC]** Found the authentic gameplay definitions (`buildings_types/*.ini`); `ParseBuildingDefinition` parses all 488 files. Started SOVIET64.exe Ghidra analysis (project `soviet64`) for the loader and rate units.
+
 ## Operating notes
 
 - Launching the game: `steam.exe -applaunch 784150` works; running the game launcher exe directly or `steam://rungameid` fails (reported by the project owner on 2026-10-21). The game and saves remain read-only research sources per `AGENTS.md`.
