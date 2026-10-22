@@ -1,6 +1,7 @@
 #include "ShowcaseProps.h"
 
 #include "RoadPaths.h"
+#include "openrepublic/content/linear_network.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/procgeo/props.h"
 #include "openrepublic/procgeo/vehicles.h"
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <sstream>
 
 namespace openrepublic::preview
@@ -299,9 +301,137 @@ namespace openrepublic::preview
 			}
 		}
 
-		// ---- Pylon line crossing the landscape on the far side of the town.
+		// ---- Real power lines and railway from the package (nodes decoded by content::ExtractLinearNetwork;
+		// links between nodes are drawn as straight spans, segment curve data is not decoded for these files).
+		std::size_t realPylons = 0;
+		std::size_t realRail = 0;
+		const double realRange = 3600.0;
+		const auto loadNetwork = [&](const char* fileName, openrepublic::content::LinearNetwork& network)
+		{
+			std::ifstream stream(request.mapDirectory / fileName, std::ios::binary);
+			if (!stream)
+			{
+				return false;
+			}
+			std::ostringstream buffer;
+			buffer << stream.rdbuf();
+			std::string bytes = buffer.str();
+			std::string networkError;
+			return openrepublic::content::ExtractLinearNetwork(bytes, network, &networkError) && !network.nodes.empty();
+		};
+		const auto inRange = [&](double x, double z)
+		{
+			return std::hypot(x - cx, z - cz) < realRange;
+		};
+		const auto stringPowerLine = [&](const openrepublic::content::LinearNetwork& network, wi::ecs::Entity supportMesh,
+			double supportHeight, double wireSpacing, int wires, float sag, std::size_t cap)
+		{
+			std::size_t placed = 0;
+			for (std::size_t i = 0; i < network.nodes.size() && placed < cap; ++i)
+			{
+				const auto& node = network.nodes[i];
+				if (!inRange(node.x, node.z))
+				{
+					continue;
+				}
+				const double h = heightAt(node.x, node.z);
+				double yaw = 0.0;
+				for (const std::uint32_t j : network.nodes[i].links[0])
+				{
+					if (j < network.nodes.size())
+					{
+						yaw = std::atan2(network.nodes[j].x - node.x, network.nodes[j].z - node.z);
+						break;
+					}
+				}
+				Placement support;
+				support.x = node.x; support.z = node.z; support.y = h - 0.3; support.yaw = yaw; support.pitch = 0.0;
+				AddObject(scene, supportMesh, support, request, cx, cz, 1.0f, true);
+				++placed;
+				for (const std::uint32_t j : network.nodes[i].links[0])
+				{
+					if (j <= i || j >= network.nodes.size())
+					{
+						continue;
+					}
+					const auto& other = network.nodes[j];
+					const double hb = heightAt(other.x, other.z);
+					const double dxw = other.x - node.x, dzw = other.z - node.z;
+					const double len = std::hypot(dxw, dzw);
+					if (len < 5.0 || len > 1200.0)
+					{
+						continue;
+					}
+					const double nx = -dzw / len, nz = dxw / len;
+					for (int w = 0; w < wires; ++w)
+					{
+						const double lateral = (w - (wires - 1) * 0.5) * wireSpacing;
+						addWire(node.x + nx * lateral, h + supportHeight - (w % 2) * 1.2, node.z + nz * lateral,
+							other.x + nx * lateral, hb + supportHeight - (w % 2) * 1.2, other.z + nz * lateral, sag, 0.08f);
+					}
+				}
+			}
+			return placed;
+		};
+		{
+			openrepublic::content::LinearNetwork high;
+			if (pylonMesh != wi::ecs::INVALID_ENTITY && loadNetwork("electro_high.bin", high))
+			{
+				realPylons += stringPowerLine(high, pylonMesh, static_cast<double>(pylonHi.y) * 0.85, 4.2, 6, 6.0f, 400);
+			}
+			openrepublic::content::LinearNetwork low;
+			if (loadNetwork("electro_low.bin", low))
+			{
+				realPylons += stringPowerLine(low, poleMesh, 9.0, 0.9, 3, 1.2f, 600);
+			}
+			for (const char* fileName : { "rail.bin", "rail_secondary.bin" })
+			{
+				openrepublic::content::LinearNetwork rail;
+				if (railMesh == wi::ecs::INVALID_ENTITY || !loadNetwork(fileName, rail))
+				{
+					continue;
+				}
+				for (std::size_t i = 0; i < rail.nodes.size() && realRail < 6000; ++i)
+				{
+					const auto& a = rail.nodes[i];
+					for (const std::uint32_t j : a.links[0])
+					{
+						if (j <= i || j >= rail.nodes.size())
+						{
+							continue;
+						}
+						const auto& b = rail.nodes[j];
+						if (!inRange(a.x, a.z) && !inRange(b.x, b.z))
+						{
+							continue;
+						}
+						const double dxw = b.x - a.x, dzw = b.z - a.z;
+						const double len = std::hypot(dxw, dzw);
+						if (len < 1.0 || len > 3000.0)
+						{
+							continue;
+						}
+						const double yaw = std::atan2(dxw, dzw);
+						for (double t = 6.0; t < len && realRail < 6000; t += 12.0)
+						{
+							const double x = a.x + dxw * t / len;
+							const double z = a.z + dzw * t / len;
+							const double h = heightAt(x, z);
+							if (terrain.hasWater && h < terrain.waterLevel + 0.8)
+							{
+								continue;
+							}
+							AddObject(scene, railMesh, pose(x, z, yaw, 12.0, 0.15), request, cx, cz, 1.0f, false);
+							++realRail;
+						}
+					}
+				}
+			}
+		}
+
+		// ---- Fallback pylon line crossing the landscape on the far side of the town (only without real data).
 		std::size_t pylons = 0;
-		if (pylonMesh != wi::ecs::INVALID_ENTITY)
+		if (pylonMesh != wi::ecs::INVALID_ENTITY && realPylons == 0)
 		{
 			const double angle = 0.9;
 			const double ux = std::cos(angle), uz = std::sin(angle);
@@ -347,8 +477,8 @@ namespace openrepublic::preview
 		}
 
 		// ---- Railway: a long gentle line tangent to the town, piece by piece along the terrain.
-		std::size_t railPieces = 0;
-		if (railMesh != wi::ecs::INVALID_ENTITY)
+		std::size_t railPieces = realRail;
+		if (railMesh != wi::ecs::INVALID_ENTITY && realRail == 0)
 		{
 			const double angle = -0.55;
 			const double ux = std::cos(angle), uz = std::sin(angle);
@@ -438,7 +568,7 @@ namespace openrepublic::preview
 		info.vehicles = vehicles;
 		info.poles = poles;
 		info.lamps = lamps;
-		info.pylons = pylons;
+		info.pylons = pylons + realPylons;
 		info.railPieces = railPieces;
 		std::ostringstream summary;
 		summary << "Showcase props (OpenRepublic procedural meshes): " << vehicles << " vehicles on roads, " << poles
