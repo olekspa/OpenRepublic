@@ -477,6 +477,23 @@ namespace openrepublic
 			weather->volumetricCloudParameters.layerFirst.coverageAmount = static_cast<float>(0.15 + 0.7 * look.cloudCoverage);
 			weather->fogDensity = static_cast<float>(0.00035 + 0.003 * look.fogDensity);
 		}
+		{
+			// Keep the baked terrain tint balanced when the sun moves (materials multiply the vertex colours).
+			const float ratio = preview::ShowcaseTerrainSunGain(static_cast<float>(look.sunElevationDegrees)) /
+				std::max(0.01f, preview::ShowcaseBakedTerrainSunGain());
+			for (std::size_t i = 0; i < previewWorld.names.GetCount(); ++i)
+			{
+				const std::string& name = previewWorld.names[i].name;
+				if (name == "OpenRepublic map region terrain" || name == "OpenRepublic showcase far landscape")
+				{
+					const wi::ecs::Entity entity = previewWorld.names.GetEntity(i);
+					if (wi::scene::MaterialComponent* material = previewWorld.materials.GetComponent(entity))
+					{
+						material->SetBaseColor(XMFLOAT4(ratio, ratio, ratio, 1.0f));
+					}
+				}
+			}
+		}
 		renderPath->setExposure(static_cast<float>(look.exposure));
 		renderPath->setBloomEnabled(look.bloomEnabled);
 		renderPath->setAO(look.rtaoEnabled ? wi::RenderPath3D::AO_RTAO : (look.ssaoEnabled ? wi::RenderPath3D::AO_HBAO : wi::RenderPath3D::AO_DISABLED));

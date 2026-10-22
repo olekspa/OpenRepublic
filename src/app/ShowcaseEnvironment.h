@@ -71,6 +71,10 @@ namespace openrepublic::preview
 	// Sun elevation the baked terrain colours are tuned for; a high sun needs a lower tint gain
 	// (vertex colours cannot be re-shaded at runtime). NaN keeps the golden-hour tuning.
 	void SetShowcaseBakedSunElevation(float elevationDegrees);
+	// Terrain tint gain for a given sun elevation (1 at <= 17 degrees); the ratio between the current and the
+	// baked gain is applied to the terrain materials at runtime so sun changes keep the tint balanced.
+	float ShowcaseTerrainSunGain(float elevationDegrees);
+	float ShowcaseBakedTerrainSunGain();
 
 	// Procedural detail textures (created once, shared).
 	const wi::Resource& ShowcaseGrassTexture();
