@@ -37,3 +37,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - 2026-10-21 Region view: live economy overlay (`--economy-url http://127.0.0.1:PORT`) polls the bridge, tints buildings by stall reason, marks trucks; synthetic demo controls are hidden in region mode. Verified visually: status line showed tick 12, 2/10 buildings running on the real N22 layout. Per-building tint legibility not yet judged.
 
 - 2026-10-21 REPUBLIC-1 (Luna, no code edits, API only) operated the real N22 region: built a solar plant, 16 haul orders, 20,000 ticks, deterministic replay hash matched. Gaps it found: no tick-0 snapshot on a region host, no bulk haul command, oil mines have no consumer in the imported set, steel mill power demand unsatisfiable at the inferred rates (INFERRED figures, not game-verified). Report: OpenRepublic-Research/scratch/republic1/report.md.
+
+- 2026-10-22 Added the read-only `advise` protocol method (logistics planner) in response to REPUBLIC-1's gaps. Checked on the N22 region: it lists the unserved rawiron/rawcoal feeds with nearest-producer commands and flags that no electricity producer exists. Not yet covered by an automated test.

@@ -2,6 +2,10 @@
 
 #include "json.hpp"
 
+#include <cstdlib>
+#include <algorithm>
+#include <tuple>
+#include <map>
 #include <charconv>
 #include <cstdint>
 #include <limits>
@@ -523,7 +527,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
       return invalid(message);
     const Json roles = Json::array({"observer", "controller"}), control = Json::array({"controller"});
     Json methods = Json::array();
-    for (const char *name : {"hello", "capabilities", "catalog", "world", "explain", "poll", "events"})
+    for (const char *name : {"hello", "capabilities", "catalog", "world", "explain", "advise", "poll", "events"})
       methods.push_back(Json{{"name", name}, {"roles", roles}});
     for (const char *name : {"submit", "step", "shutdown"})
       methods.push_back(Json{{"name", name}, {"roles", control}});
@@ -631,6 +635,105 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                {"buildingId", b},
                {"reason", Stall(e.stall.reason)},
                {"explanation", e.text}};
+  } else if (method == "advise") {
+    // Read-only logistics planner: for every building input that no haul order serves, list the
+    // producers of that resource (nearest first) with a ready-to-submit create_haul_order command.
+    if (!Fields(req, {}, message))
+      return invalid(message);
+    const auto catalog = api_.DescribeCatalog();
+    const auto q = api_.QueryWorld();
+    std::map<std::string, const economy_api::BuildingTypeInfo *> types;
+    for (const auto &t : catalog.buildingTypes)
+      types[t.name] = &t;
+    auto cellDistance = [](economy::Cell a, economy::Cell b) {
+      return std::abs(static_cast<long long>(a.x) - b.x) + std::abs(static_cast<long long>(a.z) - b.z);
+    };
+    std::set<std::tuple<economy::BuildingId, economy::BuildingId, std::string>> served;
+    for (const auto &o : q.world.orders)
+      served.insert({o.source, o.destination, o.resource});
+    Json needs = Json::array(), surplus = Json::array();
+    for (const auto &consumer : q.world.buildings) {
+      const auto found = types.find(consumer.type);
+      if (found == types.end() || found->second->recipes.empty())
+        continue;
+      std::set<std::string> asked;
+      for (const auto &input : found->second->recipes.front().inputs) {
+        if (!asked.insert(input.resource).second)
+          continue;
+        std::uint64_t held = 0;
+        for (const auto &item : consumer.inventory)
+          if (item.resource == input.resource)
+            held = item.amount;
+        if (held >= input.amount)
+          continue;
+        std::vector<std::pair<long long, economy::BuildingId>> producers;
+        bool alreadyServed = false;
+        for (const auto &source : q.world.buildings) {
+          if (source.id == consumer.id)
+            continue;
+          const auto st = types.find(source.type);
+          if (st == types.end())
+            continue;
+          bool makes = false;
+          for (const auto &r : st->second->recipes)
+            for (const auto &out : r.outputs)
+              makes = makes || out.resource == input.resource;
+          if (!makes)
+            continue;
+          if (served.count({source.id, consumer.id, input.resource}))
+            alreadyServed = true;
+          producers.push_back({cellDistance(source.cell, consumer.cell), source.id});
+        }
+        if (alreadyServed)
+          continue;
+        std::sort(producers.begin(), producers.end());
+        Json candidates = Json::array();
+        for (std::size_t i = 0; i < producers.size() && i < 3; ++i)
+          candidates.push_back(Json{{"source", producers[i].second},
+                                    {"distanceCells", producers[i].first},
+                                    {"command", Json{{"kind", "create_haul_order"},
+                                                     {"source", producers[i].second},
+                                                     {"destination", consumer.id},
+                                                     {"resource", input.resource},
+                                                     {"vehicleType", "truck"}}}});
+        needs.push_back(Json{{"building", consumer.id},
+                             {"type", consumer.type},
+                             {"resource", input.resource},
+                             {"held", std::to_string(held)},
+                             {"neededPerCycle", std::to_string(input.amount)},
+                             {"producers", candidates},
+                             {"note", candidates.empty() ? "no building in this world produces it; place a producer or accept the stall"
+                                                          : "unserved input"}});
+      }
+    }
+    for (const auto &source : q.world.buildings) {
+      const auto st = types.find(source.type);
+      if (st == types.end())
+        continue;
+      std::set<std::string> outputs;
+      for (const auto &r : st->second->recipes)
+        for (const auto &out : r.outputs)
+          outputs.insert(out.resource);
+      for (const auto &resource : outputs) {
+        bool consumed = false;
+        for (const auto &other : q.world.buildings) {
+          const auto ot = types.find(other.type);
+          if (other.id == source.id || ot == types.end())
+            continue;
+          for (const auto &r : ot->second->recipes)
+            for (const auto &in : r.inputs)
+              consumed = consumed || in.resource == resource;
+        }
+        if (!consumed && source.stallReason == economy::StallReason::OutputFull)
+          surplus.push_back(Json{{"building", source.id}, {"type", source.type}, {"resource", resource},
+                                 {"note", "output_full and nothing here consumes it"}});
+      }
+    }
+    out = Json{{"errorCode", Error(q.error)},
+               {"revision", std::to_string(q.world.revision)},
+               {"tick", std::to_string(q.world.tick)},
+               {"unservedInputs", needs},
+               {"unconsumedSurplus", surplus}};
   } else if (method == "poll") {
     if (!Fields(req, {"handle"}, message))
       return invalid(message);

@@ -28,3 +28,5 @@ Then `POST http://127.0.0.1:8950/rpc` with `{"method": "...", ...}` (`protocolVe
 - Re-read `world` after every `step`; trust `stateHash` equality to verify replays.
 - Compare before/after inventories to measure the effect of a command.
 - Do not assume WRSR formulas: rates, storage sizes, footprints and truck data in the compat catalog are partly inferred (see `COMPAT_CATALOG.md` and the evidence ledger).
+
+- `advise` (read-only, observer or controller): {"method":"advise"} lists inputs no haul order serves, with up to 3 nearest producers each and a ready-to-submit `create_haul_order` command, plus `unconsumedSurplus` for output_full buildings nothing consumes. Heuristic planner only; it reads the first recipe of each building type.
