@@ -9,10 +9,16 @@ namespace openrepublic::content {
 
 struct BuildingResourceRate {
     std::string resource;
-    // Raw data value. Its time base and any worker/efficiency scaling are not
-    // established; see the evidence ledger.
+    // Raw data value in the loader's internal rate unit. The unit is INFERRED
+    // to be per game day (see the evidence ledger); efficiency scaling is unknown.
     double value = 0.0;
     std::size_t line = 0;
+    // True when a positive `$WORKERS_NEEDED` had already been read. The
+    // build-scoped loader (SOVIET64.exe, static review) multiplies the value by
+    // the worker count at that moment for `$CONSUMPTION` and (except one type
+    // code) `$PRODUCTION`, so such rates are per worker. `$WORKERS_NEEDED` also
+    // rescales earlier entries for one further type code; that is not modelled.
+    bool workersDeclaredBefore = false;
 };
 
 struct BuildingStorageEntry {

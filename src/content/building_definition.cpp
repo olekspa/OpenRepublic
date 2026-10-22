@@ -94,7 +94,8 @@ bool ParseBuildingDefinition(const std::string& text, BuildingDefinition& output
         } else if (name == "$PRODUCTION" || name == "$CONSUMPTION" || name == "$CONSUMPTION_PER_SECOND") {
             if (args.size() < 2 || !ParseFinite(args[1], number))
                 return Fail(error, "malformed " + name + where());
-            BuildingResourceRate rate{args[0], number, lineNumber};
+            BuildingResourceRate rate{args[0], number, lineNumber,
+                                      candidate.workersNeeded && *candidate.workersNeeded > 0.0};
             auto& target = name == "$PRODUCTION" ? candidate.production
                          : name == "$CONSUMPTION" ? candidate.consumption
                                                   : candidate.consumptionPerSecond;

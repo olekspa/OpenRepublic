@@ -47,6 +47,8 @@ void TestTypedExtraction() {
     Check(definition.production.size() == 2 && definition.production[0].resource == "livestock" &&
               definition.production[0].value == 0.2 && definition.production[1].resource == "vehicles",
           "production entries keep order and drop trailing comments");
+    Check(definition.production[0].workersDeclaredBefore && definition.consumption[0].workersDeclaredBefore,
+          "rates after $WORKERS_NEEDED are flagged as scaled by workers");
     Check(definition.consumption.size() == 1 && definition.consumption[0].resource == "plants" &&
               definition.consumptionPerSecond.size() == 1 && definition.consumptionPerSecond[0].value == 2.5,
           "a directive inside a comment is not extracted");
