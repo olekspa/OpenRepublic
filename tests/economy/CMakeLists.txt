@@ -4,3 +4,7 @@ target_compile_features(OpenRepublicEconomyTests PRIVATE cxx_std_17)
 enable_testing()
 add_test(NAME Economy COMMAND OpenRepublicEconomyTests)
 
+
+add_executable(OpenRepublicEconomyBench economy_bench.cpp)
+target_link_libraries(OpenRepublicEconomyBench PRIVATE OpenRepublicEconomy)
+target_compile_features(OpenRepublicEconomyBench PRIVATE cxx_std_17)
