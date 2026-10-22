@@ -1,4 +1,5 @@
 #include "ContentPreview.h"
+#include "RoadPaths.h"
 #include "ShowcaseProps.h"
 #include "openrepublic/content/mtl_dependencies.h"
 #include "openrepublic/content/mtl_preview_color.h"
@@ -1475,6 +1476,8 @@ namespace openrepublic::preview
 			std::vector<std::uint32_t> roadIndices;
 			const double limit = regionRadius * 1.1;
 			const auto& nodes = request.roads.nodes;
+			const RoadPathIndex roadPaths(request.roads);
+			std::size_t curvedRoadEdges = 0;
 			const auto heightAt = [&](double wx, double wz)
 			{
 				double h = 0.0;
@@ -1503,27 +1506,32 @@ namespace openrepublic::preview
 					{
 						continue;
 					}
-					const double dx = (bx - ax) / length;
-					const double dz = (bz - az) / length;
-					const int steps = std::max(1, static_cast<int>(std::ceil(length / kRoadStep)));
-					const std::uint32_t base = static_cast<std::uint32_t>(roadPositions.size());
-					for (int s = 0; s <= steps; ++s)
+					// Decoded curve when the package's segment geometry covers this edge, else the chord.
+					const std::vector<RoadSample> samples = RoadPathIndex::Resample(
+						roadPaths.Path(static_cast<std::uint32_t>(i), j), kRoadStep);
+					if (samples.size() < 2)
 					{
-						const double t = length * s / steps;
-						const double wx = ax + dx * t;
-						const double wz = az + dz * t;
-						const float y = static_cast<float>(heightAt(wx, wz)) + kRoadLift;
-						roadPositions.emplace_back(static_cast<float>(wx - center.X() - dz * kRoadHalfWidth), y,
-							static_cast<float>(wz - center.Z() + dx * kRoadHalfWidth));
-						roadPositions.emplace_back(static_cast<float>(wx - center.X() + dz * kRoadHalfWidth), y,
-							static_cast<float>(wz - center.Z() - dx * kRoadHalfWidth));
-						// u across the 5 m ribbon, v along it (one texture repeat per 16 m).
-						roadUvs.emplace_back(0.0f, static_cast<float>(t / 16.0));
-						roadUvs.emplace_back(1.0f, static_cast<float>(t / 16.0));
+						continue;
 					}
-					for (int s = 0; s < steps; ++s)
+					if (roadPaths.HasCurve(static_cast<std::uint32_t>(i), j))
 					{
-						const std::uint32_t a = base + 2u * s;
+						++curvedRoadEdges;
+					}
+					const std::uint32_t base = static_cast<std::uint32_t>(roadPositions.size());
+					for (const RoadSample& sample : samples)
+					{
+						const float y = static_cast<float>(heightAt(sample.x, sample.z)) + kRoadLift;
+						roadPositions.emplace_back(static_cast<float>(sample.x - center.X() - sample.dz * kRoadHalfWidth), y,
+							static_cast<float>(sample.z - center.Z() + sample.dx * kRoadHalfWidth));
+						roadPositions.emplace_back(static_cast<float>(sample.x - center.X() + sample.dz * kRoadHalfWidth), y,
+							static_cast<float>(sample.z - center.Z() - sample.dx * kRoadHalfWidth));
+						// u across the 5 m ribbon, v along it (one texture repeat per 16 m).
+						roadUvs.emplace_back(0.0f, static_cast<float>(sample.distance / 16.0));
+						roadUvs.emplace_back(1.0f, static_cast<float>(sample.distance / 16.0));
+					}
+					for (std::size_t s = 0; s + 1 < samples.size(); ++s)
+					{
+						const std::uint32_t a = base + 2u * static_cast<std::uint32_t>(s);
 						roadIndices.insert(roadIndices.end(), { a, a + 1, a + 2, a + 1, a + 3, a + 2 });
 					}
 					++roadEdges;
