@@ -1,0 +1,4 @@
+add_executable(OpenRepublicEconomyApiTests economy_api_tests.cpp)
+target_link_libraries(OpenRepublicEconomyApiTests PRIVATE OpenRepublicEconomyApi)
+target_compile_features(OpenRepublicEconomyApiTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicEconomyApiTests COMMAND OpenRepublicEconomyApiTests)

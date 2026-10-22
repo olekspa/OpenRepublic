@@ -1,0 +1,4 @@
+add_library(OpenRepublicEconomyApi economy_api.cpp)
+target_include_directories(OpenRepublicEconomyApi PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(OpenRepublicEconomyApi PUBLIC OpenRepublicEconomy)
+target_compile_features(OpenRepublicEconomyApi PUBLIC cxx_std_17)
