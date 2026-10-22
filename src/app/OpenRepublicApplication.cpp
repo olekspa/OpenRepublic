@@ -581,7 +581,7 @@ namespace openrepublic
 		const float sunWarmth = customSun
 			? std::clamp((mapShowcaseSunElevationDegrees - 4.0f) / 46.0f, 0.0f, 1.0f) : 0.7f;
 		const XMFLOAT3 previewSunColor = customSun
-			? XMFLOAT3(1.0f, 0.50f + 0.45f * sunWarmth, 0.26f + 0.62f * sunWarmth)
+			? XMFLOAT3(1.0f, 0.66f + 0.30f * sunWarmth, 0.46f + 0.46f * sunWarmth)
 			: (mapShowcaseEnhancedLook ? XMFLOAT3(1.0f, 0.92f, 0.82f) : XMFLOAT3(1.0f, 0.88f, 0.72f));
 		const wi::ecs::Entity sun = previewWorld.Entity_CreateLight(
 			"OpenRepublic preview light", XMFLOAT3(0, 0, 0), previewSunColor,
@@ -918,8 +918,8 @@ namespace openrepublic
 						weather.SetVolumetricCloudsReceiveShadow(true);
 						weather.volumetricCloudParameters.cloudStartHeight = 1500.0f;
 						weather.volumetricCloudParameters.cloudThickness = 2200.0f;
-						weather.volumetricCloudParameters.layerFirst.coverageAmount = 0.42f;
-						weather.volumetricCloudParameters.layerFirst.coverageMinimum = 0.10f;
+						weather.volumetricCloudParameters.layerFirst.coverageAmount = 0.55f;
+						weather.volumetricCloudParameters.layerFirst.coverageMinimum = 0.16f;
 						weather.sunColor = previewSunColor;
 						if (showcaseEnvironment.hasWater)
 						{

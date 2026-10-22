@@ -311,11 +311,11 @@ namespace openrepublic::preview
 			for (int b = 0; b < blobs; ++b)
 			{
 				const float angle = 2.0f * kPi * Hash01(b, 3, seed);
-				const float spread = b == 0 ? 0.0f : crownRadius * 0.42f;
+				const float spread = b == 0 ? 0.0f : crownRadius * (0.35f + 0.35f * Hash01(b, 6, seed));
 				const XMFLOAT3 center(std::cos(angle) * spread,
-					trunkHeight + crownRadius * (0.55f + 0.35f * Hash01(b, 4, seed)),
+					trunkHeight + crownRadius * (0.35f + 0.65f * Hash01(b, 4, seed)),
 					std::sin(angle) * spread);
-				const float radius = crownRadius * (b == 0 ? 1.0f : 0.72f);
+				const float radius = crownRadius * (b == 0 ? 0.78f : 0.52f + 0.12f * Hash01(b, 8, seed));
 				AddBlob(mesh, center, XMFLOAT3(radius, radius * 0.82f, radius), rings, segments, low, high, seed + b);
 			}
 			return mesh;
@@ -442,13 +442,17 @@ namespace openrepublic::preview
 			return rawHeight;
 		}
 		const double dist = std::hypot(worldX - data.centerX, worldZ - data.centerZ);
+		// Gentle rolling relief away from the (flat) town so the plain does not read as a billiard table.
+		rawHeight += 9.0f * (Fbm(worldX / 210.0 + 5.0, worldZ / 210.0 - 8.0, 3, 41) - 0.5f) *
+			SmoothStep(static_cast<float>(data.nearHalfExtent) * 1.1f, static_cast<float>(data.nearHalfExtent) * 2.4f, static_cast<float>(dist)) *
+			SmoothStep(data.waterLevel + 2.0f, data.waterLevel + 14.0f, rawHeight);
 		const float boost = 1.0f + 1.5f * SmoothStep(900.0f, 3200.0f, static_cast<float>(dist));
 		float height = data.waterLevel + (rawHeight - data.waterLevel) * boost;
-		const float ridge = 1.0f - std::fabs(2.0f * Fbm(worldX / 1400.0 + 9.0, worldZ / 1400.0 - 4.0, 4, 19) - 1.0f);
+		const float ridge = 1.0f - std::fabs(2.0f * Fbm(worldX / 2300.0 + 9.0, worldZ / 2300.0 - 4.0, 5, 19) - 1.0f);
 		const float range = Fbm(worldX / 3600.0 + 3.0, worldZ / 3600.0 + 11.0, 2, 23);
 		const float landward = SmoothStep(data.waterLevel + 3.0f, data.waterLevel + 30.0f, rawHeight);
-		height += 430.0f * SmoothStep(1800.0f, 6200.0f, static_cast<float>(dist)) * ridge * ridge *
-			SmoothStep(0.35f, 0.65f, range) * landward;
+		height += 360.0f * SmoothStep(1500.0f, 6500.0f, static_cast<float>(dist)) * ridge * ridge *
+			SmoothStep(0.25f, 0.5f, range) * landward;
 		return height;
 	}
 
@@ -497,7 +501,7 @@ namespace openrepublic::preview
 					const float large = TileFbm(u, v, 4, 3, 11);
 					const float grain = TileFbm(u, v, 32, 3, 29);
 					const float blades = TileNoise(u * 128.0, v * 128.0, 128, 53);
-					const float value = std::clamp(0.62f + 0.34f * (large - 0.5f) + 0.55f * (grain - 0.5f) + 0.22f * (blades - 0.5f), 0.0f, 1.0f);
+					const float value = std::clamp(0.70f + 0.16f * (large - 0.5f) + 0.30f * (grain - 0.5f) + 0.12f * (blades - 0.5f), 0.0f, 1.0f);
 					const float warm = 0.5f + 0.5f * (TileFbm(u, v, 6, 2, 71) - 0.5f);
 					const std::size_t i = (static_cast<std::size_t>(y) * kSize + x) * 4;
 					pixels[i + 0] = static_cast<std::uint8_t>(std::clamp((value * (0.96f + 0.12f * warm)) * 255.0f * 1.18f, 0.0f, 255.0f));
@@ -666,8 +670,8 @@ namespace openrepublic::preview
 		};
 		PartMesh spruceHigh = MakeConifer(5, 9, 17.0f, 3.1f, XMFLOAT3(0.035f, 0.10f, 0.045f), XMFLOAT3(0.10f, 0.23f, 0.09f), 3);
 		PartMesh pineHigh = MakeConifer(4, 8, 22.0f, 2.5f, XMFLOAT3(0.06f, 0.12f, 0.05f), XMFLOAT3(0.16f, 0.26f, 0.09f), 8);
-		PartMesh oakHigh = MakeBroadleaf(4.2f, 5.6f, 6, 6, 11, XMFLOAT3(0.045f, 0.11f, 0.03f), XMFLOAT3(0.15f, 0.27f, 0.07f), 5);
-		PartMesh birchHigh = MakeBroadleaf(5.0f, 3.7f, 4, 5, 9, XMFLOAT3(0.09f, 0.18f, 0.045f), XMFLOAT3(0.24f, 0.36f, 0.10f), 9);
+		PartMesh oakHigh = MakeBroadleaf(4.2f, 5.6f, 9, 5, 9, XMFLOAT3(0.045f, 0.11f, 0.03f), XMFLOAT3(0.15f, 0.27f, 0.07f), 5);
+		PartMesh birchHigh = MakeBroadleaf(5.0f, 3.9f, 6, 5, 8, XMFLOAT3(0.09f, 0.18f, 0.045f), XMFLOAT3(0.24f, 0.36f, 0.10f), 9);
 		PartMesh poplarHigh;
 		{
 			AddTrunk(poplarHigh, 3.0f, 0.22f, 0.15f, 6);
@@ -683,6 +687,10 @@ namespace openrepublic::preview
 		Species birch{ CreatePartEntity(scene, "showcase birch", birchHigh, 0.9f), 0.85f, 1.3f };
 		Species poplar{ CreatePartEntity(scene, "showcase poplar", poplarHigh, 0.9f), 0.85f, 1.25f };
 		Species spruceFar{ CreatePartEntity(scene, "showcase spruce far", spruceLow, 0.95f), 0.9f, 1.6f };
+		PartMesh shrubHigh;
+		AddBlob(shrubHigh, XMFLOAT3(0, 0.55f, 0), XMFLOAT3(1.0f, 0.7f, 1.0f), 4, 7, XMFLOAT3(0.05f, 0.10f, 0.03f), XMFLOAT3(0.18f, 0.28f, 0.07f), 31);
+		AddBlob(shrubHigh, XMFLOAT3(0.7f, 0.45f, 0.3f), XMFLOAT3(0.7f, 0.5f, 0.7f), 4, 7, XMFLOAT3(0.06f, 0.11f, 0.03f), XMFLOAT3(0.22f, 0.30f, 0.08f), 33);
+		Species shrub{ CreatePartEntity(scene, "showcase shrub", shrubHigh, 0.95f), 0.7f, 1.6f };
 		Species broadFar{ CreatePartEntity(scene, "showcase broadleaf far", broadLow, 0.95f), 0.9f, 1.4f };
 
 		Mask mask;
@@ -772,10 +780,57 @@ namespace openrepublic::preview
 			}
 		};
 		scan(0.0, 1400.0, 8.5, false);
+		// Undergrowth: dense small shrubs around the town and along the nearest forest edges.
+		struct ShrubSpot { double x, z; };
+		std::vector<ShrubSpot> shrubSpots;
+		{
+			const double spacing = 4.5;
+			const int half = static_cast<int>(std::ceil(520.0 / spacing));
+			for (int gz = -half; gz <= half; ++gz)
+			{
+				for (int gx = -half; gx <= half; ++gx)
+				{
+					const double wx = center.X() + gx * spacing + (Hash01(gx, gz, 91) - 0.5) * spacing;
+					const double wz = center.Z() + gz * spacing + (Hash01(gx, gz, 93) - 0.5) * spacing;
+					if (std::hypot(wx - center.X(), wz - center.Z()) > 520.0 || mask.Blocked(wx, wz))
+					{
+						continue;
+					}
+					const float patch = Fbm(wx / 38.0, wz / 38.0, 3, 97);
+					if (Hash01(gx, gz, 95) < SmoothStep(0.52f, 0.72f, patch) * 0.55f)
+					{
+						shrubSpots.push_back({ wx, wz });
+					}
+				}
+			}
+		}
 		scan(1400.0, 4200.0, 22.0, true);
 
 		std::size_t nearCount = 0;
 		std::size_t farCount = 0;
+		std::size_t shrubCount = 0;
+		for (const ShrubSpot& spot : shrubSpots)
+		{
+			const double h = heightNear(spot.x, spot.z);
+			if (shrub.mesh == wi::ecs::INVALID_ENTITY || (terrain.hasWater && h < terrain.waterLevel + 1.0))
+			{
+				continue;
+			}
+			const int hx = static_cast<int>(std::floor(spot.x * 0.53));
+			const int hz = static_cast<int>(std::floor(spot.z * 0.53));
+			const wi::ecs::Entity object = scene.Entity_CreateObject("");
+			wi::scene::ObjectComponent* component = scene.objects.GetComponent(object);
+			component->meshID = shrub.mesh;
+			component->SetCastShadow(false);
+			const float tint = 0.8f + 0.5f * Hash01(hx, hz, 101);
+			component->color = XMFLOAT4(tint, tint, tint * 0.9f, 1.0f);
+			const float scale = shrub.minScale + (shrub.maxScale - shrub.minScale) * Hash01(hx, hz, 103);
+			XMFLOAT4X4 matrix;
+			XMStoreFloat4x4(&matrix, XMMatrixScaling(scale, scale, scale) * XMMatrixRotationY(6.28f * Hash01(hx, hz, 107)) *
+				XMMatrixTranslation(static_cast<float>(spot.x - center.X()), static_cast<float>(h) - 0.1f, static_cast<float>(spot.z - center.Z())));
+			scene.transforms.GetComponent(object)->MatrixTransform(matrix);
+			++shrubCount;
+		}
 		for (const Candidate& candidate : candidates)
 		{
 			const int hx = static_cast<int>(std::floor(candidate.x * 0.37));
@@ -854,7 +909,7 @@ namespace openrepublic::preview
 			<< samples << 'x' << samples << " samples out to ~" << kFarHalfExtent << " m, height range "
 			<< grid.minHeight << ".." << grid.maxHeight << " m, "
 			<< (terrain.hasWater ? "lake level " : "no lake (level ") << terrain.waterLevel << " m"
-			<< (terrain.hasWater ? "" : ")") << ", " << nearCount << " detailed and " << farCount << " distant trees.";
+			<< (terrain.hasWater ? "" : ")") << ", " << nearCount << " detailed and " << farCount << " distant trees, " << shrubCount << " shrubs.";
 		info.summary = summary.str();
 		return true;
 	}

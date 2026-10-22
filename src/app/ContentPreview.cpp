@@ -1673,6 +1673,14 @@ namespace openrepublic::preview
 					{
 						material->SetRoughness(0.62f);
 						material->SetReflectance(0.30f);
+						// A faint self-illumination from the albedo texture stands in for the bounced sky
+						// light the renderer does not compute, lifting dark facades toward concrete tones.
+						auto& baseMap = material->textures[wi::scene::MaterialComponent::BASECOLORMAP];
+						if (baseMap.resource.IsValid())
+						{
+							material->textures[wi::scene::MaterialComponent::EMISSIVEMAP] = baseMap;
+							material->SetEmissiveColor(XMFLOAT4(1.0f, 0.97f, 0.9f, 0.30f));
+						}
 						material->CreateRenderData(true);
 					}
 				}
