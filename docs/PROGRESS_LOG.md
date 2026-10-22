@@ -133,3 +133,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-22 ~05:45 EDT** Shadow-off debug capture (env `OR_NOSHADOW=1`, debug-only switch) still shows the slope grid, so shadow sampling is ruled out. Remaining explanation: the grid follows the far mesh's triangulation/facets or the source heightmap's own sampling (about 10 m per sample); not resolved, low priority (visible only on steep faces at distance).
 
 - 2026-10-22 ~06:00 EDT Far landscape mesh raised from 769 to 1435 samples (about 9.8 m, the heightmap's own spacing): the slope grid on real-relief terrains is visibly weaker, so it was mesh/heightmap aliasing. N22 hero unchanged in brightness; capture still completes.
+
+- **2026-10-22 ~06:10 EDT** Worker ELECTRO started (luna/electro): establish the meaning of electro_high/low point sequences (pole/pylon positions, cable spans) for real power lines in the showcase.
