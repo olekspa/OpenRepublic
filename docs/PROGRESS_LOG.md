@@ -281,3 +281,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~14:30 EDT** Worker WATER-SHORE started (shoreline blend, depth colour, foam ribbon, flood-fill basins). Disk: freed ~8 GB more (D: 18.7 GB free); five merged worktree directories could not be fully deleted because other processes hold them (git forgot them).
 
 - **2026-10-23 ~15:10 EDT** WATER-SHORE merged (shore tones, depth colour, foam ribbon, flood-fill basins); the worker could not capture, so visuals were checked by me only on the lake-facing view. A bright white streak in that view turned out to be the real railway glinting in the low sun (not foam): rail material is now rougher/non-metallic (0.9/0.0) and the streak is gone. Full client build + CTest 70/70.
+
+- **2026-10-23 ~15:40 EDT** ECON-UI merged: deterministic economy summary (text + JSON) and a `summary` host method (additive, protocol v0). Full client build + CTest 71/71.
