@@ -531,3 +531,57 @@ Next: recover or repeat the missing private serializer trace, identify the exact
 - **VERIFIED (OpenRepublic implementation/tests):** bounded ordered COST declaration profiles preserve raw tokens, contextual phase provenance, duplicates, multiplier positions and opaque station rows. Unsupported selectors and automatic recipes remain diagnostic; there is no gameplay cost import. Full Release builds and CTest 79/79 headless and 80/80 client passed. Independent review findings were repaired. [Receipt](DEVELOPMENT_REPORT_2026-10-23_CONSTRUCTION_PROFILE.md).
 - **OBSERVED (read-only definition corpus, build23935965 context):** 488/488 named profiles, 474 with construction, 6737 operations, zero hard failures; all input hashes unchanged. There are 4200 unsupported-selector, 1386 unresolved-recipe and 539 conservative following-row diagnostics. These are profile coverage limits, not original-game validation failures. No private names, paths or fingerprints are emitted by the aggregate probe.
 - **VERIFIED (static, one matched build23935965 pathway):** definition work/resource entries initialize per-building running/reference fields; independently identified workers entries produce cumulative phase thresholds. An inspected scalar selector and ordinary completion path support dimensionless progress for that path only. Work/material units, non-worker delivery/removal, complete automatic formulas, alternate modes, operational activation and raw COST_WORK numeric consumers remain UNKNOWN. [Provenance and boundary](CONSTRUCTION_EVIDENCE.md).
+### GHIDRA-ROAD-2: writer, reader, and native field map
+
+Evidence labels below apply to static analysis of the installed SOVIET64 build context 23935965. No game launch or save modification occurred. The full private evidence record and tool evidence IDs remain in the designated private research scratch area.
+
+- **CORRECTED:** direct inspection shows `FUN_14042cc70` opens `road.bin` with `wb` and calls the network writer `FUN_14056ea60`; it is a save path, not the loader previously attributed to it. The load path is `FUN_140430fc0`, which opens `road.bin` with `rb` and calls `FUN_14056ef50`. The latter reads the network counts and calls node reader `FUN_14056f9a0` and segment reader `FUN_140570c00`.
+- **VERIFIED (static writer/reader mapping):** `FUN_14056fe40` and `FUN_140570c00` agree on a 0x88-byte segment header. The serialized ranges map to these native segment-object offsets. The object begins at `param_2` in the reader/writer. Mapped counts establish storage and framing, not domain semantics.
+
+| File offset and type | Native member offset | Verified mapping/use | Meaning status |
+| --- | --- | --- | --- |
+| `+0x00 u32` | `+0x08` point vector | count of 0x18-byte point records | point count |
+| `+0x04 u32` | `+0x20` pointer | node-vector index resolved to pointer | endpoint A index |
+| `+0x08 u32` | `+0x28` pointer | node-vector index resolved to pointer | endpoint B index |
+| `+0x0c u32` | `+0x38` pointer vector | count followed by node indices resolved to pointers | extra node references; role unknown |
+| `+0x10 u32` | `+0x218` vector | count of 0x30-byte records, serialized after points | record meaning unknown |
+| `+0x14 u32` | `+0x230` vector | count of 0x30-byte records, serialized after points | record meaning unknown |
+| `+0x18 u32` | `+0x248` vector | count of 0x30-byte records, serialized after points | record meaning unknown |
+| `+0x1c u32` | `+0x260` vector | count of 0x30-byte records, serialized after points | record meaning unknown |
+| `+0x20 u32` | `+0x278` vector | count of 0x30-byte records, serialized after points | record meaning unknown |
+| `+0x24 u32` | `+0x2a8` vector | count of 0xd0-byte native records; each has a 0x2c0-byte serialized prefix | nested record meaning unknown |
+| `+0x28 u32` | `+0x2c0` vector | count of 0xd0-byte native records; each has a 0x2c0-byte serialized prefix | record meaning unknown |
+| `+0x2c u32` | `+0x2d8` vector | count of 0xd0-byte native records; each has a 0x2c0-byte serialized prefix | record meaning unknown |
+| `+0x30 u32` | `+0xa0` vector | count of 0x18-byte native entries; reader consumes 0x14-byte records | record meaning unknown |
+| `+0x34 u32` | `+0xb8` vector | count of 0x108-byte native records; each has a 0xcc-byte prefix and three arrays sized by embedded `+0xc4` count | nested record meaning unknown |
+| `+0x38 u32` | `+0x118 u32` | copied scalar | meaning unknown |
+| `+0x3c u32` | `+0x11c u32` | copied scalar | meaning unknown |
+| `+0x40 u32` | `+0x120 s32` | copied scalar; geometry helper branches on its value | selector use verified; class meaning unknown |
+| `+0x44 u32` | `+0x124 s32` | copied scalar; geometry helper branches on values including 0 and 1 | selector use verified; speed/lane meaning unknown |
+| `+0x48 byte` | `+0x129 byte` | copied byte | meaning unknown |
+| `+0x4c u32` | `+0x12c u32` | copied scalar | meaning unknown |
+| `+0x50 u32` | `+0x138` pointer | index into a global pointer vector, resolved when in range | referenced object and role unknown |
+| `+0x54..+0x55 bytes` | `+0x140..+0x141` | copied bytes | meanings unknown |
+| `+0x58..+0x67 bytes` | `+0x144..+0x153` | two 8-byte copies | meanings unknown |
+| `+0x68..+0x6f bytes` | `+0x154..+0x15b` | two 4-byte copies | meanings unknown |
+| `+0x70 u32` | `+0x160` vector | count of u32 entries | meaning unknown |
+| `+0x74 u32` | `+0x1a0` pointer vector | count of references serialized as indices and remapped | referenced object role unknown |
+| `+0x78 u32` | `+0x1bc u32` | copied scalar | meaning unknown |
+| `+0x7c u32` | `+0xe8` byte vector | byte count | meaning unknown |
+| `+0x80 u32` | `+0x290` vector | count of 0x30-byte records serialized after points | record meaning unknown |
+| `+0x84 byte` | `+0x308` and `+0x314` | writer sets 1; reader then reads two 3-component vectors, otherwise derives them | optional trailing-vector flag |
+| `+0x85 byte` | `+0xd0` pointer vector | narrowed low byte of vector count; reader consumes two lookup keys per entry | collection role unknown; nonzero values remain unsupported by the bounded reader |
+| `+0x86 byte` | `+0x1c3`, `+0x1c4` booleans | bits 7 and 6 pack/unpack the two flags | flag meanings unknown |
+| `+0x87 byte` | none identified | writer emits zero; no reader use identified | unknown/reserved candidate |
+
+- **VERIFIED (static geometry-helper use):** `FUN_140570c00` calls `FUN_14054c260` when both endpoint pointers are present. That helper branches on segment-object `+0x120` and `+0x124`, checks connected segments using the same offsets, and creates/copies middle-point buffers from several 0x30-byte record vectors. This proves downstream geometry-buffer use of selectors and arrays, but does not identify width, lateral/vertical offset, material, lanes, one-way behavior, or speed.
+- **VERIFIED (structural node mapping):** `FUN_14056f560`/`FUN_14056f9a0` map the 0x48-byte node record. Position is three 32-bit components in native object `+0x04..+0x0f`. The `+0x0c` count maps to the neighbor-pointer vector at object `+0x10`; `+0x10` maps to segment pointers at `+0x28`; `+0x14` maps to u32 per-connection values at `+0x40`; `+0x18` maps to another u32 vector at `+0x58`; and `+0x1c` maps to three parallel arrays at `+0x70`, `+0x88`, and `+0xa0`. Scalar/index ranges `+0x20..+0x3b` map to object references/values at `+0xb8`, `+0xc8`, `+0xd0`, and `+0xd8`; their meanings remain unknown. The final 12 header bytes are writer-zeroed; no semantic use is established.
+- **INFERRED/UNKNOWN:** the third per-connection u32 array is retained as `typeIds` because sampled values align across endpoints/segments, but no evidence maps those values to public road classes. Prior sample values reached 910; this is not proof of a 910-entry type table.
+- **OBSERVED (read-only content inventory):** the inspected `media_soviet` root has `paths`, but no `roads` or `road` definition directory. Road material/shader names do not map observed connection values to a class. No road ID-to-width/speed/lane table was verified.
+- **UNKNOWN:** road width and offsets, lane count, one-way behavior, speed, surface, construction cost, road-type/connection definition source, and meanings of other copied values/flags. No formula or semantic table is added.
+- The bounded reader now exposes only the verified point count, nested record count, and supported `+0x84` flag in addition to existing endpoints, node connection values, polyline, and the verbatim raw header. Synthetic tests cover those named fields. These names describe structural serialization behavior, not road-type semantics.
+
+### Building state boundary
+
+- **VERIFIED:** the current `buildings_game.bin` sequential reader is a placement reader for supported observed formats only. It does not establish `buildings.bin` framing or per-building runtime state.
+- **UNKNOWN:** record boundaries/identity relationship and all requested construction progress, workers, storage, enabled flags, and their types/units. Aggregate `stats.ini` sections remain unsuitable as per-building evidence. No `buildings.bin` or runtime-state reader was added; an identified build-matched writer or trusted consumer plus stable field identity and cross-check evidence remains the gate.

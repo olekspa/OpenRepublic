@@ -31,15 +31,20 @@ struct RoadPoint {
 };
 
 struct RoadSegment {
+    // Structural fields copied from the segment record header by the matching
+    // reader. Their serialized offsets are 0x00, 0x04, 0x08, 0x34, and 0x84.
+    std::uint32_t pointCount = 0;
     std::uint32_t nodeA = 0;
     std::uint32_t nodeB = 0;
+    std::uint32_t nestedRecordCount = 0;
+    bool hasTrailingVectors = false;
     // Present only when endpoint connection arrays agree on this value.
     // The game's semantic meaning for the value is not yet known.
     std::optional<std::uint32_t> typeId;
-    // Exact serialized header bytes. The writer exposes several scalar and
-    // flag fields in this 0x88-byte block, but their road-width, lane,
-    // material, and vertical-offset meanings are not established. Retaining
-    // the bytes allows later evidence-backed interpretation without guessing.
+    // Exact serialized header bytes. The matching writer/reader maps more
+    // ranges to members on the native object; most meanings remain unknown.
+    // In particular, no width, lane, material, speed, or vertical-offset
+    // interpretation is established. Retain the bytes for later analysis.
     std::array<std::uint8_t, 0x88> rawHeader{};
     // The 0x18-record XYZ sequence. Centerline interpretation is INFERRED;
     // points are retained in file order.

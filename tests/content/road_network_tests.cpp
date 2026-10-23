@@ -108,9 +108,11 @@ void TestExtraction() {
           "segment and type ids follow the neighbors");
     Check(network.asymmetricLinks == 0, "a symmetric network reports no asymmetric links");
     Check(network.segments.size() == 2 && network.segmentGeometryComplete &&
-              network.segments[0].nodeA == 0 && network.segments[0].nodeB == 1 &&
+              network.segments[0].pointCount == 3 && network.segments[0].nodeA == 0 &&
+              network.segments[0].nodeB == 1 && network.segments[0].nestedRecordCount == 0 &&
+              network.segments[0].hasTrailingVectors &&
               network.segments[0].polyline.size() == 3 && network.segments[0].polyline[1].x == 20.0f,
-          "segment endpoints and point-list geometry are decoded");
+          "verified segment counts, endpoint indices, tail flag, and point-list geometry are decoded");
     Check(network.segments[0].typeId == 24 && network.segments[0].rawHeader[0x38] == 0 &&
               network.segments[0].rawHeader[0x39] == 0 && network.segments[0].rawHeader[0x3a] == 0 &&
               network.segments[0].rawHeader[0x3b] == 0x3f,
@@ -134,8 +136,10 @@ void TestNestedSegmentRecords() {
     std::string error;
     Check(ExtractRoadNetwork(bytes, network, &error) && network.segmentGeometryComplete &&
               network.segments.size() == 2 && network.segments[0].polyline.size() == 3 &&
+              network.segments[0].pointCount == 3 && network.segments[0].nestedRecordCount == 2 &&
+              network.segments[0].hasTrailingVectors &&
               network.segments[1].polyline.size() == 2,
-          "nested 0xcc records use their +0xc4 count to reach subsequent segment boundaries: " + error);
+          "nested records and named header fields reach subsequent segment boundaries: " + error);
 }
 
 void TestRejections() {
@@ -219,8 +223,10 @@ void TestPartialUnsupportedConditionalTail() {
     AppendSegment(derivedVectors, 0, 1, {{0, 0, 0}, {5, 0, 0}}, {}, 0, 0);
     Check(ExtractRoadNetwork(derivedVectors, network, &error) &&
               !network.segmentGeometryComplete && network.segments.size() == 1 &&
+              !network.segments[0].hasTrailingVectors &&
+              network.segments[0].rawHeader[0x84] == 0 &&
               !network.segmentGeometryDiagnostic.empty(),
-          "a zero +0x84 flag stops at the writer-reader vector mismatch");
+          "a zero +0x84 flag is exposed, preserved, and stops at the writer-reader vector mismatch");
 }
 
 } // namespace
