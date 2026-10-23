@@ -309,3 +309,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~21:50 EDT** TRADE merged: OpenRepublic-synthetic border trade (catalog trade prices, treasury, import/export via API and host, persistence, scenario grain_export_for_power, docs/TRADE.md). Not WRSR parity (UNKNOWN). Full build + CTest 76/76.
 
 - **2026-10-23 ~22:00 EDT** Worker TRADE-AI started (autopilot and LLM tooling use the trade commands; two more trade scenarios).
+
+- **2026-10-23 ~22:40 EDT** TRADE-AI merged (autopilot and LLM tooling use trade commands; extra trade scenarios; baseline table). Full build + CTest 76/76. Worker HANDOFF-23 started (consolidated handoff document for 2026-10-23).
