@@ -301,3 +301,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~19:50 EDT** SCEN-3 merged (utility score fields renamed to *Units; two harder power+road scenarios; baseline table in docs/SCENARIOS.md). CTest 73/73. Next-work selection after reading the handoff/plan: HAUL-MT worker started (profile and deterministically parallelise haul movement); I take the DLSS optional public build path myself.
 
 - **2026-10-23 ~20:10 EDT** Added tools/apply_streamline_patches.ps1 (ordered, checked patch application for a private opted-in Wicked copy); verified all 12 patches apply cleanly to a clean clone of the pinned revision. Default builds unchanged.
+
+- **2026-10-23 ~20:40 EDT** HAUL-MT merged: profiling showed production worker startup (not haul movement) dominated the 5,000-order case; fixed in src/economy/economy.cpp, hashes unchanged, before/after numbers in docs/ECONOMY_PERFORMANCE.md. Full build + CTest 73/73.
