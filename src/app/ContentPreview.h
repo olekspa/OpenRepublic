@@ -4,6 +4,7 @@
 #include "openrepublic/content/glb_container.h"
 #include "EconomyOverlay.h"
 #include "ShowcaseEnvironment.h"
+#include "BuildingLodController.h"
 #include "openrepublic/content/glb_semantic.h"
 #include "openrepublic/content/map_placement.h"
 #include "openrepublic/content/terrain_dds.h"
@@ -162,6 +163,11 @@ namespace openrepublic::preview
 		double sourceMinimumY = 0.0;
 		double sourceCenterX = 0.0;
 		double sourceCenterZ = 0.0;
+		double sourceMinimumX = 0.0;
+		double sourceMaximumX = 0.0;
+		double sourceMinimumZ = 0.0;
+		double sourceMaximumZ = 0.0;
+		double sourceMaximumY = 0.0;
 		double sourceMaxHorizontalExtent = 0.0;
 	};
 
@@ -187,7 +193,9 @@ namespace openrepublic::preview
 		const openrepublic::content::MapPlacementRequest& request,
 		const std::filesystem::path& contentRoot, double radiusMeters, int modelLevel, bool enhancedLook,
 		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
-		std::vector<RegionInstance>* outInstances = nullptr, ShowcaseEnvironmentInfo* environmentInfo = nullptr);
+		std::vector<RegionInstance>* outInstances = nullptr, ShowcaseEnvironmentInfo* environmentInfo = nullptr,
+		BuildingLodController* lodController = nullptr, bool dynamicLod = false,
+		float lodNearDistance = 250.0f, float lodFarDistance = 700.0f);
 
 	bool CreateMapTerrainAroundPlacement(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request, const NmfPreviewFrame& frame,

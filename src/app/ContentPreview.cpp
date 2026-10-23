@@ -809,6 +809,11 @@ namespace openrepublic::preview
 		{
 			frame->displayScale = previewGeometry.displayScale;
 			frame->sourceMinimumY = previewGeometry.sourceMinimum.y;
+			frame->sourceMaximumY = previewGeometry.sourceMaximum.y;
+			frame->sourceMinimumX = previewGeometry.sourceMinimum.x;
+			frame->sourceMaximumX = previewGeometry.sourceMaximum.x;
+			frame->sourceMinimumZ = previewGeometry.sourceMinimum.z;
+			frame->sourceMaximumZ = previewGeometry.sourceMaximum.z;
 			frame->sourceCenterX = (static_cast<double>(previewGeometry.sourceMinimum.x) +
 				previewGeometry.sourceMaximum.x) * 0.5;
 			frame->sourceCenterZ = (static_cast<double>(previewGeometry.sourceMinimum.z) +
@@ -1345,17 +1350,30 @@ namespace openrepublic::preview
 		const openrepublic::content::MapPlacementRequest& request,
 		const std::filesystem::path& contentRoot, double radiusMeters, int modelLevel, bool enhancedLook,
 		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
-		std::vector<RegionInstance>* outInstances, ShowcaseEnvironmentInfo* environmentInfo)
+		std::vector<RegionInstance>* outInstances, ShowcaseEnvironmentInfo* environmentInfo,
+		BuildingLodController* lodController, bool dynamicLod, float lodNearDistance, float lodFarDistance)
 	{
 		ShowcasePreviewTimer totalTimer("CreateMapRegionPreview total");
 		using namespace openrepublic::content;
-		constexpr std::size_t kMaxRegionObjects = 1500;
+		constexpr std::size_t kMaxRegionObjects = 10000;
 		constexpr std::size_t kMaxRegionTypes = 160;
 		if (modelLevel < 0 || modelLevel > 2)
 		{
 			error = "map region model level must be 0, 1 or 2";
 			return false;
 		}
+		if (dynamicLod && (lodController == nullptr || !std::isfinite(lodNearDistance) ||
+			!std::isfinite(lodFarDistance) || lodNearDistance <= 0.0f || lodFarDistance <= lodNearDistance))
+		{
+			error = "dynamic map LOD requires a controller and finite 0 < near < far distances";
+			return false;
+		}
+		if (dynamicLod && !lodController->Configure(lodNearDistance, lodFarDistance))
+		{
+			error = "dynamic map LOD distance configuration is invalid";
+			return false;
+		}
+		if (lodController != nullptr) lodController->Clear();
 		const double radius = radiusMeters > 0.0 ? radiusMeters : 400.0;
 		const PlacedBuilding& center = request.placement;
 
@@ -1589,14 +1607,24 @@ namespace openrepublic::preview
 			}
 		}
 
-		// Buildings: one mesh per distinct type, one object per placement.
-		std::map<std::string, wi::ecs::Entity> meshByType;
+		// Buildings: one hidden source mesh per distinct type and available LOD,
+		// plus one placement object whose meshID is switched by the optional controller.
+		struct TypeMeshes
+		{
+			BuildingLodController::MeshVariants byLod{
+				wi::ecs::INVALID_ENTITY, wi::ecs::INVALID_ENTITY, wi::ecs::INVALID_ENTITY };
+			int maximumLod = 0;
+			int initialLod = -1;
+		};
+		std::map<std::string, TypeMeshes> meshByType;
 		std::size_t instances = 0;
 		std::size_t unresolvedTypes = 0;
 		std::size_t failedLoads = 0;
 		std::size_t skippedByLimit = 0;
+		std::size_t resolvedTypes = 0;
 		std::set<std::string> missingTypeNames;
 		std::set<std::string> lodFallbackTypeNames;
+		std::size_t rejectedMisalignedLods = 0;
 		for (const std::size_t index : selected)
 		{
 			const PlacedBuilding& placed = request.allPlacements[index];
@@ -1608,7 +1636,8 @@ namespace openrepublic::preview
 			auto cached = meshByType.find(placed.typeName);
 			if (cached == meshByType.end())
 			{
-				wi::ecs::Entity meshEntity = wi::ecs::INVALID_ENTITY;
+				TypeMeshes typeMeshes;
+				std::string assetError;
 				if (meshByType.size() < kMaxRegionTypes)
 				{
 					// `MIRRORZ_<type>` is the loader's mirrored derivative of <type>.
@@ -1617,80 +1646,115 @@ namespace openrepublic::preview
 					const std::string baseName = mirrored ? placed.typeName.substr(mirrorPrefix.size())
 						: placed.typeName;
 					const BuildingTypeDefinition* type = FindBuildingType(types, baseName);
-					BuildingTypeAssetPaths assets;
-					std::string assetError;
-					int selectedLod = -1;
-					if (type != nullptr)
-					{
-						for (int candidateLod = modelLevel; candidateLod >= 0; --candidateLod)
-						{
-							if ((candidateLod == 2 && !type->lod2.has_value()) ||
-								(candidateLod == 1 && !type->lod1.has_value()))
-							{
-								continue;
-							}
-							if (ResolveBuildingTypeAssets(*type, candidateLod, contentRoot, assets, &assetError))
-							{
-								selectedLod = candidateLod;
-								break;
-							}
-						}
-					}
-					else
+					NmfPreviewFrame referenceBounds;
+					bool haveReferenceBounds = false;
+					if (type == nullptr)
 					{
 						assetError = "building type definition was not found";
 					}
-					if (selectedLod < 0)
-					{
-						++unresolvedTypes;
-						missingTypeNames.insert(placed.typeName);
-						wilog("[OpenRepublic] Map region type '%s' has no resolvable model at or below LOD %d: %s",
-							placed.typeName.c_str(), modelLevel, assetError.c_str());
-					}
 					else
 					{
-						XMFLOAT3 ignoredTarget;
-						float ignoredDistance = 0.0f;
-						std::string modelDescription;
-						std::string modelAudit;
-						std::string modelError;
-						if (CreateNmfStaticPreview(scene, assets.model, meshEntity, ignoredTarget, ignoredDistance,
-							false, false, { contentRoot }, assets.material, modelDescription, modelAudit, modelError,
-							nullptr, true, mirrored))
+						const int firstCandidate = dynamicLod ? 0 : modelLevel;
+						const int lastCandidate = dynamicLod ? modelLevel : 0;
+						const int step = dynamicLod ? 1 : -1;
+						for (int candidateLod = firstCandidate;
+							(dynamicLod ? candidateLod <= lastCandidate : candidateLod >= lastCandidate);
+							candidateLod += step)
 						{
-							// The mesh entity carries its own object; hide it so only instances render.
-							if (wi::scene::ObjectComponent* own = scene.objects.GetComponent(meshEntity))
+							BuildingTypeAssetPaths assets;
+							std::string candidateError;
+							if ((candidateLod == 2 && !type->lod2.has_value()) ||
+								(candidateLod == 1 && !type->lod1.has_value()) ||
+								!ResolveBuildingTypeAssets(*type, candidateLod, contentRoot, assets, &candidateError))
 							{
-								own->SetRenderable(false);
+								if (!candidateError.empty()) assetError = candidateError;
+								continue;
 							}
-							if (selectedLod < modelLevel)
+							wi::ecs::Entity meshEntity = wi::ecs::INVALID_ENTITY;
+							XMFLOAT3 ignoredTarget;
+							float ignoredDistance = 0.0f;
+							std::string modelDescription, modelAudit, modelError;
+							NmfPreviewFrame bounds;
+							if (!CreateNmfStaticPreview(scene, assets.model, meshEntity, ignoredTarget, ignoredDistance,
+								false, false, { contentRoot }, assets.material, modelDescription, modelAudit, modelError,
+								&bounds, true, mirrored))
 							{
-								lodFallbackTypeNames.insert(placed.typeName);
-								wilog("[OpenRepublic] Map region type '%s' requested LOD %d; using lower available LOD %d",
-									placed.typeName.c_str(), modelLevel, selectedLod);
+								assetError = modelError;
+								++failedLoads;
+								wilog("[OpenRepublic] Map region type '%s' LOD %d failed to load: %s",
+									placed.typeName.c_str(), candidateLod, modelError.c_str());
+								continue;
 							}
-						}
-						else
-						{
-							meshEntity = wi::ecs::INVALID_ENTITY;
-							++failedLoads;
-							wilog("[OpenRepublic] Map region type '%s' skipped: %s", placed.typeName.c_str(),
-								modelError.c_str());
+							if (wi::scene::ObjectComponent* own = scene.objects.GetComponent(meshEntity)) own->SetRenderable(false);
+							if (!haveReferenceBounds)
+							{
+								referenceBounds = bounds;
+								haveReferenceBounds = true;
+							}
+							else
+							{
+								const double tolerance = std::max(0.05, referenceBounds.sourceMaxHorizontalExtent * 0.01);
+								const bool aligned =
+									std::fabs(bounds.sourceMinimumX - referenceBounds.sourceMinimumX) <= tolerance &&
+									std::fabs(bounds.sourceMaximumX - referenceBounds.sourceMaximumX) <= tolerance &&
+									std::fabs(bounds.sourceMinimumY - referenceBounds.sourceMinimumY) <= tolerance &&
+									std::fabs(bounds.sourceMaximumY - referenceBounds.sourceMaximumY) <= tolerance &&
+									std::fabs(bounds.sourceMinimumZ - referenceBounds.sourceMinimumZ) <= tolerance &&
+									std::fabs(bounds.sourceMaximumZ - referenceBounds.sourceMaximumZ) <= tolerance &&
+									std::fabs(bounds.displayScale - referenceBounds.displayScale) <= 1e-9;
+								if (!aligned)
+								{
+									++rejectedMisalignedLods;
+									assetError = "LOD source bounds do not align within 1% of the reference footprint (minimum 0.05 m)";
+									wilog("[OpenRepublic] Map region type '%s' LOD %d rejected: source bounds do not align with LOD %d",
+										placed.typeName.c_str(), candidateLod, typeMeshes.initialLod);
+									continue;
+								}
+							}
+							typeMeshes.byLod[static_cast<std::size_t>(candidateLod)] = meshEntity;
+							if (typeMeshes.initialLod < 0) typeMeshes.initialLod = candidateLod;
+							if (!dynamicLod) break;
 						}
 					}
+					typeMeshes.maximumLod = modelLevel;
 				}
-				cached = meshByType.emplace(placed.typeName, meshEntity).first;
+				if (typeMeshes.initialLod < 0)
+				{
+					++unresolvedTypes;
+					missingTypeNames.insert(placed.typeName);
+					wilog("[OpenRepublic] Map region type '%s' has no usable model at or below LOD %d: %s",
+						placed.typeName.c_str(), modelLevel, assetError.c_str());
+				}
+				else
+				{
+					++resolvedTypes;
+					const bool missingDynamicVariant = dynamicLod &&
+						std::any_of(typeMeshes.byLod.begin(), typeMeshes.byLod.begin() + modelLevel + 1,
+							[](wi::ecs::Entity id) { return id == wi::ecs::INVALID_ENTITY; });
+					if (typeMeshes.initialLod != modelLevel || missingDynamicVariant)
+					{
+						lodFallbackTypeNames.insert(placed.typeName);
+					}
+				}
+				cached = meshByType.emplace(placed.typeName, std::move(typeMeshes)).first;
 			}
-			if (cached->second == wi::ecs::INVALID_ENTITY)
+			TypeMeshes& typeMeshes = cached->second;
+			if (typeMeshes.initialLod < 0)
 			{
 				continue;
 			}
 			const wi::ecs::Entity instance = scene.Entity_CreateObject(placed.typeName);
-			scene.objects.GetComponent(instance)->meshID = cached->second;
+			const int initialLod = typeMeshes.initialLod;
+			scene.objects.GetComponent(instance)->meshID = typeMeshes.byLod[static_cast<std::size_t>(initialLod)];
 			XMFLOAT4X4 matrix(placed.matrix.data());
 			matrix._41 = static_cast<float>(placed.X() - center.X());
 			matrix._43 = static_cast<float>(placed.Z() - center.Z());
 			scene.transforms.GetComponent(instance)->MatrixTransform(matrix);
+			if (dynamicLod && lodController != nullptr)
+			{
+				lodController->AddInstance(instance, typeMeshes.byLod, typeMeshes.maximumLod,
+					XMFLOAT3(matrix._41, matrix._42, matrix._43));
+			}
 			if (outInstances != nullptr)
 			{
 				const std::string prefix = "MIRRORZ_";
@@ -1709,27 +1773,27 @@ namespace openrepublic::preview
 			// give them a satin, slightly reflective finish so sun and sky read on facades.
 			for (const auto& entry : meshByType)
 			{
-				const wi::scene::MeshComponent* mesh = entry.second == wi::ecs::INVALID_ENTITY
-					? nullptr : scene.meshes.GetComponent(entry.second);
-				if (mesh == nullptr)
+				for (const wi::ecs::Entity meshEntity : entry.second.byLod)
 				{
-					continue;
-				}
-				for (const auto& subset : mesh->subsets)
-				{
-					if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(subset.materialID))
+					const wi::scene::MeshComponent* mesh = meshEntity == wi::ecs::INVALID_ENTITY
+						? nullptr : scene.meshes.GetComponent(meshEntity);
+					if (mesh == nullptr) continue;
+					for (const auto& subset : mesh->subsets)
 					{
-						material->SetRoughness(0.62f);
-						material->SetReflectance(0.30f);
-						// A faint self-illumination from the albedo texture stands in for the bounced sky
-						// light the renderer does not compute, lifting dark facades toward concrete tones.
-						auto& baseMap = material->textures[wi::scene::MaterialComponent::BASECOLORMAP];
-						if (baseMap.resource.IsValid())
+						if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(subset.materialID))
 						{
-							material->textures[wi::scene::MaterialComponent::EMISSIVEMAP] = baseMap;
-							material->SetEmissiveColor(XMFLOAT4(1.0f, 0.97f, 0.9f, 0.45f));
+							material->SetRoughness(0.62f);
+							material->SetReflectance(0.30f);
+							// A faint self-illumination from the albedo texture stands in for the bounced sky
+							// light the renderer does not compute, lifting dark facades toward concrete tones.
+							auto& baseMap = material->textures[wi::scene::MaterialComponent::BASECOLORMAP];
+							if (baseMap.resource.IsValid())
+							{
+								material->textures[wi::scene::MaterialComponent::EMISSIVEMAP] = baseMap;
+								material->SetEmissiveColor(XMFLOAT4(1.0f, 0.97f, 0.9f, 0.45f));
+							}
+							material->CreateRenderData(true);
 						}
-						material->CreateRenderData(true);
 					}
 				}
 			}
@@ -1891,15 +1955,21 @@ namespace openrepublic::preview
 		cameraDistance = static_cast<float>(radius * 1.5);
 		std::ostringstream summary;
 		summary << "Map region: " << instances << " building instances of "
-			<< (meshByType.size() - unresolvedTypes - failedLoads) << " models within " << radius
+			<< resolvedTypes << " models within " << radius
 			<< " m of placement " << request.placementIndex + 1 << '/' << request.placementCount << " at requested LOD "
 			<< modelLevel << " ("
 			<< center.typeName << "); " << selected.size() << " placements selected, " << unresolvedTypes
 			<< " unresolved types, " << failedLoads << " failed loads, " << lodFallbackTypeNames.size()
-			<< " types used a lower available LOD, " << skippedByLimit
+			<< " types used LOD fallback, " << rejectedMisalignedLods << " LODs rejected by source-bounds alignment, "
+			<< skippedByLimit
 			<< " skipped by the instance/type limits; " << roadEdges << " road links drawn (decoded curves where available, else chords); 1:1 metres,"
 			<< " verified terrain transform, placement"
 			<< " matrices applied as stored";
+		if (dynamicLod)
+		{
+			summary << "; dynamic building LOD thresholds " << lodNearDistance << "/" << lodFarDistance
+				<< " m with 8% hysteresis";
+		}
 		description = summary.str();
 		return true;
 	}

@@ -30,6 +30,7 @@
 #include "openrepublic/runtime/checkpoint_file.h"
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <atomic>
 #include <cctype>
@@ -392,12 +393,16 @@ namespace openrepublic
 	}
 
 	void OpenRepublicApplication::SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
-		bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel)
+		bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel,
+		bool dynamicLod, float lodNearDistance, float lodFarDistance)
 	{
 		mapPlacement = std::move(request);
 		mapRadiusMeters = radiusMeters;
 		mapRegionPreview = regionPreview;
 		mapRegionModelLevel = regionModelLevel;
+		mapRegionDynamicLod = dynamicLod;
+		mapLodNearDistance = lodNearDistance;
+		mapLodFarDistance = lodFarDistance;
 		mapContentRoot = std::move(contentRoot);
 	}
 
@@ -1011,7 +1016,8 @@ namespace openrepublic
 					created = preview::CreateMapRegionPreview(previewWorld, *mapPlacement, mapContentRoot,
 						mapRadiusMeters, mapRegionModelLevel, mapShowcaseEnhancedLook,
 						nmfPreviewCameraTarget, nmfPreviewCameraDistance,
-						description, error, &regionInstances, &showcaseEnvironment);
+						description, error, &regionInstances, &showcaseEnvironment,
+						&buildingLodController, mapRegionDynamicLod, mapLodNearDistance, mapLodFarDistance);
 					geometryAuditSummary = "map region preview (per-model audits are in the records above)";
 				}
 				else
@@ -1731,11 +1737,39 @@ namespace openrepublic
 		const bool nativeInputWasActive = nativeToolsReady &&
 			(nativeEconomyTools.HasActiveInput() || (renderPath && renderPath->GetGUI().IsTyping()));
 		wi::Application::Update(dt);
-		if (nmfCaptureMode || mapShowcaseCaptureMode)
+		if (nmfCaptureMode)
 		{
 			return;
 		}
+		if (mapShowcaseCaptureMode)
+		{
+			if (mapRegionPreview && mapRegionDynamicLod && renderPath != nullptr && renderPath->camera != nullptr)
+				buildingLodController.Update(previewWorld, renderPath->camera->Eye);
+			// Matched capture telemetry: ignore the capture path's >=12 s warmup, then
+			// time the following 48 update frames (the same settle window before readback).
+			static const auto captureStart = std::chrono::steady_clock::now();
+			static double captureSampleSeconds = 0.0;
+			static float captureWorstFrame = 0.0f;
+			static std::uint32_t captureSampleFrames = 0;
+			if (std::chrono::steady_clock::now() - captureStart >= std::chrono::seconds(12) && captureSampleFrames < 48)
+			{
+				captureSampleSeconds += std::max(0.0f, dt);
+				captureWorstFrame = std::max(captureWorstFrame, dt);
+				++captureSampleFrames;
+				if (captureSampleFrames == 48)
+				{
+					wilog("[OpenRepublic] Map LOD capture frame sample: %u frames, %.2f ms average, %.2f ms worst (%.1f fps from update dt)",
+						captureSampleFrames, captureSampleSeconds * 1000.0 / captureSampleFrames,
+						captureWorstFrame * 1000.0f, captureSampleSeconds > 0.0 ? captureSampleFrames / captureSampleSeconds : 0.0);
+				}
+			}
+			return;
+		}
 		UpdateSceneControl(dt);
+		if (mapRegionPreview && mapRegionDynamicLod && renderPath != nullptr && renderPath->camera != nullptr)
+		{
+			buildingLodController.Update(previewWorld, renderPath->camera->Eye);
+		}
 		if (mapShowcaseEnhancedLook && mapRegionPreview)
 		{
 			// Frame-time telemetry for the modern look (logged every ~5 s of wall time).
