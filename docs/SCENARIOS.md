@@ -57,8 +57,8 @@ On Windows generators that place executables directly under the build tree,
 use the host executable's actual path. The scorer drives a fresh synthetic host
 instance, applies the scenario setup, then runs the rule-based autopilot for
 the requested main-step ticks. Initial buildings and roads consume one setup
-tick; utility links, when present, consume a second. Autopilot placement attempts
-may advance additional one-tick steps. The output `tick` is the actual final
+tick; utility links, when present, consume a second. Autopilot placement and
+trade attempts may advance additional one-tick steps. The output `tick` is the actual final
 simulation tick. Inventory scenarios emit score JSON with `scoreMicroUnits` and
 `scoreUnits`. Utility scenarios emit `scoreBreakdown` with measured power
 throughput, unmet eligible demand, and an infrastructure-count cost proxy.
@@ -117,8 +117,8 @@ extra ticks while attempting orders or placements.
 | `overbuilt_generator` | Throughput / unmet; cost | 2 / 0; cost 3 | 18 |
 | `powered_chain_link_gap` | Throughput / unmet; cost | 2 / 2; cost 12 | 18 |
 | `powered_chain_road_and_link_gap` | Throughput / unmet; cost | 2 / 0; cost 7 | 18 |
-| `import_missing_input` | Throughput / unmet; cost; treasury | Not measured (headless host unavailable) | — |
-| `export_surplus_for_power` | Throughput / unmet; cost; treasury | Not measured (headless host unavailable) | — |
+| `import_missing_input` | Stored non-raw; treasury | 0.000018 (18 micro-units); treasury 0 | 19 |
+| `export_surplus_for_power` | Throughput / unmet; cost; treasury | 1 / 0; cost 10; treasury 1 | 20 |
 
 The last two scenarios leave their initial utility-link configuration unchanged;
 the road-and-link fixture also retains its three disconnected road segments.
@@ -148,5 +148,5 @@ and a separate rule-based autopilot baseline is added to the same table. All
 rows use `scoreMicroUnits` as the exact value and `scoreUnits` for display.
 World `host_args` are disallowed in scenario mode so region/checkpoint inputs
 cannot silently alter the fixture. Reported final ticks can differ because the
-autopilot may advance extra ticks while attempting placements. Local tests use
+autopilot may advance extra ticks while attempting placements or trade. Local tests use
 the scripted backend only; network and installed CLI backends are not invoked.

@@ -322,7 +322,8 @@ def _trade_actions(world, catalog, direction=None):
 def _queue_trades(host, world, catalog, direction=None):
     handles = []
     for method, params in _trade_actions(world, catalog, direction):
-        result = host.call(method, revision=world["revision"], **params)
+        wire_params = {**params, "amount": str(params["amount"]), "rateCap": str(params["rateCap"])}
+        result = host.call(method, revision=world["revision"], **wire_params)
         if result.get("errorCode") == "none" and result.get("state") == "queued" and result.get("handle"):
             handles.append(result["handle"])
     return handles

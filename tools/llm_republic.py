@@ -98,20 +98,21 @@ def self_test():
     from types import SimpleNamespace
     class FakeHost:
         def __init__(self):
-            self.tick=0; self.submitted=0; self.trade_submitted=0; self.polled=0
+            self.tick=0; self.submitted=0; self.trade_submitted=0; self.trade_params=None; self.polled=0
             self.world_data={"revision":"1","tick":"0","buildings":[{"id":1,"type":"station","inventory":[{"resource":"coal","amount":"0","capacity":"10"}],"stallReason":"running"}],"roads":[],"orders":[],"vehicles":[],"treasury":"8"}
         def call(self,m,**kw):
             if m=="catalog": return {"errorCode":"none","resources":[{"name":"coal","tradeDeclared":True,"buyPrice":"4","sellPrice":"2"}],"buildingTypes":[{"name":"Farm","recipes":[]},{"name":"station","tradePost":True,"storage":[{"resource":"coal","capacity":"10"}],"recipes":[]}],"vehicleTypes":[]}
             if m=="world": self.world_data["tick"]=str(self.tick); return {"errorCode":"none","world":self.world_data}
             if m=="advise": return {"errorCode":"none","unservedInputs":[]}
             if m=="submit": self.submitted+=1; return {"errorCode":"none","state":"queued","handle":"1"}
-            if m=="trade_import": self.trade_submitted+=1; return {"errorCode":"none","state":"queued","handle":"2"}
+            if m=="trade_import": self.trade_submitted+=1; self.trade_params=kw; return {"errorCode":"none","state":"queued","handle":"2"}
             if m=="step": self.tick+=kw["ticks"]; return {"errorCode":"none"}
             if m=="poll": self.polled+=1; return {"state":"accepted","failure":"none"}
             raise AssertionError(m)
     fake=FakeHost(); scripted=ScriptedBackend([{"actions":[{"kind":"trade_import","buildingId":1,"resource":"coal","amount":1,"rateCap":1}],"notes":"ok"}])
     run(fake,scripted,SimpleNamespace(rounds=1,ticks=2,transcript=None,action_cap=24,fallback_advise=False,system_prompt=SYSTEM))
     assert fake.submitted==0 and fake.trade_submitted==1 and fake.polled==1 and fake.tick==2
+    assert fake.trade_params["amount"]=="1" and fake.trade_params["rateCap"]=="1"
     print("llm_republic self-test passed")
 
 def observe(w,c,adv,last,score,score_start,score_previous):
@@ -196,7 +197,8 @@ def run(host,backend,args,replay=None,scenario=None):
         handles=[]; rev=w["revision"]
         for a in [x for x in good if x["kind"]!="create_haul_order"]:
           if a["kind"] in ("trade_export","trade_import"):
-            method=a["kind"]; params={k:a[k] for k in ("buildingId","resource","amount","rateCap")}
+            method=a["kind"]; params={k:a[k] for k in ("buildingId","resource")}
+            params.update(amount=str(a["amount"]),rateCap=str(a["rateCap"]))
             r=host.call(method,revision=rev,**params)
             if r.get("state")=="queued" and r.get("errorCode")=="none": handles.append((r["handle"],a))
             else: results.append({"action":a,"state":"rejected_at_submit","reason":r})
