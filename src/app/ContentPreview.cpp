@@ -1626,6 +1626,67 @@ namespace openrepublic::preview
 				addRoadMesh(meshes.sidewalks, "OpenRepublic map road sidewalks", 3);
 			}
 		}
+
+		// OR_SHOW_NETWORKS=1: opt-in overlay of the other network files that share the road layout
+		// (OBSERVED in docs/MAP_PACKAGE_FILES.md). Widths and colours are presentation only; these
+		// networks are mostly underground or out of sight in the original, so the default is off.
+		if (const char* networks = std::getenv("OR_SHOW_NETWORKS"); networks && std::string_view(networks) == "1")
+		{
+			struct NetworkLayer { const char* file; const char* name; XMFLOAT4 color; double halfWidth; double lift; };
+			static const NetworkLayer layers[] = {
+				{ "heating.bin", "OpenRepublic heating network overlay", XMFLOAT4(0.90f, 0.35f, 0.10f, 1), 0.35, 0.60 },
+				{ "waterpipes.bin", "OpenRepublic water network overlay", XMFLOAT4(0.10f, 0.40f, 0.90f, 1), 0.30, 0.50 },
+				{ "pedestrianway.bin", "OpenRepublic pedestrian network overlay", XMFLOAT4(0.72f, 0.72f, 0.72f, 1), 1.00, 0.12 },
+				{ "conveyor.bin", "OpenRepublic conveyor network overlay", XMFLOAT4(0.90f, 0.80f, 0.10f, 1), 0.50, 1.00 },
+			};
+			const auto overlayHeight = [&](double wx, double wz)
+			{
+				double h = 0.0;
+				const double cx = std::min(std::max(wx, transform.originX), transform.originX + transform.sizeX);
+				const double cz = std::min(std::max(wz, transform.originZ), transform.originZ + transform.sizeZ);
+				SampleTerrainHeight(request.heightmap, transform, cx, cz, h, nullptr);
+				return h;
+			};
+			for (const NetworkLayer& layer : layers)
+			{
+				std::ifstream stream(request.mapDirectory / layer.file, std::ios::binary);
+				if (!stream) continue;
+				const std::string bytes((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+				if (bytes.empty() || bytes.size() > 128u * 1024u * 1024u) continue;
+				openrepublic::content::RoadNetwork network;
+				if (!openrepublic::content::ExtractRoadNetwork(bytes, network, nullptr)) continue;
+				const RoadPathIndex layerPaths(network);
+				RoadMeshOptions layerOptions;
+				layerOptions.halfWidth = layer.halfWidth;
+				layerOptions.surfaceLift = layer.lift;
+				layerOptions.buildShoulders = false;
+				layerOptions.buildSidewalks = false;
+				layerOptions.maximumDistance = regionRadius * 1.1;
+				layerOptions.centerX = center.X();
+				layerOptions.centerZ = center.Z();
+				RoadMeshBuffers layerMeshes;
+				if (!BuildRoadMesh(network, layerPaths, overlayHeight, layerOptions, layerMeshes) || layerMeshes.pavement.indices.empty()) continue;
+				std::vector<XMFLOAT3> positions;
+				std::vector<XMFLOAT2> uvs;
+				for (const auto& vertex : layerMeshes.pavement.vertices)
+				{
+					positions.emplace_back(static_cast<float>(vertex.x - center.X()), static_cast<float>(vertex.y), static_cast<float>(vertex.z - center.Z()));
+					uvs.emplace_back(vertex.u, vertex.v);
+				}
+				const wi::ecs::Entity entity = scene.Entity_CreateMeshFromData(layer.name, layerMeshes.pavement.indices.size(),
+					layerMeshes.pavement.indices.data(), positions.size(), positions.data());
+				auto* mesh = scene.meshes.GetComponent(entity);
+				auto* material = scene.materials.GetComponent(entity);
+				if (mesh == nullptr || material == nullptr) continue;
+				mesh->vertex_uvset_0 = std::move(uvs);
+				mesh->CreateRenderData();
+				material->SetBaseColor(layer.color);
+				material->SetRoughness(0.6f);
+				material->SetDoubleSided(true);
+				material->CreateRenderData(true);
+				wilog("[OpenRepublic] Network overlay %s: %zu nodes, %zu segments", layer.file, network.nodes.size(), network.segments.size());
+			}
+		}
 		if (request.hasRoads && useOldRoads)
 		{
 			constexpr float kRoadHalfWidth = 2.5f;
