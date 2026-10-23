@@ -321,3 +321,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-24 ~00:00 EDT** Worker POP started (opt-in synthetic population/workforce model; no change for catalogs without declarations).
 
 - **2026-10-24 ~00:40 EDT** POP merged (opt-in synthetic population/workforce; docs/POPULATION.md). The worker's economy_host test did not compile against the current Dispatcher constructor; fixed (Dispatcher(Role, World&)). Full CTest 77/77.
+
+- **2026-10-24 ~00:50 EDT** Owner directive: work toward original-game parity (road classes/widths, terrain blending, water rules, building state; original-game screenshot comparison). Workers PARITY-WATER and PARITY-TERRAIN started (read-only evidence tasks, decoders and ledger updates). I will attempt the original-game screenshot comparison myself (explicitly requested; game launched read-only, no saves written).
