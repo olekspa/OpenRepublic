@@ -319,3 +319,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~23:50 EDT** VARIANCE merged: republic_tournament --repeats/--final-tick with mean/min/max/stddev and single-run non-conclusive marking; extended OpenRepublicScenarioTournament test. CTest 76/76 (the standalone unittest run without a host argument fails by design).
 
 - **2026-10-24 ~00:00 EDT** Worker POP started (opt-in synthetic population/workforce model; no change for catalogs without declarations).
+
+- **2026-10-24 ~00:40 EDT** POP merged (opt-in synthetic population/workforce; docs/POPULATION.md). The worker's economy_host test did not compile against the current Dispatcher constructor; fixed (Dispatcher(Role, World&)). Full CTest 77/77.

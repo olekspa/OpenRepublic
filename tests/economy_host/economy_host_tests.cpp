@@ -197,8 +197,7 @@ int main() {
     populationWorld.PlaceBuilding(mine, {4, 1});
     const auto populationStep = populationWorld.Step();
     ok &= Check(populationStep.accepted, "advance opt-in population host world");
-    economy_api::EconomyApi populationApi(populationWorld);
-    economy_host::Dispatcher populationHost(economy_host::Role::Observer, populationApi);
+    economy_host::Dispatcher populationHost(economy_host::Role::Observer, populationWorld);
     const auto populationSummary = Response(populationHost, Request("population-summary", "summary"));
     ok &= Check(populationSummary["ok"] &&
                     populationSummary["result"]["population"] == "20" &&
