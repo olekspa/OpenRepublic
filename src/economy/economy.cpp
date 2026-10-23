@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 
 namespace openrepublic::economy {
@@ -228,7 +229,33 @@ struct State {
     std::set<CommandId> utilityCommands;
     std::vector<Pending> pending;
     std::map<CommandId, CommandResult> results;
+    // Derived enabled-road adjacency; excluded from persistence and state hash.
+    mutable bool roadGraphReady{};
+    mutable std::unordered_map<std::uint64_t, std::uint8_t> roadGraph;
 };
+std::uint64_t CellKey(Cell c) {
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(c.x)) << 32) |
+           static_cast<std::uint32_t>(c.z);
+}
+std::uint8_t DirectionBit(Cell a, Cell b) {
+    if (b.x < a.x) return 1u;
+    if (b.x > a.x) return 2u;
+    if (b.z < a.z) return 4u;
+    return 8u;
+}
+void EnsureRoadGraph(const State &s) {
+    if (s.roadGraphReady)
+        return;
+    s.roadGraph.clear();
+    s.roadGraph.reserve(s.roads.size() * 2);
+    for (const auto &road : s.roads) {
+        if (!road.enabled)
+            continue;
+        s.roadGraph[CellKey(road.a)] |= DirectionBit(road.a, road.b);
+        s.roadGraph[CellKey(road.b)] |= DirectionBit(road.b, road.a);
+    }
+    s.roadGraphReady = true;
+}
 std::size_t Slot(const BuildingTypeDef &t, ResourceId r) {
     for (std::size_t i = 0; i < t.storage.size(); ++i)
         if (t.storage[i].resource == r)
@@ -259,16 +286,14 @@ Order *FindOrder(State &s, OrderId id) {
     return nullptr;
 }
 Vehicle *FindVehicle(State &s, VehicleId id) {
-    for (auto &x : s.vehicles)
-        if (x.id == id)
-            return &x;
-    return nullptr;
+    const auto it = std::lower_bound(s.vehicles.begin(), s.vehicles.end(), id,
+        [](const Vehicle &v, VehicleId value) { return v.id < value; });
+    return it != s.vehicles.end() && it->id == id ? &*it : nullptr;
 }
 const Vehicle *FindVehicle(const State &s, VehicleId id) {
-    for (const auto &x : s.vehicles)
-        if (x.id == id)
-            return &x;
-    return nullptr;
+    const auto it = std::lower_bound(s.vehicles.begin(), s.vehicles.end(), id,
+        [](const Vehicle &v, VehicleId value) { return v.id < value; });
+    return it != s.vehicles.end() && it->id == id ? &*it : nullptr;
 }
 bool InFootprint(const BuildingTypeDef &t, Cell origin, Cell c) {
     return c.x >= origin.x && c.z >= origin.z &&
@@ -288,16 +313,19 @@ bool Occupied(const State &s, Cell c) {
     return false;
 }
 bool RoadBetween(const State &s, Cell a, Cell b, bool open) {
+    if (open) {
+        EnsureRoadGraph(s);
+        const auto at = s.roadGraph.find(CellKey(a));
+        return at != s.roadGraph.end() && (at->second & DirectionBit(a, b)) != 0;
+    }
     for (const auto &r : s.roads)
-        if (((r.a == a && r.b == b) || (r.a == b && r.b == a)) && (!open || r.enabled))
+        if ((r.a == a && r.b == b) || (r.a == b && r.b == a))
             return true;
     return false;
 }
 bool RoadAt(const State &s, Cell c) {
-    for (const auto &r : s.roads)
-        if (r.enabled && (r.a == c || r.b == c))
-            return true;
-    return false;
+    EnsureRoadGraph(s);
+    return s.roadGraph.find(CellKey(c)) != s.roadGraph.end();
 }
 CommandFailure PlacementFailure(const State &s, const BuildingTypeDef &t, Cell o) {
     if (o.x < 0 || o.z < 0 || static_cast<std::uint64_t>(o.x) + t.width > s.width ||
@@ -340,7 +368,11 @@ std::vector<Cell> Path(const State &s, Cell start, Cell goal) {
         return {start};
     if (!RoadAt(s, start) || !RoadAt(s, goal))
         return {};
-    std::vector<Cell> seen{start}, prev{start}, queue{start};
+    EnsureRoadGraph(s);
+    std::unordered_map<std::uint64_t, Cell> previous;
+    previous.reserve(std::min<std::size_t>(s.roadGraph.size(), 4096));
+    previous.emplace(CellKey(start), start);
+    std::vector<Cell> queue{start};
     std::size_t head = 0;
     const Cell dirs[] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
     while (head < queue.size()) {
@@ -349,25 +381,17 @@ std::vector<Cell> Path(const State &s, Cell start, Cell goal) {
             Cell n{at.x + d.x, at.z + d.z};
             if (!InGrid(n, s.width, s.depth) || !RoadBetween(s, at, n, true))
                 continue;
-            bool known = false;
-            for (Cell x : seen)
-                if (x == n)
-                    known = true;
-            if (known)
+            if (!previous.emplace(CellKey(n), at).second)
                 continue;
-            seen.push_back(n);
-            prev.push_back(at);
             queue.push_back(n);
             if (n == goal) {
                 std::vector<Cell> out{goal};
                 Cell cur = goal;
                 while (cur != start) {
-                    std::size_t i = 0;
-                    while (i < seen.size() && seen[i] != cur)
-                        ++i;
-                    if (i == seen.size())
+                    const auto it = previous.find(CellKey(cur));
+                    if (it == previous.end())
                         return {};
-                    cur = prev[i];
+                    cur = it->second;
                     out.push_back(cur);
                 }
                 std::reverse(out.begin(), out.end());
@@ -553,6 +577,7 @@ void Apply(State &s, const Pending &p) {
             return;
         }
         s.roads.push_back({s.nextRoad++, a, b, true});
+        s.roadGraphReady = false;
         Result(s, p, true, CommandFailure::None, "road built", 0, s.roads.back().id);
         return;
     }
@@ -562,7 +587,10 @@ void Apply(State &s, const Pending &p) {
             reject(CommandFailure::UnknownRoad, "unknown road");
             return;
         }
-        r->enabled = p.enabled;
+        if (r->enabled != p.enabled) {
+            r->enabled = p.enabled;
+            s.roadGraphReady = false;
+        }
         Result(s, p, true, CommandFailure::None, p.enabled ? "road enabled" : "road disabled", 0, r->id);
         return;
     }
@@ -1223,8 +1251,7 @@ UtilityDiagnostics AdvanceTick(State &s) {
         Apply(s, p);
         ++s.revision;
     }
-    std::sort(s.buildings.begin(), s.buildings.end(),
-              [](const Building &a, const Building &b) { return a.id < b.id; });
+    // Monotone IDs plus order-preserving removal keep entity vectors sorted.
     bool hasUtilityRecipes = false;
     for (const auto &type : s.catalog->BuildingTypes())
         for (const auto &recipe : type.recipes)
@@ -1240,7 +1267,6 @@ UtilityDiagnostics AdvanceTick(State &s) {
             receipt = MakeUtilityDiagnostics(s, components, {}, {}, {}, {});
         }
     }
-    std::sort(s.orders.begin(), s.orders.end(), [](const Order &a, const Order &b) { return a.id < b.id; });
     for (auto &o : s.orders)
         Haul(s, o);
     ++s.tick;
@@ -2184,6 +2210,23 @@ WorldSnapshot World::Snapshot() const {
     }
     o.utilityConnections = s.utilityConnections;
     return o;
+}
+TickEventSnapshot World::CaptureTickEvents() const {
+    const auto &s = impl_->state;
+    TickEventSnapshot snapshot;
+    snapshot.tick = s.tick;
+    snapshot.buildings.reserve(s.buildings.size());
+    for (const auto &building : s.buildings)
+        snapshot.buildings.push_back({building.id, building.stall});
+    snapshot.orders.reserve(s.orders.size());
+    std::map<VehicleId, std::uint64_t> cargoByVehicle;
+    for (const auto &vehicle : s.vehicles)
+        cargoByVehicle.emplace(vehicle.id, vehicle.cargo);
+    for (const auto &order : s.orders) {
+        const auto vehicle = cargoByVehicle.find(order.vehicle);
+        snapshot.orders.push_back({order.id, vehicle == cargoByVehicle.end() ? 0 : vehicle->second});
+    }
+    return snapshot;
 }
 
 std::string SaveWorld(const World &w) {

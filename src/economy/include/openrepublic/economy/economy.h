@@ -361,6 +361,15 @@ struct WorldSnapshot {
     std::vector<UtilityConnectionSnapshot> utilityConnections;
 };
 
+// Tick-boundary transitions required by the economy API event journal.
+struct TickEventSnapshot {
+    struct Building { BuildingId id{}; StallRecord stall; };
+    struct Order { OrderId id{}; std::uint64_t cargo{}; };
+    std::uint64_t tick{};
+    std::vector<Building> buildings;
+    std::vector<Order> orders;
+};
+
 /** Worker threads for the per-building production phase (0 = hardware concurrency, 1 = serial).
  *  Results are bit-identical for every setting: buildings are independent in that phase. */
 void SetProductionThreads(unsigned threads) noexcept;
@@ -417,6 +426,7 @@ public:
     StepResult Step(std::uint32_t ticks = 1);
     /** Returns ID-ordered values and an FNV-1a hash of canonical little-endian state fields. */
     WorldSnapshot Snapshot() const;
+    TickEventSnapshot CaptureTickEvents() const;
     /** Returns the current disabled, missing-input, output-full, or running explanation. */
     StallRecord Explain(BuildingId building) const;
     /** Returns last-tick utility observations. Demand includes only enabled recipes whose stock inputs and output

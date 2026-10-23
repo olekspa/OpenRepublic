@@ -41,5 +41,5 @@ add_test(NAME EconomyUtilityDiagnostics COMMAND OpenRepublicEconomyUtilityDiagno
 
 
 add_executable(OpenRepublicEconomyBench economy_bench.cpp)
-target_link_libraries(OpenRepublicEconomyBench PRIVATE OpenRepublicEconomy)
+target_link_libraries(OpenRepublicEconomyBench PRIVATE OpenRepublicEconomy OpenRepublicEconomyApi)
 target_compile_features(OpenRepublicEconomyBench PRIVATE cxx_std_17)
