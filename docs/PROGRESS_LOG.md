@@ -377,3 +377,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-24 ~16:30 EDT** Worker BUILDING-STATE started (serializer of per-building runtime state in buildings(_game).bin and workers.bin layout; the largest unread parity data).
 
 - **2026-10-24 ~17:10 EDT** BUILDING-STATE worker failed partway (turn failed; no report) but left a useful ledger trace (buildings_game.bin = u32 count + per-element writer; building object 0x1420 bytes), which I committed and merged. I then decompiled the per-building writer myself (raised-payload Ghidra) and recorded the writer mapping of the 0x548 block: which slots are vector element counts (with native strides, e.g. 0x21b8-byte slot records holding a 0x2000-byte buffer) and which are plain copies. Meanings remain UNKNOWN; naming needs the consumers of each building-object offset.
+
+- **2026-10-24 ~17:30 EDT** Worker BUILDING-STATE-2 started (name building-object members by their consumers: enabled, construction progress, workers, stock slot records, production progress).
