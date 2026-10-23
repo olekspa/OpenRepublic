@@ -1,42 +1,40 @@
-From 4f93f3fd4f337aeb38dbfe410701b83024ccdd42 Mon Sep 17 00:00:00 2001
+From 036851528c6170161dfcbeb9b43ec930f5a0e79e Mon Sep 17 00:00:00 2001
 From: OpenRepublic contributors <dev@openrepublic.invalid>
-Date: Thu, 22 Oct 2026 12:00:00 -0400
-Subject: [PATCH 7/7] Allow selecting DLSS Performance at runtime
+Date: Fri, 23 Oct 2026 03:32:09 -0400
+Subject: [PATCH] Allow selecting DLSS Performance at runtime
 
-Keep Quality as the default and support an opt-in Performance mode through
-OPENREPUBLIC_DLSS_PRESET. Use the same mode for optimal input sizing and each
-per-frame DLSS options submission.
 ---
- WickedEngine/wiRenderPath3D.cpp | 15 ++++++++++++---
- 1 file changed, 12 insertions(+), 3 deletions(-)
+ WickedEngine/wiRenderPath3D.cpp | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
 
 diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
+index 6fff12bc..1410a23d 100644
 --- a/WickedEngine/wiRenderPath3D.cpp
 +++ b/WickedEngine/wiRenderPath3D.cpp
-@@ -11,6 +11,8 @@
- #include <chrono>
- #include <fstream>
- #include <sstream>
+@@ -8,6 +8,8 @@
+ #include "wiGraphicsDevice_DX12.h"
+ #include "sl.h"
+ #include "sl_dlss.h"
 +#include <cstdlib>
 +#include <cstring>
  #endif
  
  using namespace wi::graphics;
-@@ -26,6 +28,13 @@
- 		wi::helper::DebugOut(message.c_str());
- 		std::ofstream file("streamline-diagnostics.log", std::ios::app);
- 		if (file) { file << message; file.flush(); }
-+	}
+@@ -18,6 +20,13 @@ using namespace wi::ecs;
+ namespace wi
+ {
+ #if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
 +	static sl::DLSSMode GetStreamlineDLSSMode()
 +	{
 +		const char* preset = std::getenv("OPENREPUBLIC_DLSS_PRESET");
 +		return preset != nullptr && std::strcmp(preset, "performance") == 0
 +			? sl::DLSSMode::eMaxPerformance
 +			: sl::DLSSMode::eMaxQuality;
- 	}
++	}
  	static bool EvaluateStreamlineDLSS(const CameraComponent& camera, const CameraComponent& previousCamera,
  		const Texture& inputColor, const Texture& depth, const Texture& motionVectors, const Texture& output, CommandList cmd, uint32_t outputWidth, uint32_t outputHeight, bool reset)
-@@ -65,7 +74,7 @@
+ 	{
+@@ -51,7 +60,7 @@ namespace wi
  
  		const sl::ViewportHandle viewport(1);
  		sl::DLSSOptions options{};
@@ -45,7 +43,7 @@ diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
  		options.outputWidth = outputWidth;
  		options.outputHeight = outputHeight;
  		options.colorBuffersHDR = sl::Boolean::eTrue;
-@@ -3286,14 +3295,14 @@
+@@ -3223,7 +3232,7 @@ namespace wi
  		if (getFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", function) != sl::Result::eOk || !function) { dlssRequested = false; dlssEnabled = false; return; }
  		auto getOptimal = reinterpret_cast<PFun_slDLSSGetOptimalSettings*>(function);
  		sl::DLSSOptions options{};
@@ -54,13 +52,6 @@ diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
  		options.outputWidth = GetPhysicalWidth();
  		options.outputHeight = GetPhysicalHeight();
  		options.colorBuffersHDR = sl::Boolean::eTrue;
- 		options.useAutoExposure = sl::Boolean::eTrue;
- 		sl::DLSSOptimalSettings optimal{};
- 		const sl::Result optimalResult = getOptimal(options, optimal);
--		{ std::ostringstream message; message << "DLSS optimal settings result=" << static_cast<int>(optimalResult) << " display=" << options.outputWidth << "x" << options.outputHeight << " render=" << optimal.optimalRenderWidth << "x" << optimal.optimalRenderHeight << "\n"; LogDLSSRun(message.str()); }
-+		{ std::ostringstream message; message << "DLSS preset=" << (options.mode == sl::DLSSMode::eMaxPerformance ? "Performance" : "Quality") << " optimal settings result=" << static_cast<int>(optimalResult) << " display=" << options.outputWidth << "x" << options.outputHeight << " render=" << optimal.optimalRenderWidth << "x" << optimal.optimalRenderHeight << "\n"; LogDLSSRun(message.str()); }
- 		if (GetPhysicalWidth() == 0 || GetPhysicalHeight() == 0 || optimalResult != sl::Result::eOk || optimal.optimalRenderWidth == 0 || optimal.optimalRenderHeight == 0)
- 		{
- 			dlssRequested = false;
 -- 
-2.45.0
+2.47.1.windows.2
+

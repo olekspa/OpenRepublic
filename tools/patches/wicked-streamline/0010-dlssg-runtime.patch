@@ -1,0 +1,749 @@
+From 55bf9f9b9e2d9c0f000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenRepublic contributors <dev@openrepublic.invalid>
+Date: Fri, 23 Oct 2026 13:00:00 -0400
+Subject: [PATCH 10/10] Add opt-in DLSS-G frame generation runtime path
+
+Share one Streamline frame token across simulation, DLSS evaluation, PCL
+markers and present; add UI/HUD-less tags and runtime-selectable generation.
+The path remains disabled unless OPENREPUBLIC_DLSS_FRAME_GENERATION=on.
+---
+diff --git a/WickedEngine/wiApplication.cpp b/WickedEngine/wiApplication.cpp
+index 44f9778..5dc304f 100644
+--- a/WickedEngine/wiApplication.cpp
++++ b/WickedEngine/wiApplication.cpp
+@@ -295,6 +295,9 @@ namespace wi
+ 		}
+ 
+ 		// Fixed time update:
++#ifdef OPENREPUBLIC_STREAMLINE
++		wi::graphics::StreamlineBeginFrame();
++#endif
+ 		auto range = wi::profiler::BeginRangeCPU("Fixed Update");
+ 		{
+ 			if (frameskip)
+@@ -322,6 +325,10 @@ namespace wi
+ 
+ 		// Variable-timed update:
+ 		Update(deltaTime);
++		#ifdef OPENREPUBLIC_STREAMLINE
++		wi::graphics::StreamlineSetPCLMarker(sl::PCLMarker::eSimulationEnd);
++		wi::graphics::StreamlineSetRenderSubmitStart();
++		#endif
+ 
+ 		Render();
+ 
+diff --git a/WickedEngine/wiGraphicsDevice_DX12.cpp b/WickedEngine/wiGraphicsDevice_DX12.cpp
+index 2fff625..24bf48c 100644
+--- a/WickedEngine/wiGraphicsDevice_DX12.cpp
++++ b/WickedEngine/wiGraphicsDevice_DX12.cpp
+@@ -29,16 +29,18 @@ DEFINE_GUID(D3D12_VIDEO_DECODE_PROFILE_HEVC_MAIN, 0x5b11d51b, 0x2f4c, 0x4452, 0x
+ #include <string>
+ #include <cstdlib>
+ #include <cstring>
+-#include <fstream>
+ #include <pix.h>
+ 
+ #include <sstream>
++#include <fstream>
+ #include <algorithm>
++#include <chrono>
+ #include <intrin.h> // _BitScanReverse64
+ #ifdef OPENREPUBLIC_STREAMLINE
+ #include "sl.h"
+ #include "sl_dlss_g.h"
+ #include "sl_reflex.h"
++#include "sl_pcl.h"
+ #endif
+ 
+ using namespace Microsoft::WRL;
+@@ -69,6 +71,15 @@ namespace dx12_internal
+ 	static bool streamline_initialized = false;
+ 	static bool streamline_fg_probe_requested = false;
+ 	static bool streamline_fg_probe_completed = false;
++	static bool streamline_fg_enabled = false;
++	static uint32_t streamline_fg_generated_frames = 1;
++	static sl::FrameToken* streamline_frame_token = nullptr;
++	static std::mutex streamline_frame_mutex;
++	static PFun_slPCLSetMarker* streamline_set_pcl_marker = nullptr;
++	static bool streamline_pcl_marker_lookup_complete = false;
++	static std::mutex streamline_pcl_marker_mutex;
++	static sl::Result streamline_fg_last_options_result = sl::Result::eErrorFeatureNotSupported;
++
+ 	static void WriteStreamlineDiagnostic(const std::string& message)
+ 	{
+ 		wi::helper::DebugOut(message.c_str());
+@@ -76,10 +87,20 @@ namespace dx12_internal
+ 		if (file) { file << message; file.flush(); }
+ 	}
+ 
++	static void StreamlineLogCallback(sl::LogType type, const char* message)
++	{
++		std::ostringstream log;
++		log << "[Streamline] type=" << static_cast<uint32_t>(type) << " " << (message ? message : "") << "\n";
++		WriteStreamlineDiagnostic(log.str());
++	}
++
+ 	static void InitializeStreamline()
+ 	{
+ 		const char* fgProbe = std::getenv("OPENREPUBLIC_DLSS_FRAME_GENERATION");
+ 		streamline_fg_probe_requested = fgProbe != nullptr && std::strcmp(fgProbe, "probe") == 0;
++		streamline_fg_enabled = fgProbe != nullptr && std::strcmp(fgProbe, "on") == 0;
++		const char* generatedFrames = std::getenv("OPENREPUBLIC_DLSSG_FRAMES");
++		streamline_fg_generated_frames = generatedFrames ? static_cast<uint32_t>(std::clamp(std::atoi(generatedFrames), 1, 3)) : 1u;
+ 		wchar_t executable[MAX_PATH]{};
+ 		GetModuleFileNameW(nullptr, executable, MAX_PATH);
+ 		std::wstring folder(executable);
+@@ -88,7 +109,7 @@ namespace dx12_internal
+ 		streamline_module = LoadLibraryExW(interposer_path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+ 		if (!streamline_module)
+ 		{
+-			wi::helper::DebugOut("Streamline disabled: sl.interposer.dll not found next to executable\n");
++			WriteStreamlineDiagnostic("Streamline disabled: sl.interposer.dll not found next to executable\n");
+ 			return;
+ 		}
+ 		streamline_init = reinterpret_cast<decltype(streamline_init)>(GetProcAddress(streamline_module, "slInit"));
+@@ -96,7 +117,7 @@ namespace dx12_internal
+ 		streamline_set_device = reinterpret_cast<decltype(streamline_set_device)>(GetProcAddress(streamline_module, "slSetD3DDevice"));
+ 		if (!streamline_init || !streamline_shutdown || !streamline_set_device)
+ 		{
+-			wi::helper::DebugOut("Streamline disabled: required exports missing\n");
++			WriteStreamlineDiagnostic("Streamline disabled: required exports missing\n");
+ 			FreeLibrary(streamline_module);
+ 			streamline_module = nullptr;
+ 			return;
+@@ -108,14 +129,23 @@ namespace dx12_internal
+ 		preferences.pathsToPlugins = paths;
+ 		preferences.numPathsToPlugins = 2;
+ 		preferences.featuresToLoad = features;
+-		preferences.numFeaturesToLoad = streamline_fg_probe_requested ? static_cast<uint32_t>(std::size(features)) : 1;
++		preferences.numFeaturesToLoad = (streamline_fg_probe_requested || streamline_fg_enabled) ? static_cast<uint32_t>(std::size(features)) : 1;
+ 		preferences.flags = sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+ 		preferences.renderAPI = sl::RenderAPI::eD3D12;
+-		preferences.logLevel = sl::LogLevel::eDefault;
++		preferences.engine = sl::EngineType::eCustom;
++		preferences.engineVersion = "OpenRepublic";
++		preferences.projectId = "303d8236-1722-4aba-9f66-5c888c3b7895";
++		preferences.logLevel = sl::LogLevel::eVerbose;
++		preferences.logMessageCallback = StreamlineLogCallback;
++		preferences.pathToLogsAndData = folder.c_str();
+ 		const sl::Result result = streamline_init(preferences, sl::kSDKVersion);
+ 		streamline_initialized = result == sl::Result::eOk;
+-		wi::helper::DebugOut(streamline_initialized ? "Streamline initialized\n" : "Streamline initialization failed\n");
+-		WriteStreamlineDiagnostic("Streamline slInit result=" + std::to_string(static_cast<int>(result)) + "\n");
++		std::ostringstream init_log;
++		init_log << "Streamline slInit result=" << static_cast<int>(result) << " initialized=" << (streamline_initialized ? "true" : "false") << "\n";
++		init_log << "Streamline DLSS-G probe requested=" << (streamline_fg_probe_requested ? "true" : "false")
++			<< " enabled=" << (streamline_fg_enabled ? "true" : "false")
++			<< " requestedGeneratedFrames=" << streamline_fg_generated_frames << "\n";
++		WriteStreamlineDiagnostic(init_log.str());
+ 		if (!streamline_initialized)
+ 		{
+ 			FreeLibrary(streamline_module);
+@@ -1721,6 +1751,103 @@ namespace dx12_internal
+ }
+ using namespace dx12_internal;
+ 
++#ifdef OPENREPUBLIC_STREAMLINE
++	static sl::Result SetStreamlineMarker(sl::PCLMarker marker)
++	{
++		if (!streamline_initialized || streamline_module == nullptr || streamline_frame_token == nullptr)
++			return sl::Result::eErrorFeatureNotSupported;
++		{
++			std::scoped_lock lock(streamline_pcl_marker_mutex);
++			if (!streamline_pcl_marker_lookup_complete)
++			{
++				streamline_pcl_marker_lookup_complete = true;
++				auto getFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(GetProcAddress(streamline_module, "slGetFeatureFunction"));
++				void* function = nullptr;
++				const sl::Result lookupResult = getFeatureFunction
++					? getFeatureFunction(sl::kFeaturePCL, "slPCLSetMarker", function)
++					: sl::Result::eErrorFeatureNotSupported;
++				streamline_set_pcl_marker = lookupResult == sl::Result::eOk ? reinterpret_cast<PFun_slPCLSetMarker*>(function) : nullptr;
++				std::ostringstream lookupLog;
++				lookupLog << "Streamline slGetFeatureFunction(kFeaturePCL, slPCLSetMarker) result="
++					<< static_cast<int>(lookupResult) << " function=" << (streamline_set_pcl_marker != nullptr) << "\n";
++				WriteStreamlineDiagnostic(lookupLog.str());
++			}
++		}
++		const uint32_t frameIndex = static_cast<uint32_t>(*streamline_frame_token);
++		const sl::Result result = streamline_set_pcl_marker
++			? streamline_set_pcl_marker(marker, *streamline_frame_token)
++			: sl::Result::eErrorFeatureNotSupported;
++		static uint64_t markerCount = 0;
++		++markerCount;
++		if (markerCount <= 8 || markerCount % 120 == 0)
++		{
++			std::ostringstream log;
++			log << "Streamline PCL marker=" << static_cast<uint32_t>(marker) << " frameIndex=" << frameIndex
++				<< " result=" << static_cast<int>(result) << " count=" << markerCount << "\n";
++			WriteStreamlineDiagnostic(log.str());
++		}
++		return result;
++	}
++	void* StreamlineBeginFrame()
++	{
++		if (!streamline_initialized || streamline_module == nullptr)
++			return nullptr;
++		auto getToken = reinterpret_cast<PFun_slGetNewFrameToken*>(GetProcAddress(streamline_module, "slGetNewFrameToken"));
++		if (!getToken)
++			return nullptr;
++		// GetFrameCount is the engine's current zero-based submit index; SubmitCommandLists increments it
++		// only after this frame's rendering and Present have been submitted.
++		auto* graphicsDevice = GetDevice();
++		if (graphicsDevice == nullptr)
++			return nullptr;
++		const uint32_t appFrameIndex = static_cast<uint32_t>(graphicsDevice->GetFrameCount());
++		{
++			std::scoped_lock lock(streamline_frame_mutex);
++			streamline_frame_token = nullptr;
++			if (getToken(streamline_frame_token, &appFrameIndex) != sl::Result::eOk || streamline_frame_token == nullptr)
++				return nullptr;
++		}
++		static uint64_t frameCount = 0;
++		const uint32_t tokenFrameIndex = static_cast<uint32_t>(*streamline_frame_token);
++		++frameCount;
++		if (frameCount <= 8 || frameCount % 120 == 0)
++		{
++			std::ostringstream log;
++			log << "Streamline BeginFrame requestedAppFrameIndex=" << appFrameIndex
++				<< " tokenFrameIndex=" << tokenFrameIndex << " count=" << frameCount << "\n";
++			WriteStreamlineDiagnostic(log.str());
++		}
++		if (streamline_fg_enabled)
++			SetStreamlineMarker(sl::PCLMarker::eSimulationStart);
++		if (streamline_fg_enabled)
++		{
++			auto setReflex = reinterpret_cast<PFun_slReflexSetOptions*>(GetProcAddress(streamline_module, "slReflexSetOptions"));
++			if (setReflex)
++			{
++				sl::ReflexOptions reflexOptions{};
++				reflexOptions.mode = sl::ReflexMode::eLowLatency;
++				setReflex(reflexOptions);
++			}
++			auto reflexSleep = reinterpret_cast<PFun_slReflexSleep*>(GetProcAddress(streamline_module, "slReflexSleep"));
++			if (reflexSleep)
++				reflexSleep(*streamline_frame_token);
++		}
++		return streamline_frame_token;
++	}
++	void* StreamlineGetCurrentFrameToken()
++	{
++		std::scoped_lock lock(streamline_frame_mutex);
++		return streamline_frame_token;
++	}
++	void StreamlineSetPCLMarker(sl::PCLMarker marker) { SetStreamlineMarker(marker); }
++	void StreamlineSetRenderSubmitStart() { SetStreamlineMarker(sl::PCLMarker::eRenderSubmitStart); }
++	void StreamlineSetRenderSubmitEnd() { SetStreamlineMarker(sl::PCLMarker::eRenderSubmitEnd); }
++	void StreamlineSetPresentStart() { SetStreamlineMarker(sl::PCLMarker::ePresentStart); }
++	void StreamlineSetPresentEnd() { SetStreamlineMarker(sl::PCLMarker::ePresentEnd); }
++	bool StreamlineIsFrameGenerationEnabled() { return streamline_fg_enabled; }
++	uint32_t StreamlineGetGeneratedFrameCount() { return streamline_fg_generated_frames; }
++#endif
++
+ #ifdef PLATFORM_XBOX
+ std::mutex queue_locker;
+ #endif // PLATFORM_XBOX
+@@ -2552,7 +2679,14 @@ std::mutex queue_locker;
+ 			wi::platform::Exit();
+ 		}
+ #ifdef OPENREPUBLIC_STREAMLINE
+-		if (streamline_initialized && streamline_set_device(device.Get()) != sl::Result::eOk) { wi::helper::DebugOut("Streamline slSetD3DDevice failed\n"); streamline_shutdown(); streamline_initialized = false; }
++		if (streamline_initialized)
++		{
++			const sl::Result result = streamline_set_device(device.Get());
++			std::ostringstream device_log;
++			device_log << "Streamline slSetD3DDevice result=" << static_cast<int>(result) << "\n";
++			WriteStreamlineDiagnostic(device_log.str());
++			if (result != sl::Result::eOk) { streamline_shutdown(); streamline_initialized = false; }
++		}
+ #endif
+ 
+ 		if (validationMode != ValidationMode::Disabled)
+@@ -3169,7 +3303,13 @@ std::mutex queue_locker;
+ 	{
+ 		WaitForGPU();
+ #ifdef OPENREPUBLIC_STREAMLINE
+-		if (streamline_initialized) streamline_shutdown();
++		if (streamline_initialized)
++		{
++			const sl::Result result = streamline_shutdown();
++			std::ostringstream shutdown_log;
++			shutdown_log << "Streamline slShutdown result=" << static_cast<int>(result) << "\n";
++			WriteStreamlineDiagnostic(shutdown_log.str());
++		}
+ 		if (streamline_module) FreeLibrary(streamline_module);
+ 		streamline_module = nullptr;
+ #endif
+@@ -5577,46 +5717,85 @@ std::mutex queue_locker;
+ 					{
+ 						presentFlags = DXGI_PRESENT_ALLOW_TEARING;
+ 					}
++					if (streamline_initialized && streamline_fg_enabled && streamline_frame_token)
++					{
++						StreamlineSetRenderSubmitEnd();
++						auto getFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(GetProcAddress(streamline_module, "slGetFeatureFunction"));
++						void* function = nullptr;
++						sl::Result result = getFeatureFunction ? getFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", function) : sl::Result::eErrorFeatureNotSupported;
++						if (result == sl::Result::eOk && function)
++						{
++							auto setOptions = reinterpret_cast<PFun_slDLSSGSetOptions*>(function);
++							sl::DLSSGOptions options{};
++							options.mode = sl::DLSSGMode::eOn;
++							options.numFramesToGenerate = streamline_fg_generated_frames;
++							result = setOptions(sl::ViewportHandle(1), options);
++						}
++						streamline_fg_last_options_result = result;
++					}
+ 					if (streamline_initialized && streamline_fg_probe_requested && !streamline_fg_probe_completed)
+ 					{
+ 						streamline_fg_probe_completed = true;
+ 						auto getFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(GetProcAddress(streamline_module, "slGetFeatureFunction"));
+ 						auto isSupported = reinterpret_cast<PFun_slIsFeatureSupported*>(GetProcAddress(streamline_module, "slIsFeatureSupported"));
++						const sl::ViewportHandle viewport(1);
+ 						if (getFeatureFunction && isSupported)
+ 						{
+-							LUID adapterLuid = device->GetAdapterLuid();
+-							sl::AdapterInfo adapter{};
+-							adapter.deviceLUID = reinterpret_cast<uint8_t*>(&adapterLuid);
+-							adapter.deviceLUIDSizeInBytes = sizeof(adapterLuid);
+-							const sl::Result supported = isSupported(sl::kFeatureDLSS_G, adapter);
+-							WriteStreamlineDiagnostic("DLSS-G support result=" + std::to_string(static_cast<int>(supported)) + "\n");
+-							void* function = nullptr;
+-							sl::Result result = getFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", function);
+-							if (result == sl::Result::eOk && function)
+-							{
+-								auto setOptions = reinterpret_cast<PFun_slDLSSGSetOptions*>(function);
+-								sl::DLSSGOptions options{};
+-								options.mode = sl::DLSSGMode::eOff;
+-								result = setOptions(sl::ViewportHandle(1), options);
+-							}
+-							WriteStreamlineDiagnostic("DLSS-G probe SetOptions(eOff) result=" + std::to_string(static_cast<int>(result)) + "\n");
+-							function = nullptr;
+-							result = getFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", function);
+-							if (result == sl::Result::eOk && function)
+-							{
+-								auto setReflex = reinterpret_cast<PFun_slReflexSetOptions*>(function);
+-								sl::ReflexOptions options{};
+-								options.mode = sl::ReflexMode::eLowLatency;
+-								result = setReflex(options);
+-							}
+-							WriteStreamlineDiagnostic("DLSS-G probe Reflex options result=" + std::to_string(static_cast<int>(result)) + "\n");
+-							WriteStreamlineDiagnostic("DLSS-G probe only; generated frames remain inactive\n");
++							const LUID luid = device->GetAdapterLuid();
++						LUID luidCopy = luid;
++						 sl::AdapterInfo adapter{};
++						adapter.deviceLUID = reinterpret_cast<uint8_t*>(&luidCopy);
++						adapter.deviceLUIDSizeInBytes = sizeof(luidCopy);
++						const sl::Result supported = isSupported(sl::kFeatureDLSS_G, adapter);
++						std::ostringstream supportLog;
++						supportLog << "DLSS-G slIsFeatureSupported result=" << static_cast<int>(supported) << "\n";
++						WriteStreamlineDiagnostic(supportLog.str());
++						void* function = nullptr;
++						sl::Result result = getFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", function);
++						std::ostringstream stateLog;
++						stateLog << "DLSS-G slGetFeatureFunction(GetState) result=" << static_cast<int>(result) << " function=" << (function != nullptr) << "\n";
++						WriteStreamlineDiagnostic(stateLog.str());
++						// DLSS-G state is queried after Present below, on the presenting thread.
++						function = nullptr;
++						result = getFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", function);
++						if (result == sl::Result::eOk && function)
++						{
++							auto setOptions = reinterpret_cast<PFun_slDLSSGSetOptions*>(function);
++							sl::DLSSGOptions options{};
++							options.mode = sl::DLSSGMode::eOff;
++							result = setOptions(viewport, options);
++						}
++						std::ostringstream optionLog;
++						optionLog << "DLSS-G slDLSSGSetOptions(eOff probe) result=" << static_cast<int>(result)
++							<< "; enabling is withheld because no per-frame HUD-less/UI-alpha tags are wired\n";
++						WriteStreamlineDiagnostic(optionLog.str());
++						function = nullptr;
++						result = getFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", function);
++						if (result == sl::Result::eOk && function)
++						{
++							auto setReflex = reinterpret_cast<PFun_slReflexSetOptions*>(function);
++							sl::ReflexOptions options{};
++							options.mode = sl::ReflexMode::eLowLatency;
++							result = setReflex(options);
++						}
++						std::ostringstream reflexLog;
++						reflexLog << "DLSS-G probe slReflexSetOptions(eLowLatency) result=" << static_cast<int>(result)
++							<< "; PCL markers and slReflexSleep are not wired\n";
++						WriteStreamlineDiagnostic(reflexLog.str());
++						WriteStreamlineDiagnostic("DLSS-G probe only: no eOn option requested; generated frames inactive\n");
++					}
++						else
++						{
++							WriteStreamlineDiagnostic("DLSS-G probe failed: feature-query exports unavailable\n");
+ 						}
+ 					}
+ 
++					if (streamline_initialized && streamline_fg_enabled && streamline_frame_token)
++						StreamlineSetPresentStart();
+ 					HRESULT hr = dx12_check(swapchain_internal->swapChain->Present(swapchain->desc.vsync, presentFlags));
+-					if (streamline_initialized && streamline_fg_probe_requested && streamline_fg_probe_completed)
++					if (streamline_initialized && (streamline_fg_enabled || (streamline_fg_probe_requested && streamline_fg_probe_completed)) && streamline_frame_token)
+ 					{
++						StreamlineSetPresentEnd();
+ 						auto getFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(GetProcAddress(streamline_module, "slGetFeatureFunction"));
+ 						void* function = nullptr;
+ 						sl::Result result = getFeatureFunction ? getFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", function) : sl::Result::eErrorFeatureNotSupported;
+@@ -5625,13 +5804,25 @@ std::mutex queue_locker;
+ 							auto getState = reinterpret_cast<PFun_slDLSSGGetState*>(function);
+ 							sl::DLSSGState state{};
+ 							result = getState(sl::ViewportHandle(1), state, nullptr);
+-							std::ostringstream stateLog;
+-							stateLog << "DLSS-G state after present result=" << static_cast<int>(result)
+-								<< " status=" << static_cast<uint32_t>(state.status)
+-								<< " minDimension=" << state.minWidthOrHeight
+-								<< " maxGeneratedFrames=" << state.numFramesToGenerateMax
+-								<< " dynamicMFG=" << static_cast<int>(state.bIsDynamicMFGSupported) << "\n";
+-							WriteStreamlineDiagnostic(stateLog.str());
++							static uint64_t presentedFrames = 0;
++							static auto windowStart = std::chrono::steady_clock::now();
++							presentedFrames += state.numFramesActuallyPresented;
++							const auto now = std::chrono::steady_clock::now();
++							const double elapsed = std::chrono::duration<double>(now - windowStart).count();
++							if (elapsed >= 5.0 || result != sl::Result::eOk)
++							{
++								std::ostringstream stateLog;
++								stateLog << "DLSS-G state after present result=" << static_cast<int>(result)
++									<< " status=" << static_cast<uint32_t>(state.status)
++									<< " framesPresentedWindow=" << presentedFrames
++									<< " presentedFPS=" << (elapsed > 0 ? double(presentedFrames) / elapsed : 0.0)
++									<< " maxGeneratedFrames=" << state.numFramesToGenerateMax
++									<< " setOptionsResult=" << static_cast<int>(streamline_fg_last_options_result)
++									<< " requestedGeneratedFrames=" << streamline_fg_generated_frames << "\n";
++								WriteStreamlineDiagnostic(stateLog.str());
++								presentedFrames = 0;
++								windowStart = now;
++							}
+ 						}
+ 					}
+ 
+diff --git a/WickedEngine/wiGraphicsDevice_DX12.h b/WickedEngine/wiGraphicsDevice_DX12.h
+index 2e363e2..a3b84ad 100644
+--- a/WickedEngine/wiGraphicsDevice_DX12.h
++++ b/WickedEngine/wiGraphicsDevice_DX12.h
+@@ -8,6 +8,10 @@
+ 
+ #ifdef WICKEDENGINE_BUILD_DX12
+ #include "wiGraphicsDevice.h"
++#ifdef OPENREPUBLIC_STREAMLINE
++#include "sl.h"
++#include "sl_pcl.h"
++#endif
+ #include "wiUnorderedMap.h"
+ #include "wiVector.h"
+ #include "wiSpinLock.h"
+@@ -41,6 +45,18 @@
+ 
+ namespace wi::graphics
+ {
++#ifdef OPENREPUBLIC_STREAMLINE
++	// Streamline frame context is shared by Application::Run, render paths and DX12 present.
++	void* StreamlineBeginFrame();
++	void* StreamlineGetCurrentFrameToken();
++	void StreamlineSetPCLMarker(sl::PCLMarker marker);
++	void StreamlineSetRenderSubmitStart();
++	void StreamlineSetRenderSubmitEnd();
++	void StreamlineSetPresentStart();
++	void StreamlineSetPresentEnd();
++	bool StreamlineIsFrameGenerationEnabled();
++	uint32_t StreamlineGetGeneratedFrameCount();
++#endif
+ 	class GraphicsDevice_DX12 final : public GraphicsDevice
+ 	{
+ 	protected:
+diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
+index cf9cded..7db3741 100644
+--- a/WickedEngine/wiRenderPath3D.cpp
++++ b/WickedEngine/wiRenderPath3D.cpp
+@@ -8,6 +8,9 @@
+ #include "wiGraphicsDevice_DX12.h"
+ #include "sl.h"
+ #include "sl_dlss.h"
++#include <chrono>
++#include <fstream>
++#include <sstream>
+ #include <cstdlib>
+ #include <cstring>
+ #endif
+@@ -20,6 +23,12 @@ using namespace wi::ecs;
+ namespace wi
+ {
+ #if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
++	static void LogDLSSRun(const std::string& message)
++	{
++		wi::helper::DebugOut(message.c_str());
++		std::ofstream file("streamline-diagnostics.log", std::ios::app);
++		if (file) { file << message; file.flush(); }
++	}
+ 	static sl::DLSSMode GetStreamlineDLSSMode()
+ 	{
+ 		const char* preset = std::getenv("OPENREPUBLIC_DLSS_PRESET");
+@@ -30,14 +39,14 @@ namespace wi
+ 	static bool EvaluateStreamlineDLSS(const CameraComponent& camera, const CameraComponent& previousCamera,
+ 		const Texture& inputColor, const Texture& depth, const Texture& motionVectors, const Texture& output, CommandList cmd, uint32_t outputWidth, uint32_t outputHeight, bool reset)
+ 	{
++		auto logResult = [](const char* name, sl::Result result) { std::ostringstream message; message << name << " result=" << static_cast<int>(result) << "\n"; LogDLSSRun(message.str()); };
+ 		HMODULE module = GetModuleHandleW(L"sl.interposer.dll");
+ 		if (!module) return false;
+-		auto getToken = reinterpret_cast<PFun_slGetNewFrameToken*>(GetProcAddress(module, "slGetNewFrameToken"));
+ 		auto setConstants = reinterpret_cast<PFun_slSetConstants*>(GetProcAddress(module, "slSetConstants"));
+ 		auto setTags = reinterpret_cast<PFun_slSetTagForFrame*>(GetProcAddress(module, "slSetTagForFrame"));
+ 		auto evaluate = reinterpret_cast<PFun_slEvaluateFeature*>(GetProcAddress(module, "slEvaluateFeature"));
+ 		auto getFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(GetProcAddress(module, "slGetFeatureFunction"));
+-		if (!getToken || !setConstants || !setTags || !evaluate || !getFeatureFunction) return false;
++		if (!setConstants || !setTags || !evaluate || !getFeatureFunction) return false;
+ 
+ 		auto* device = static_cast<GraphicsDevice_DX12*>(wi::graphics::GetDevice());
+ 		if (!device) return false;
+@@ -47,15 +56,19 @@ namespace wi
+ 		adapter.deviceLUID = reinterpret_cast<uint8_t*>(&luidCopy);
+ 		adapter.deviceLUIDSizeInBytes = sizeof(luidCopy);
+ 		auto isSupported = reinterpret_cast<PFun_slIsFeatureSupported*>(GetProcAddress(module, "slIsFeatureSupported"));
+-		if (!isSupported || isSupported(sl::kFeatureDLSS, adapter) != sl::Result::eOk) return false;
++		if (!isSupported) { LogDLSSRun("slIsFeatureSupported export missing\n"); return false; }
++		const sl::Result supported = isSupported(sl::kFeatureDLSS, adapter); logResult("slIsFeatureSupported", supported);
++		if (supported != sl::Result::eOk) return false;
+ 
+ 		PFun_slDLSSGetOptimalSettings* getOptimal = nullptr;
+ 		PFun_slDLSSSetOptions* setOptions = nullptr;
+ 		void* function = nullptr;
+-		if (getFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", function) != sl::Result::eOk) return false;
++		sl::Result result = getFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", function); logResult("slGetFeatureFunction(optimal)", result);
++		if (result != sl::Result::eOk || !function) return false;
+ 		getOptimal = reinterpret_cast<PFun_slDLSSGetOptimalSettings*>(function);
+ 		function = nullptr;
+-		if (getFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", function) != sl::Result::eOk) return false;
++		result = getFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", function); logResult("slGetFeatureFunction(options)", result);
++		if (result != sl::Result::eOk || !function) return false;
+ 		setOptions = reinterpret_cast<PFun_slDLSSSetOptions*>(function);
+ 
+ 		const sl::ViewportHandle viewport(1);
+@@ -66,14 +79,16 @@ namespace wi
+ 		options.colorBuffersHDR = sl::Boolean::eTrue;
+ 		options.useAutoExposure = sl::Boolean::eTrue;
+ 		sl::DLSSOptimalSettings optimal{};
+-		if (getOptimal(options, optimal) != sl::Result::eOk || optimal.optimalRenderWidth != inputColor.desc.width || optimal.optimalRenderHeight != inputColor.desc.height)
+-			return false; // resource recreation for a changed optimal size must happen before dispatch
++		result = getOptimal(options, optimal); logResult("slDLSSGetOptimalSettings(frame)", result);
++		if (result != sl::Result::eOk || optimal.optimalRenderWidth != inputColor.desc.width || optimal.optimalRenderHeight != inputColor.desc.height) { std::ostringstream message; message << "DLSS render/input mismatch optimal=" << optimal.optimalRenderWidth << "x" << optimal.optimalRenderHeight << " input=" << inputColor.desc.width << "x" << inputColor.desc.height << " output=" << output.desc.width << "x" << output.desc.height << "\n"; LogDLSSRun(message.str()); return false; }
+ 		options.sharpness = optimal.optimalSharpness;
+-`t`tif (setOptions(viewport, options) != sl::Result::eOk) return false;
++		result = setOptions(viewport, options); logResult("slDLSSSetOptions", result);
++		if (result != sl::Result::eOk) return false;
+ 
+-		sl::FrameToken* token = nullptr;
+-		if (getToken(token, nullptr) != sl::Result::eOk || token == nullptr) return false;
++		auto* token = static_cast<sl::FrameToken*>(StreamlineGetCurrentFrameToken());
++		if (token == nullptr) { LogDLSSRun("Streamline frame token unavailable; DLSS evaluation skipped\n"); return false; }
+ 
++		LogDLSSRun("before camera constants matrix build\n");
+ 		auto toSLMatrix = [](const XMFLOAT4X4& src, sl::float4x4& dst)
+ 		{
+ 			const float* data = &src._11;
+@@ -104,6 +119,7 @@ namespace wi
+ 		toSLMatrix(previousToClipStore, constants.prevClipToClip);
+ 		constants.jitterOffset = { camera.jitter.x * inputColor.desc.width * 0.5f, camera.jitter.y * inputColor.desc.height * -0.5f };
+ 		constants.mvecScale = { 1.0f, -1.0f };
++		constants.cameraPinholeOffset = { 0.0f, 0.0f };
+ 		constants.cameraPos = { camera.Eye.x, camera.Eye.y, camera.Eye.z };
+ 		constants.cameraUp = { camera.Up.x, camera.Up.y, camera.Up.z };
+ 		const XMVECTOR rightVector = camera.GetRight();
+@@ -122,36 +138,75 @@ namespace wi
+ 		constants.motionVectors3D = sl::Boolean::eFalse;
+ 		constants.motionVectorsJittered = sl::Boolean::eFalse;
+ 		constants.reset = reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+-		if (setConstants(constants, *token, viewport) != sl::Result::eOk) return false;
++		LogDLSSRun("before slSetConstants\n");
++		static uint64_t constantsCount = 0;
++		const uint32_t frameIndex = static_cast<uint32_t>(*token);
++		++constantsCount;
++		if (constantsCount <= 8 || constantsCount % 120 == 0)
++		{
++			std::ostringstream frameLog;
++			frameLog << "Streamline slSetConstants token frameIndex=" << frameIndex << " count=" << constantsCount << "\n";
++			LogDLSSRun(frameLog.str());
++		}
++		const sl::Result constantsResult = setConstants(constants, *token, viewport);
++		{ std::ostringstream message; message << "slSetConstants result=" << static_cast<int>(constantsResult) << "\n"; LogDLSSRun(message.str()); }
++		if (constantsResult != sl::Result::eOk)
++		{
++			std::ostringstream message; message << "slSetConstants result=" << static_cast<int>(constantsResult) << "\n"; LogDLSSRun(message.str());
++			return false;
++		}
+ 
+-		auto makeResource = [device](const Texture& texture)
++		auto makeResource = [device](const char* name, const Texture& texture, sl::Resource& result)
+ 		{
++			if (!texture.IsValid()) { LogDLSSRun((std::string("DLSS invalid texture: ") + name + "\n").c_str()); return false; }
+ 			ID3D12Resource* nativeResource = device->GetTextureInternalResource(&texture);
+-			sl::Resource result(sl::ResourceType::eTex2d, nativeResource,
++			if (!nativeResource) { LogDLSSRun((std::string("DLSS null native resource: ") + name + "\n").c_str()); return false; }
++			result = sl::Resource(sl::ResourceType::eTex2d, nativeResource,
+ 				static_cast<uint32_t>(device->GetTextureInternalResourceState(&texture)));
+ 			result.width = texture.desc.width;
+ 			result.height = texture.desc.height;
+ 			result.nativeFormat = static_cast<uint32_t>(nativeResource->GetDesc().Format);
+-			return result;
++			return true;
+ 		};
+-		sl::Resource colorResource = makeResource(inputColor);
+-		sl::Resource depthResource = makeResource(depth);
+-		sl::Resource motionResource = makeResource(motionVectors);
+-		sl::Resource outputResource = makeResource(output);
++		sl::Resource colorResource{}, depthResource{}, motionResource{}, outputResource{};
++		if (!makeResource("color", inputColor, colorResource) || !makeResource("depth", depth, depthResource) ||
++			!makeResource("motion", motionVectors, motionResource) || !makeResource("output", output, outputResource)) return false;
+ 		sl::Extent renderExtent{ 0, 0, inputColor.desc.width, inputColor.desc.height };
+ 		sl::Extent outputExtent{ 0, 0, output.desc.width, output.desc.height };
+ 		sl::ResourceTag tags[] = {
+ 			{ &colorResource, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent },
+-			{ &depthResource, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent },
+-			{ &motionResource, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent },
++			{ &depthResource, sl::kBufferTypeDepth, StreamlineIsFrameGenerationEnabled() ? sl::ResourceLifecycle::eValidUntilPresent : sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent },
++			{ &motionResource, sl::kBufferTypeMotionVectors, StreamlineIsFrameGenerationEnabled() ? sl::ResourceLifecycle::eValidUntilPresent : sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent },
+ 			{ &outputResource, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &outputExtent },
+ 		};
+ 		ID3D12GraphicsCommandList* nativeCommandList = device->GetNativeGraphicsCommandList(cmd);
+ 		auto* commandBuffer = reinterpret_cast<sl::CommandBuffer*>(nativeCommandList);
+-		if (setTags(*token, viewport, tags, static_cast<uint32_t>(std::size(tags)), commandBuffer) != sl::Result::eOk) return false;
++		const sl::Result tagsResult = setTags(*token, viewport, tags, static_cast<uint32_t>(std::size(tags)), commandBuffer);
++		if (tagsResult != sl::Result::eOk)
++		{
++			std::ostringstream message; message << "slSetTagForFrame result=" << static_cast<int>(tagsResult) << "\n"; LogDLSSRun(message.str());
++			return false;
++		}
+ 		const sl::BaseStructure* inputs[] = { &viewport };
+-		if (evaluate(sl::kFeatureDLSS, *token, inputs, 1, commandBuffer) != sl::Result::eOk) return false;
+-		return true;
++		static uint64_t dispatchCount = 0;
++		static double dispatchMilliseconds = 0;
++		const auto dispatchStart = std::chrono::steady_clock::now();
++		LogDLSSRun("before slEvaluateFeature\n");
++		const sl::Result evaluateResult = evaluate(sl::kFeatureDLSS, *token, inputs, 1, commandBuffer);
++		const double dispatchMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - dispatchStart).count();
++		++dispatchCount;
++		dispatchMilliseconds += dispatchMs;
++		if (evaluateResult != sl::Result::eOk || dispatchCount <= 3 || dispatchCount % 60 == 0)
++		{
++			std::ostringstream message;
++			message << "slEvaluateFeature(kFeatureDLSS) result=" << static_cast<int>(evaluateResult)
++				<< " input=" << inputColor.desc.width << "x" << inputColor.desc.height
++				<< " output=" << output.desc.width << "x" << output.desc.height
++				<< " call_ms=" << dispatchMs << " count=" << dispatchCount
++				<< " mean_call_ms=" << dispatchMilliseconds / double(dispatchCount) << "\n";
++			LogDLSSRun(message.str());
++		}
++		return evaluateResult == sl::Result::eOk;
+ 	}
+ #endif
+ 	static constexpr float foreground_depth_range = 0.01f;
+@@ -1963,6 +2018,43 @@ namespace wi
+ 		device->EventEnd(cmd);
+ 
+ 		RenderPath2D::Compose(cmd);
++
++#if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
++		if (StreamlineIsFrameGenerationEnabled())
++		{
++			auto* token = static_cast<sl::FrameToken*>(StreamlineGetCurrentFrameToken());
++			auto* deviceDX12 = static_cast<GraphicsDevice_DX12*>(wi::graphics::GetDevice());
++			HMODULE module = GetModuleHandleW(L"sl.interposer.dll");
++			auto setTags = module ? reinterpret_cast<PFun_slSetTagForFrame*>(GetProcAddress(module, "slSetTagForFrame")) : nullptr;
++			if (token && deviceDX12 && setTags)
++			{
++				auto makeResource = [deviceDX12](const Texture& texture)
++				{
++				sl::Resource resource(sl::ResourceType::eTex2d, deviceDX12->GetTextureInternalResource(&texture),
++					static_cast<uint32_t>(deviceDX12->GetTextureInternalResourceState(&texture)));
++				resource.width = texture.desc.width;
++				resource.height = texture.desc.height;
++				resource.nativeFormat = static_cast<uint32_t>(deviceDX12->GetTextureInternalResource(&texture)->GetDesc().Format);
++				return resource;
++				};
++				const Texture& hudless = GetRenderResult3D();
++				const Texture& ui = GetRenderResult2D();
++				sl::Resource hudlessResource = makeResource(hudless);
++				sl::Resource uiResource = makeResource(ui);
++				sl::Extent hudlessExtent{ 0, 0, hudless.desc.width, hudless.desc.height };
++				sl::Extent uiExtent{ 0, 0, ui.desc.width, ui.desc.height };
++				sl::ResourceTag tags[] = {
++					{ &hudlessResource, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &hudlessExtent },
++					{ &uiResource, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &uiExtent },
++				};
++				auto* nativeCommandList = deviceDX12->GetNativeGraphicsCommandList(cmd);
++				auto* commandBuffer = reinterpret_cast<sl::CommandBuffer*>(nativeCommandList);
++				const sl::Result result = setTags(*token, sl::ViewportHandle(1), tags, static_cast<uint32_t>(std::size(tags)), commandBuffer);
++				if (result != sl::Result::eOk)
++					LogDLSSRun("DLSS-G HUD-less/UI-color tag call failed; frame generation may not have valid UI inputs\n");
++			}
++		}
++#endif
+ 	}
+ 
+ 	void RenderPath3D::Stop()
+@@ -2500,9 +2592,23 @@ namespace wi
+ 		// 1.) HDR post process chain
+ 		{
+ #if defined(OPENREPUBLIC_STREAMLINE) && defined(PLATFORM_WINDOWS_DESKTOP)
++			static bool reportedRenderDLSSState = false;
++			if (!reportedRenderDLSSState)
++			{
++				reportedRenderDLSSState = true;
++				std::ostringstream message;
++				message << "DLSS render state: requested=" << dlssRequested << " enabled=" << dlssEnabled
++					<< " physical=" << GetPhysicalWidth() << "x" << GetPhysicalHeight()
++					<< " targetValid=" << rtFSR[0].IsValid()
++					<< " target=" << rtFSR[0].desc.width << "x" << rtFSR[0].desc.height << "\n";
++				LogDLSSRun(message.str());
++			}
+ 			if (dlssRequested && GetPhysicalWidth() > 0 && GetPhysicalHeight() > 0 &&
+ 				(!dlssEnabled || !rtFSR[0].IsValid() || rtFSR[0].desc.width != GetPhysicalWidth() || rtFSR[0].desc.height != GetPhysicalHeight()))
+ 			{
++				std::ostringstream message;
++				message << "DLSS lazy configure in render: physical=" << GetPhysicalWidth() << "x" << GetPhysicalHeight() << "\n";
++				LogDLSSRun(message.str());
+ 				const_cast<RenderPath3D*>(this)->setDLSSEnabled(true);
+ 			}
+ 			if (getDLSSEnabled() && rtFSR[0].IsValid() && EvaluateStreamlineDLSS(*camera, camera_previous, *rt_read, depthBuffer_Copy, rtVelocity, rtFSR[0], cmd, GetPhysicalWidth(), GetPhysicalHeight(), first_frame))
+@@ -3169,7 +3275,7 @@ namespace wi
+ 	void RenderPath3D::setFSR2Enabled(bool value)
+ 	{
+ 		fsr2Enabled = value;
+-		if (value) { dlssRequested = false; dlssEnabled = false; }
++		if (value) dlssEnabled = false;
+ 
+ 		if (fsr2Enabled)
+ 		{
+@@ -3220,9 +3326,10 @@ namespace wi
+ 			return;
+ 		}
+ 		dlssRequested = true;
++		{ std::ostringstream message; message << "setDLSSEnabled request: physical=" << GetPhysicalWidth() << "x" << GetPhysicalHeight() << "\n"; LogDLSSRun(message.str()); }
+ 		if (GetPhysicalWidth() == 0 || GetPhysicalHeight() == 0)
+ 		{
+-			// Keep the request pending; Update/ResizeBuffers retries once display size is known.
++			// Keep the request pending. Update() retries once the window has a display size.
+ 			dlssEnabled = false;
+ 			return;
+ 		}
+@@ -3239,13 +3346,14 @@ namespace wi
+ 		options.colorBuffersHDR = sl::Boolean::eTrue;
+ 		options.useAutoExposure = sl::Boolean::eTrue;
+ 		sl::DLSSOptimalSettings optimal{};
+-		if (GetPhysicalWidth() == 0 || GetPhysicalHeight() == 0 || getOptimal(options, optimal) != sl::Result::eOk || optimal.optimalRenderWidth == 0 || optimal.optimalRenderHeight == 0)
++		const sl::Result optimalResult = getOptimal(options, optimal);
++		{ std::ostringstream message; message << "DLSS preset=" << (options.mode == sl::DLSSMode::eMaxPerformance ? "Performance" : "Quality") << " optimal settings result=" << static_cast<int>(optimalResult) << " display=" << options.outputWidth << "x" << options.outputHeight << " render=" << optimal.optimalRenderWidth << "x" << optimal.optimalRenderHeight << "\n"; LogDLSSRun(message.str()); }
++		if (GetPhysicalWidth() == 0 || GetPhysicalHeight() == 0 || optimalResult != sl::Result::eOk || optimal.optimalRenderWidth == 0 || optimal.optimalRenderHeight == 0)
+ 		{
+ 			dlssRequested = false;
+ 			dlssEnabled = false;
+ 			return;
+ 		}
+-		// Use max so truncating internal-size conversion does not land one pixel below either optimal dimension.
+ 		const float targetScale = std::min(float(optimal.optimalRenderWidth) / float(GetPhysicalWidth()), float(optimal.optimalRenderHeight) / float(GetPhysicalHeight()));
+ 		fsr2Enabled = false;
+ 		fsr2Resources = {};
