@@ -277,7 +277,7 @@ namespace openrepublic::preview
 		const wi::ecs::Entity poleMesh = CreateProceduralMeshEntity(scene, "showcase utility pole", pg::MakeWoodenUtilityPole(), 0.9f);
 		const pg::Mesh pylonSource = pg::MakeSteelLatticePylon();
 		const wi::ecs::Entity pylonMesh = CreateProceduralMeshEntity(scene, "showcase pylon", pylonSource, 0.6f, 0.5f);
-		const wi::ecs::Entity railMesh = CreateProceduralMeshEntity(scene, "showcase rail", pg::MakeRailSegment(12.0f), 0.7f, 0.3f);
+		const wi::ecs::Entity railMesh = CreateProceduralMeshEntity(scene, "showcase rail", pg::MakeRailSegment(12.0f), 0.9f, 0.0f);
 		const wi::ecs::Entity crossbuckMesh = CreateProceduralMeshEntity(scene, "showcase crossbuck", pg::MakeRailCrossbuck(), 0.6f);
 		const wi::ecs::Entity chimneyMesh = CreateProceduralMeshEntity(scene, "showcase chimney", pg::MakeBrickChimney(), 0.9f);
 		const wi::ecs::Entity towerMesh = CreateProceduralMeshEntity(scene, "showcase cooling tower", pg::MakeCoolingTower(), 0.9f);
