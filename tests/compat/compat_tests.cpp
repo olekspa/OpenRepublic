@@ -98,6 +98,41 @@ int main() {
               catalog.VehicleTypes().size() == 1,
           "catalog includes sorted valid resources, economic buildings, and default truck");
 
+    // Construction-cost opt-in is diagnostic-only until the native simulation
+    // has construction-site state. It must not perturb the imported catalog.
+    auto withRawCosts = definitions;
+    withRawCosts["food_factory"].economicRaw = {
+        {"$COST_RESOURCE_AUTO", {"opaque_auto", "2"}, {std::nullopt, 2.0}, 40},
+        {"$COST_WORK", {"100"}, {100.0}, 41},
+        {"$COST_WORK_BUILDING_NODE", {"3"}, {3.0}, 42},
+        {"$COST_WORK_BUILDING_KEYWORD", {"keyword"}, {std::nullopt}, 43},
+        {"$COST_WORK_BUILDING_ALL", {}, {}, 44},
+        {"$COST_ALL_MULTIPLY", {"1.5"}, {1.5}, 45},
+        {"$COST_RESOURCE", {"steel", "4"}, {std::nullopt, 4.0}, 46}};
+    economy::Catalog legacyCostCatalog;
+    compat::ImportReport legacyCostReport;
+    Check(compat::ImportCatalogFromDefinitions(withRawCosts, options, legacyCostCatalog,
+                                                legacyCostReport),
+          "raw construction directives preserve default catalog import");
+    auto diagnosticOptions = options;
+    diagnosticOptions.constructionCosts = true;
+    economy::Catalog diagnosticCostCatalog;
+    compat::ImportReport diagnosticCostReport;
+    Check(compat::ImportCatalogFromDefinitions(withRawCosts, diagnosticOptions,
+                                                diagnosticCostCatalog, diagnosticCostReport),
+          "construction-cost diagnostic import succeeds");
+    Check(economy::WriteCatalogText(legacyCostCatalog) == economy::WriteCatalogText(catalog) &&
+              economy::WriteCatalogText(diagnosticCostCatalog) == economy::WriteCatalogText(catalog),
+          "construction cost option leaves canonical catalog bytes unchanged");
+    Check(legacyCostReport.constructionCostDirectivesObserved == 0 &&
+              diagnosticCostReport.constructionCostDirectivesObserved == 7 &&
+              std::count_if(diagnosticCostReport.warnings.begin(), diagnosticCostReport.warnings.end(),
+                            [](const std::string &warning) {
+                                return warning.find("construction-site material delivery/work is unsupported") !=
+                                       std::string::npos;
+                            }) == 7,
+          "opt-in reports every retained cost directive without guessing conversions");
+
     economy::ResourceId plants{}, water{}, food{}, electricityId{}, dust{}, storageOnly{};
     Check(catalog.FindResource("plants", plants) && catalog.FindResource("water", water) &&
               catalog.FindResource("food", food) &&

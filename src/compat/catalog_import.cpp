@@ -210,6 +210,16 @@ bool ImportCatalogFromDefinitions(
     std::set<std::string> resourceNames;
     for (const auto &building : definitions) {
         const auto &definition = building.second;
+        if (options.constructionCosts) {
+            for (const auto &directive : definition.economicRaw) {
+                if (directive.name.rfind("$COST_", 0) != 0)
+                    continue;
+                ++next.constructionCostDirectivesObserved;
+                next.warnings.push_back("building '" + building.first + "' " + directive.name +
+                    " at line " + std::to_string(directive.line) +
+                    " retained raw; construction-site material delivery/work is unsupported by the native economy");
+            }
+        }
         next.resourceSpecificStorageEntriesSeen += static_cast<std::size_t>(std::count_if(
             definition.storage.begin(), definition.storage.end(),
             [](const content::BuildingStorageEntry &entry) { return !entry.resource.empty(); }));
@@ -479,6 +489,9 @@ std::string DescribeImport(const ImportReport &report) {
     output << "Utility resources imported: " << report.utilityResourcesImported
            << "; explicit utility storage rows ignored: "
            << report.utilityStorageEntriesIgnored << "\n";
+    output << "Construction cost directives observed: " << report.constructionCostDirectivesObserved
+           << (report.options.constructionCosts ? " (diagnostic option enabled; no catalog conversion)\n"
+                                                : " (option disabled)\n");
     output << "Options: ticksPerDay=" << report.options.ticksPerDay
            << ", defaultFootprint=" << report.options.defaultFootprint
            << ", storageDaysFallback="
