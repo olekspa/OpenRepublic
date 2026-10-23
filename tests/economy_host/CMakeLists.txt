@@ -72,4 +72,8 @@ if(Python3_Interpreter_FOUND)
                 "$<TARGET_FILE:OpenRepublic>")
         set_tests_properties(EconomyDesktopCheckpointArguments PROPERTIES TIMEOUT 60)
     endif()
+    add_test(NAME OpenRepublicScenarioScore
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/test_scenario_score.py"
+            "$<TARGET_FILE:OpenRepublicEconomyHost>")
+    set_tests_properties(OpenRepublicScenarioScore PROPERTIES TIMEOUT 30)
 endif()

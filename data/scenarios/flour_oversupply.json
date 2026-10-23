@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "flour_oversupply",
+  "name": "Flour oversupply",
+  "description": "OpenRepublic-authored synthetic layout with a connected farm and mill, but no bakery or other downstream flour consumer.",
+  "roads": [
+    { "a": { "x": 1, "z": 2 }, "b": { "x": 2, "z": 2 } },
+    { "a": { "x": 2, "z": 2 }, "b": { "x": 3, "z": 2 } },
+    { "a": { "x": 3, "z": 2 }, "b": { "x": 4, "z": 2 } },
+    { "a": { "x": 4, "z": 2 }, "b": { "x": 5, "z": 2 } }
+  ],
+  "buildings": [
+    { "type": "farm", "x": 1, "z": 3 },
+    { "type": "mill", "x": 5, "z": 3 }
+  ],
+  "score": { "metric": "stored_non_raw_units" }
+}

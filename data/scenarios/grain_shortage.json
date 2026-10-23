@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "grain_shortage",
+  "name": "Grain shortage",
+  "description": "OpenRepublic-authored synthetic layout with a connected mill, bakery, and market but no farm, so the chain has no local grain source.",
+  "roads": [
+    { "a": { "x": 1, "z": 2 }, "b": { "x": 2, "z": 2 } },
+    { "a": { "x": 2, "z": 2 }, "b": { "x": 3, "z": 2 } },
+    { "a": { "x": 3, "z": 2 }, "b": { "x": 4, "z": 2 } },
+    { "a": { "x": 4, "z": 2 }, "b": { "x": 5, "z": 2 } },
+    { "a": { "x": 5, "z": 2 }, "b": { "x": 6, "z": 2 } },
+    { "a": { "x": 6, "z": 2 }, "b": { "x": 7, "z": 2 } },
+    { "a": { "x": 7, "z": 2 }, "b": { "x": 8, "z": 2 } },
+    { "a": { "x": 8, "z": 2 }, "b": { "x": 9, "z": 2 } }
+  ],
+  "buildings": [
+    { "type": "mill", "x": 1, "z": 3 },
+    { "type": "bakery", "x": 5, "z": 3 },
+    { "type": "market", "x": 9, "z": 3 }
+  ],
+  "score": { "metric": "stored_non_raw_units" }
+}
