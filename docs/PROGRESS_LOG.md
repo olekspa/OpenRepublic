@@ -303,3 +303,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~20:10 EDT** Added tools/apply_streamline_patches.ps1 (ordered, checked patch application for a private opted-in Wicked copy); verified all 12 patches apply cleanly to a clean clone of the pinned revision. Default builds unchanged.
 
 - **2026-10-23 ~20:40 EDT** HAUL-MT merged: profiling showed production worker startup (not haul movement) dominated the 5,000-order case; fixed in src/economy/economy.cpp, hashes unchanged, before/after numbers in docs/ECONOMY_PERFORMANCE.md. Full build + CTest 73/73.
+
+- **2026-10-23 ~21:05 EDT** New goal: identify next steps. Read handoff/ledger/board: ROAD-TYPES evidence is exhausted without a class table (road widths/classes stay UNKNOWN). Worker TRADE started (synthetic border trade: treasury, import/export commands, API/host/persistence, scenario; explicitly not WRSR parity).
