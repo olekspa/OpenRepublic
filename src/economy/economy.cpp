@@ -194,7 +194,9 @@ enum class Kind : std::uint8_t {
     Cancel,
     Retarget,
     ConnectUtility,
-    DisconnectUtility
+    DisconnectUtility,
+    TradeExport,
+    TradeImport
 };
 struct Pending {
     CommandId id{};
@@ -208,6 +210,7 @@ struct Pending {
     ResourceId resource{};
     VehicleTypeId vehicleType{};
     OrderId order{};
+    std::uint64_t amount{}, rateCap{};
     // Utility endpoints are stored in source/destination so old command-record
     // layout stays canonical and the two new command kinds need no new fields.
 };
@@ -215,6 +218,7 @@ struct State {
     const Catalog *catalog{};
     std::uint32_t width{}, depth{};
     std::uint64_t tick{}, revision{};
+    std::uint64_t treasury{};
     BuildingId nextBuilding{1};
     RoadId nextRoad{1};
     OrderId nextOrder{1};
@@ -505,6 +509,33 @@ void Result(State &s, const Pending &p, bool ok, CommandFailure f, const std::st
 
 void Apply(State &s, const Pending &p) {
     auto reject = [&](CommandFailure f, const std::string &m) { Result(s, p, false, f, m); };
+    if (p.kind == Kind::TradeExport || p.kind == Kind::TradeImport) {
+        auto *building = Find(s, p.building);
+        const auto *type = building ? s.catalog->BuildingType(building->type) : nullptr;
+        const auto *resource = s.catalog->Resource(p.resource);
+        if (!building) { reject(CommandFailure::UnknownBuilding, "unknown trade building"); return; }
+        if (!type || !type->tradePost) { reject(CommandFailure::NotTradePost, "building is not a designated trade post"); return; }
+        if (!resource || !resource->tradeDeclared || resource->utility) { reject(CommandFailure::TradeUnavailable, "resource has no declared trade price"); return; }
+        const auto slot = Slot(*type, p.resource);
+        if (slot >= type->storage.size()) { reject(CommandFailure::InvalidOrderEndpoint, "trade resource is not stored at building"); return; }
+        const auto quantity = std::min(p.amount, p.rateCap);
+        const auto price = p.kind == Kind::TradeExport ? resource->sellPrice : resource->buyPrice;
+        if (!quantity || price > UINT64_MAX / quantity) { reject(CommandFailure::InvalidCommand, "trade amount or value overflow"); return; }
+        const auto value = quantity * price;
+        if (p.kind == Kind::TradeExport) {
+            if (building->inventory[slot] < quantity) { reject(CommandFailure::InsufficientTradeStock, "trade post lacks export stock"); return; }
+            if (value > UINT64_MAX - s.treasury) { reject(CommandFailure::InvalidCommand, "treasury overflow"); return; }
+            building->inventory[slot] -= quantity;
+            s.treasury += value;
+        } else {
+            if (s.treasury < value) { reject(CommandFailure::InsufficientTreasury, "world treasury cannot fund import"); return; }
+            if (quantity > type->storage[slot].capacity - building->inventory[slot]) { reject(CommandFailure::DestinationFull, "trade post storage is full"); return; }
+            s.treasury -= value;
+            building->inventory[slot] += quantity;
+        }
+        Result(s, p, true, CommandFailure::None, p.kind == Kind::TradeExport ? "trade export completed" : "trade import completed", building->id);
+        return;
+    }
     if (p.kind == Kind::Place) {
         const auto *t = s.catalog->BuildingType(p.type);
         if (!t) {
@@ -1300,6 +1331,9 @@ std::uint64_t Hash(const State &s) {
     HashU(h, s.nextOrder);
     HashU(h, s.nextVehicle);
     HashU(h, s.nextCommand);
+    const bool tradeDeclared = std::any_of(s.catalog->Resources().begin(), s.catalog->Resources().end(),
+                                           [](const ResourceDef &r) { return r.tradeDeclared; });
+    if (tradeDeclared) { HashS(h, "openrepublic.synthetic-trade.treasury.v1"); HashU(h, s.treasury); }
     if (s.firstRetainedCommand > 1) {
         HashS(h, "openrepublic.command-history.first-retained.v1");
         HashU(h, s.firstRetainedCommand);
@@ -1375,6 +1409,7 @@ std::uint64_t Hash(const State &s) {
         HashU(h, p.resource);
         HashU(h, p.vehicleType);
         HashU(h, p.order);
+        if (p.kind == Kind::TradeExport || p.kind == Kind::TradeImport) { HashU(h, p.amount); HashU(h, p.rateCap); }
     }
     for (const auto &r : s.results) {
         HashU(h, r.first);
@@ -1501,6 +1536,18 @@ bool CatalogBuilder::AddUtilityResource(std::string_view n, ResourceId *out, Cat
     if (out)
         *out = id;
     return true;
+}
+bool CatalogBuilder::AddTradePrice(const TradePriceDef &price, CatalogErrorInfo &e) {
+    if (price.resource >= draft_.resources_.size()) { CatError(e, CatalogError::UnknownResource, "unknown trade resource"); return false; }
+    auto &resource = draft_.resources_[price.resource];
+    if (resource.utility || resource.tradeDeclared || !price.buyPrice || !price.sellPrice) {
+        CatError(e, CatalogError::InvalidTradePrice, "trade prices require a non-utility resource and positive unique prices"); return false;
+    }
+    resource.tradeDeclared = true; resource.buyPrice = price.buyPrice; resource.sellPrice = price.sellPrice; e = {}; return true;
+}
+bool CatalogBuilder::SetTradePost(BuildingTypeId building, bool enabled, CatalogErrorInfo &e) {
+    if (building >= draft_.buildingTypes_.size()) { CatError(e, CatalogError::UnknownBuildingType, "unknown building type"); return false; }
+    draft_.buildingTypes_[building].tradePost = enabled; e = {}; return true;
 }
 bool CatalogBuilder::AddBuildingType(std::string_view n, std::uint32_t w, std::uint32_t d,
                                      BuildingTypeId *out, CatalogErrorInfo &e) {
@@ -1732,6 +1779,18 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
                 closed = true;
                 continue;
             }
+            if (w[0] == "tradepost" && w.size() == 1) {
+                if (!b.SetTradePost(current, true, ce)) { ParseErr(e, ParseErrorCode::CatalogInvalid, line, ce.message); return false; }
+                continue;
+            }
+            if (w[0] == "trade" && w.size() == 6 && w[2] == "buy" && w[4] == "sell") {
+                std::uint64_t buy{}, sell{};
+                if (!Unsigned(w[3], buy) || !Unsigned(w[5], sell)) { ParseErr(e, ParseErrorCode::InvalidNumber, line, "bad trade price"); return false; }
+                ResourceId id = InvalidResourceId;
+                for (std::size_t k = 0; k < rn.size(); ++k) if (rn[k] == w[1]) { id = static_cast<ResourceId>(k); break; }
+                if (id == InvalidResourceId || !b.AddTradePrice({id, buy, sell}, ce)) { ParseErr(e, ParseErrorCode::CatalogInvalid, line, ce.message); return false; }
+                continue;
+            }
             if (w[0] == "store" && w.size() == 3) {
                 std::uint64_t cap{};
                 if (!Unsigned(w[2], cap) || !b.AddStorage(current, w[1], cap, ce)) {
@@ -1810,6 +1869,13 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
             rn.push_back(w[1]);
             continue;
         }
+        if (w[0] == "trade" && w.size() == 6 && w[2] == "buy" && w[4] == "sell") {
+            std::uint64_t buy{}, sell{}; ResourceId id = InvalidResourceId;
+            for (std::size_t k = 0; k < rn.size(); ++k) if (rn[k] == w[1]) { id = static_cast<ResourceId>(k); break; }
+            if (!Unsigned(w[3], buy) || !Unsigned(w[5], sell)) { ParseErr(e, ParseErrorCode::InvalidNumber, line, "bad trade price"); return false; }
+            if (id == InvalidResourceId || !b.AddTradePrice({id, buy, sell}, ce)) { ParseErr(e, ParseErrorCode::CatalogInvalid, line, ce.message); return false; }
+            continue;
+        }
         if (w[0] == "building" && w.size() == 4) {
             std::uint32_t wi{}, de{};
             if (!Unsigned(w[2], wi) || !Unsigned(w[3], de) ||
@@ -1849,10 +1915,13 @@ std::string WriteCatalogText(const Catalog &c) {
     std::string o = "openrepublic-economy 1\n";
     for (const auto &r : c.Resources())
         o += std::string(r.utility ? "utility " : "resource ") + r.name + "\n";
+    for (const auto &r : c.Resources()) if (r.tradeDeclared)
+        o += "trade " + r.name + " buy " + Num(r.buyPrice) + " sell " + Num(r.sellPrice) + "\n";
     for (const auto &b : c.BuildingTypes()) {
         o += "building " + b.name + " " + Num(b.width) + " " + Num(b.depth) + "\n";
         for (auto s : b.storage)
             o += "  store " + c.Resource(s.resource)->name + " " + Num(s.capacity) + "\n";
+        if (b.tradePost) o += "  tradepost\n";
         for (const auto &r : b.recipes) {
             o += "  recipe " + r.name + " every " + Num(r.intervalTicks);
             if (!r.inputs.empty()) {
@@ -1946,12 +2015,14 @@ bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
     const auto &ov = old.VehicleTypes(), &nv = next.VehicleTypes();
     bool same = or_.size() == nr.size() && ob.size() == nb.size() && ov.size() == nv.size();
     for (std::size_t i = 0; same && i < or_.size(); ++i)
-        same = or_[i].name == nr[i].name && or_[i].utility == nr[i].utility;
+        same = or_[i].name == nr[i].name && or_[i].utility == nr[i].utility &&
+               or_[i].tradeDeclared == nr[i].tradeDeclared;
     for (std::size_t i = 0; same && i < ov.size(); ++i)
         same = ov[i].name == nv[i].name;
     for (std::size_t i = 0; same && i < ob.size(); ++i) {
         same = ob[i].name == nb[i].name && ob[i].width == nb[i].width && ob[i].depth == nb[i].depth &&
-               ob[i].storage.size() == nb[i].storage.size() && ob[i].recipes.size() == nb[i].recipes.size();
+               ob[i].tradePost == nb[i].tradePost && ob[i].storage.size() == nb[i].storage.size() &&
+               ob[i].recipes.size() == nb[i].recipes.size();
         for (std::size_t j = 0; same && j < ob[i].storage.size(); ++j)
             same = ob[i].storage[j].resource == nb[i].storage[j].resource;
         for (std::size_t j = 0; same && j < ob[i].recipes.size(); ++j) {
@@ -1992,6 +2063,7 @@ void SetProductionThreads(unsigned threads) noexcept {
 std::uint64_t World::Tick() const noexcept {
     return impl_->state.tick;
 }
+std::uint64_t World::Treasury() const noexcept { return impl_->state.treasury; }
 std::uint64_t World::Revision() const noexcept {
     return impl_->state.revision;
 }
@@ -2113,6 +2185,14 @@ CommandId World::DisconnectUtility(ResourceId resource, BuildingId a, BuildingId
         impl_->state.utilityCommands.insert(id);
     return id;
 }
+CommandId World::TradeExport(BuildingId building, ResourceId resource, std::uint64_t amount, std::uint64_t rateCap) {
+    Pending p; p.kind = Kind::TradeExport; p.building = building; p.resource = resource; p.amount = amount; p.rateCap = rateCap;
+    return Queue(impl_->state, p);
+}
+CommandId World::TradeImport(BuildingId building, ResourceId resource, std::uint64_t amount, std::uint64_t rateCap) {
+    Pending p; p.kind = Kind::TradeImport; p.building = building; p.resource = resource; p.amount = amount; p.rateCap = rateCap;
+    return Queue(impl_->state, p);
+}
 CommandResult World::GetCommandResult(CommandId id) const {
     auto i = impl_->state.results.find(id);
     if (i != impl_->state.results.end())
@@ -2183,6 +2263,7 @@ WorldSnapshot World::Snapshot() const {
     o.gridDepth = s.depth;
     o.tick = s.tick;
     o.revision = s.revision;
+    o.treasury = s.treasury;
     o.stateHash = Hash(s);
     o.commandHistory = CommandHistory();
     for (const auto &b : s.buildings) {
@@ -2316,14 +2397,19 @@ std::string SaveWorld(const World &w) {
         for (const auto &recipe : type.recipes)
             hasUtilityRecipes = hasUtilityRecipes || HasUtility(*s.catalog, recipe.inputs) ||
                                 HasUtility(*s.catalog, recipe.outputs);
+    const bool hasTrade = s.treasury != 0 || std::any_of(s.catalog->Resources().begin(), s.catalog->Resources().end(),
+        [](const ResourceDef &r) { return r.tradeDeclared; }) || std::any_of(s.pending.begin(), s.pending.end(),
+        [](const Pending &p) { return p.kind == Kind::TradeExport || p.kind == Kind::TradeImport; });
     const bool version4 = !s.utilityConnections.empty() || hasPendingUtility || !s.utilityCommands.empty() ||
                           hasUtilityFailure || hasUtilityRecipes;
+    const bool version5 = hasTrade;
     std::string o = std::string("OPENREPUBLIC_ECONOMY_WORLD ") +
-                    (version4 ? "4\n" : (s.firstRetainedCommand == 1 ? "2\n" : "3\n"));
+                    (version5 ? "5\n" : (version4 ? "4\n" : (s.firstRetainedCommand == 1 ? "2\n" : "3\n")));
     o += "GRID " + Num(s.width) + " " + Num(s.depth) + "\nTICK " + Num(s.tick) + "\nREVISION " +
          Num(s.revision) + "\nNEXT " + Num(s.nextBuilding) + " " + Num(s.nextRoad) + " " + Num(s.nextOrder) +
          " " + Num(s.nextVehicle) + " " + Num(s.nextCommand) + "\n";
-    if (version4 || s.firstRetainedCommand > 1) {
+    if (version5) o += "TREASURY " + Num(s.treasury) + "\n";
+    if (version4 || version5 || s.firstRetainedCommand > 1) {
         // v3 records only the explicit retained-history boundary. v1/v2 bytes
         // remain unchanged while the entire command history is retained.
         o += "HISTORY " + Num(s.firstRetainedCommand) + "\n";
@@ -2351,7 +2437,7 @@ std::string SaveWorld(const World &w) {
         if (o.size() > MaxWorldSaveBytes)
             return {};
     }
-    if (version4) {
+    if (version4 || version5) {
         o += "UTILITY_CONNECTIONS " + Num(s.utilityConnections.size()) + "\n";
         for (const auto &edge : s.utilityConnections) {
             o += "U " + Num(edge.resource) + " " + Num(edge.a) + " " + Num(edge.b) + "\n";
@@ -2390,7 +2476,7 @@ std::string SaveWorld(const World &w) {
              Num(p.building) + " " + std::to_string(p.a.x) + " " + std::to_string(p.a.z) + " " +
              std::to_string(p.b.x) + " " + std::to_string(p.b.z) + " " + Num(p.road) + " " + Num(p.enabled) +
              " " + Num(p.source) + " " + Num(p.destination) + " " + Num(p.resource) + " " +
-             Num(p.vehicleType) + " " + Num(p.order) + "\n";
+             Num(p.vehicleType) + " " + Num(p.order) + (version5 ? " " + Num(p.amount) + " " + Num(p.rateCap) : "") + "\n";
         if (o.size() > MaxWorldSaveBytes)
             return {};
     }
@@ -2417,7 +2503,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     WorldSaveInput in(text);
     std::string tag, version;
     if (!(in >> tag >> version) || tag != "OPENREPUBLIC_ECONOMY_WORLD" ||
-        (version != "1" && version != "2" && version != "3" && version != "4")) {
+        (version != "1" && version != "2" && version != "3" && version != "4" && version != "5")) {
         ParseErr(e, ParseErrorCode::InvalidHeader, 1, "invalid world header");
         return false;
     }
@@ -2445,7 +2531,10 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     s.nextOrder = no;
     s.nextVehicle = nv;
     s.nextCommand = nc;
-    if (version == "3" || version == "4") {
+    if (version == "5" && (!(in >> tag >> s.treasury) || tag != "TREASURY")) {
+        ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid treasury field"); return false;
+    }
+    if (version == "3" || version == "4" || version == "5") {
         if (!(in >> tag >> s.firstRetainedCommand) || tag != "HISTORY" ||
             !s.firstRetainedCommand || s.firstRetainedCommand > nc) {
             ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid command history boundary");
@@ -2545,7 +2634,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         }
         s.roads.push_back(r);
     }
-    if (version == "4") {
+    if (version == "4" || version == "5") {
         if (!(in >> tag >> count) || tag != "UTILITY_CONNECTIONS" || count > text.size()) {
             ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid utility connection count");
             return false;
@@ -2657,15 +2746,24 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         std::uint32_t kind{};
         if (!(in >> tag >> p.id >> kind >> p.type >> p.building >> p.a.x >> p.a.z >> p.b.x >> p.b.z >>
               p.road >> p.enabled >> p.source >> p.destination >> p.resource >> p.vehicleType >> p.order) ||
-            tag != "Q" || kind < 1 || kind > (version == "1" ? 7u : (version == "4" ? 10u : 8u)) ||
+            (version == "5" && !(in >> p.amount >> p.rateCap)) ||
+            tag != "Q" || kind < 1 || kind > (version == "1" ? 7u : (version == "4" ? 10u : (version == "5" ? 12u : 8u))) ||
             !p.id || p.id >= nc ||
             (!s.pending.empty() && p.id <= s.pending.back().id)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending command");
             return false;
         }
         p.kind = static_cast<Kind>(kind);
+        if (p.kind == Kind::TradeExport || p.kind == Kind::TradeImport) {
+            const auto *tradeResource = c.Resource(p.resource);
+            if (version != "5" || !p.building || !p.amount || !p.rateCap || p.type || p.a != Cell{} ||
+                p.b != Cell{} || p.road || p.enabled || p.source || p.destination || p.vehicleType || p.order ||
+                !tradeResource || !tradeResource->tradeDeclared || tradeResource->utility) {
+                ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending trade command"); return false;
+            }
+        }
         if (p.kind == Kind::ConnectUtility || p.kind == Kind::DisconnectUtility) {
-            if (version != "4" || p.source > p.destination || p.type || p.building || p.a != Cell{} ||
+            if ((version != "4" && version != "5") || p.source > p.destination || p.type || p.building || p.a != Cell{} ||
                 p.b != Cell{} || p.road || p.enabled || p.vehicleType || p.order) {
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending utility command");
                 return false;
@@ -2686,9 +2784,9 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         std::uint32_t st{}, fail{};
         if (!(in >> tag >> r.commandId >> st >> fail >> r.building >> r.road >> r.order) || tag != "C" ||
             st < 1 || st > 3 || fail > static_cast<std::uint32_t>(version == "1" ? CommandFailure::ParseInvalid
-                                                              : (version == "4"
-                                                                     ? CommandFailure::ReferencedByUtilityConnection
-                                                                     : CommandFailure::CargoInTransit))) {
+                                                              : (version == "5" ? CommandFailure::TradeRateExceeded
+                                                                 : (version == "4" ? CommandFailure::ReferencedByUtilityConnection
+                                                                                    : CommandFailure::CargoInTransit)))) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid command result");
             return false;
         }
@@ -2698,7 +2796,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         if (r.commandId != expectedResultId || r.commandId >= nc || r.building >= nb ||
             r.road >= nr || r.order >= no ||
             (r.state == CommandState::Accepted ?
-                 (fail != 0 || (version == "4" && recordedUtilityCommands.count(r.commandId)
+                 (fail != 0 || ((version == "4" || version == "5") && recordedUtilityCommands.count(r.commandId)
                                     ? outputIds != 0
                                     : outputIds != 1))
                                                : (outputIds != 0 ||
@@ -2774,7 +2872,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     }
     for (auto &b : s.buildings) {
         RefreshStall(s, b);
-        if (version == "4")
+        if (version == "4" || version == "5")
             b.stall = utilityStalls.at(b.id);
     }
     target.impl_->state = std::move(s);

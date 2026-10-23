@@ -28,7 +28,7 @@ enum class Action : std::uint8_t {
     QueryWorld = 1, QueryCatalog, ExplainBuilding, Step, PlaceBuilding, RemoveBuilding,
     BuildRoad, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, CancelHaulOrder,
     PollCommand, ReadEvents, RetargetHaulOrder, ExportCheckpoint, CompactCommandHistory,
-    ConnectUtility, DisconnectUtility, QueryUtilityDiagnostics
+    ConnectUtility, DisconnectUtility, QueryUtilityDiagnostics, TradeExport, TradeImport
 };
 struct Permissions {
     bool query{true};
@@ -48,6 +48,8 @@ struct ResourceInfo {
     economy::ResourceId id{};
     std::string name;
     bool utility{};
+    bool tradeDeclared{};
+    std::uint64_t buyPrice{}, sellPrice{};
 };
 struct StorageInfo {
     std::string resource;
@@ -67,6 +69,7 @@ struct BuildingTypeInfo {
     economy::BuildingTypeId id{};
     std::string name;
     std::uint32_t width{}, depth{};
+    bool tradePost{};
     std::vector<StorageInfo> storage;
     std::vector<RecipeInfo> recipes;
 };
@@ -135,6 +138,8 @@ struct UtilityNetworkDiagnosticView {
 struct WorldView {
     std::uint32_t apiVersion{ApiVersion};
     std::uint64_t revision{}, tick{}, stateHash{};
+    std::uint64_t treasury{};
+    bool tradeEnabled{};
     std::vector<BuildingView> buildings;
     std::vector<RoadView> roads;
     std::vector<VehicleView> vehicles;
@@ -274,6 +279,12 @@ public:
     /** Queues removal of an existing connection for a catalog utility resource. */
     Submission DisconnectUtility(std::uint64_t revision, const std::string& resource,
         economy::BuildingId a, economy::BuildingId b);
+    /** Queues export of a catalog-priced resource from a designated trade post, bounded by rateCap. */
+    Submission TradeExport(std::uint64_t revision, economy::BuildingId building,
+        const std::string& resource, std::uint64_t amount, std::uint64_t rateCap);
+    /** Queues import of a catalog-priced resource into a designated trade post, bounded by rateCap. */
+    Submission TradeImport(std::uint64_t revision, economy::BuildingId building,
+        const std::string& resource, std::uint64_t amount, std::uint64_t rateCap);
     /** Returns the queued or terminal simulation result associated with a command handle.
      *  For an expired API handle whose native ID mapping was retired, result.commandId is 0. */
     PollResult PollCommand(std::uint64_t handle) const;

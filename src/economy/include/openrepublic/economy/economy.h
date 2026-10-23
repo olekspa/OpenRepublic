@@ -51,7 +51,10 @@ struct ResourceDef {
     ResourceId id{};
     std::string name;
     bool utility{};
+    bool tradeDeclared{};
+    std::uint64_t buyPrice{}, sellPrice{};
 };
+struct TradePriceDef { ResourceId resource{InvalidResourceId}; std::uint64_t buyPrice{}, sellPrice{}; };
 struct BuildingTypeDef {
     BuildingTypeId id{};
     std::string name;
@@ -59,6 +62,7 @@ struct BuildingTypeDef {
     std::uint32_t depth{1};
     std::vector<StorageDef> storage;
     std::vector<RecipeDef> recipes;
+    bool tradePost{};
 };
 struct VehicleTypeDef {
     VehicleTypeId id{};
@@ -86,7 +90,8 @@ enum class CatalogError : std::uint8_t {
     TooManyDefinitions,
     InvalidRecipeName,
     UtilityHasStorage,
-    InvalidUtilityRecipe
+    InvalidUtilityRecipe,
+    InvalidTradePrice
 };
 struct CatalogErrorInfo {
     CatalogError code{CatalogError::None};
@@ -140,6 +145,8 @@ public:
     /** Adds a positive-capacity, positive-speed vehicle type and returns its dense ID. */
     bool AddVehicleType(std::string_view name, std::uint64_t capacity, std::uint32_t cellsPerTick,
                         VehicleTypeId *outId, CatalogErrorInfo &error);
+    bool AddTradePrice(const TradePriceDef &price, CatalogErrorInfo &error);
+    bool SetTradePost(BuildingTypeId building, bool enabled, CatalogErrorInfo &error);
     /** Resolves a resource name and adds its storage slot. */
     bool AddStorage(BuildingTypeId building, std::string_view resource, std::uint64_t capacity,
                     CatalogErrorInfo &error);
@@ -221,7 +228,12 @@ enum class CommandFailure : std::uint8_t {
     DuplicateUtilityConnection,
     MissingUtilityConnection,
     InvalidUtilityConnection,
-    ReferencedByUtilityConnection
+    ReferencedByUtilityConnection,
+    NotTradePost,
+    TradeUnavailable,
+    InsufficientTradeStock,
+    InsufficientTreasury,
+    TradeRateExceeded
 };
 enum class CommandState : std::uint8_t {
     Unknown = 0,
@@ -359,6 +371,7 @@ struct WorldSnapshot {
     std::vector<VehicleSnapshot> vehicles;
     std::vector<HaulOrderSnapshot> orders;
     std::vector<UtilityConnectionSnapshot> utilityConnections;
+    std::uint64_t treasury{};
 };
 
 enum class SnapshotCollection : std::uint8_t { Buildings, Roads, Vehicles, Orders, UtilityConnections };
@@ -423,6 +436,8 @@ public:
     CommandId ConnectUtility(ResourceId resource, BuildingId a, BuildingId b);
     /** Queues removal of an existing undirected utility link. */
     CommandId DisconnectUtility(ResourceId resource, BuildingId a, BuildingId b);
+    CommandId TradeExport(BuildingId building, ResourceId resource, std::uint64_t amount, std::uint64_t rateCap);
+    CommandId TradeImport(BuildingId building, ResourceId resource, std::uint64_t amount, std::uint64_t rateCap);
     /** Swaps in a tuned catalog of identical structure (names, ids, recipe and storage layout) between ticks.
      *  Rejects the swap, leaving the world untouched, if the structure differs or building inventory
      *  or onboard cargo would exceed a reduced capacity. The new catalog must outlive the world. */
@@ -451,6 +466,7 @@ public:
     UtilityDiagnostics QueryUtilityDiagnostics() const;
     /** Returns the fixed simulation tick count. */
     std::uint64_t Tick() const noexcept;
+    std::uint64_t Treasury() const noexcept;
     /** Returns the monotonically increasing state revision. */
     std::uint64_t Revision() const noexcept;
     /** Returns the catalog referenced by this world. */

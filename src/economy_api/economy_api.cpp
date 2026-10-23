@@ -44,6 +44,9 @@ WorldView MakeWorld(const economy::Catalog& c, const economy::WorldSnapshot& s) 
     v.revision = s.revision;
     v.tick = s.tick;
     v.stateHash = s.stateHash;
+    v.treasury = s.treasury;
+    v.tradeEnabled = std::any_of(c.Resources().begin(), c.Resources().end(),
+        [](const auto& resource) { return resource.tradeDeclared; });
     v.commandHistory = s.commandHistory;
     for (const auto& b : s.buildings) {
         v.buildings.push_back(MakeBuilding(c, b));
@@ -93,7 +96,8 @@ Capabilities EconomyApi::DiscoverCapabilities() const {
         c.actions.insert(c.actions.end(), {Action::Step, Action::PlaceBuilding, Action::RemoveBuilding,
             Action::BuildRoad, Action::SetRoadEnabled, Action::SetBuildingEnabled,
             Action::CreateHaulOrder, Action::CancelHaulOrder, Action::RetargetHaulOrder,
-            Action::CompactCommandHistory, Action::ConnectUtility, Action::DisconnectUtility});
+            Action::CompactCommandHistory, Action::ConnectUtility, Action::DisconnectUtility,
+            Action::TradeExport, Action::TradeImport});
     }
     return c;
 }
@@ -163,10 +167,10 @@ CatalogView EconomyApi::DescribeCatalog() const {
         return v;
     }
     for (const auto& r : catalog_->Resources()) {
-        v.resources.push_back({r.id, r.name, r.utility});
+        v.resources.push_back({r.id, r.name, r.utility, r.tradeDeclared, r.buyPrice, r.sellPrice});
     }
     for (const auto& b : catalog_->BuildingTypes()) {
-        BuildingTypeInfo x{b.id, b.name, b.width, b.depth, {}, {}};
+        BuildingTypeInfo x{b.id, b.name, b.width, b.depth, b.tradePost, {}, {}};
         for (const auto& s : b.storage) {
             const auto* r = catalog_->Resource(s.resource);
             x.storage.push_back({r ? r->name : "", s.capacity});
@@ -490,6 +494,30 @@ Submission EconomyApi::DisconnectUtility(std::uint64_t revision, const std::stri
     if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
         return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->DisconnectUtility(id, a, b));
+}
+Submission EconomyApi::TradeExport(std::uint64_t revision, economy::BuildingId building,
+    const std::string& resource, std::uint64_t amount, std::uint64_t rateCap) {
+    if (!Allowed(true)) return {ErrorCode::PermissionDenied, 0, {}};
+    if (world_->Revision() != revision) return {ErrorCode::StaleRevision, 0, {}};
+    economy::ResourceId id{};
+    const auto* definition = catalog_->FindResource(resource, id) ? catalog_->Resource(id) : nullptr;
+    if (!definition || !definition->tradeDeclared || !amount || !rateCap)
+        return {ErrorCode::InvalidArgument, 0, {}};
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
+    return Submit(revision, world_->TradeExport(building, id, amount, rateCap));
+}
+Submission EconomyApi::TradeImport(std::uint64_t revision, economy::BuildingId building,
+    const std::string& resource, std::uint64_t amount, std::uint64_t rateCap) {
+    if (!Allowed(true)) return {ErrorCode::PermissionDenied, 0, {}};
+    if (world_->Revision() != revision) return {ErrorCode::StaleRevision, 0, {}};
+    economy::ResourceId id{};
+    const auto* definition = catalog_->FindResource(resource, id) ? catalog_->Resource(id) : nullptr;
+    if (!definition || !definition->tradeDeclared || !amount || !rateCap)
+        return {ErrorCode::InvalidArgument, 0, {}};
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
+    return Submit(revision, world_->TradeImport(building, id, amount, rateCap));
 }
 PollResult EconomyApi::PollCommand(std::uint64_t h) const {
     if (!permissions_.query) {

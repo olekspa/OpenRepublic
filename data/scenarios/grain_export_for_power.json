@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "grain_export_for_power",
+  "name": "Grain export funds the treasury",
+  "description": "OpenRepublic-authored synthetic trade setup: a grain-producing border post exports priced grain to earn treasury funds before importing declared coal.",
+  "catalog": "openrepublic-economy 1\nresource grain\ntrade grain buy 5 sell 3\nresource coal\ntrade coal buy 7 sell 4\nutility power\nbuilding grain_trade_post 1 1\n  store grain 64\n  store coal 100\n  recipe harvest every 1 out grain:2\n  tradepost\nend\nbuilding generator 1 1\n  recipe generate every 1 out power:2\nend\n",
+  "roads": [],
+  "buildings": [
+    { "type": "grain_trade_post", "x": 1, "z": 2 },
+    { "type": "generator", "x": 4, "z": 2 }
+  ],
+  "score": { "metric": "stored_non_raw_units" }
+}

@@ -434,6 +434,10 @@ std::string Action(economy_api::Action action) {
     return "disconnect_utility";
   case A::QueryUtilityDiagnostics:
     return "query_utility_diagnostics";
+  case A::TradeExport:
+    return "trade_export";
+  case A::TradeImport:
+    return "trade_import";
   case A::PollCommand:
     return "poll_command";
   case A::ReadEvents:
@@ -476,8 +480,15 @@ Json CommandHistory(const economy::CommandHistorySnapshot &history) {
 }
 Json Catalog(const economy_api::CatalogView &c) {
   Json resources = Json::array(), buildings = Json::array(), vehicles = Json::array();
-  for (const auto &r : c.resources)
-    resources.push_back(Json{{"id", r.id}, {"name", r.name}, {"utility", r.utility}});
+  for (const auto &r : c.resources) {
+    Json item{{"id", r.id}, {"name", r.name}, {"utility", r.utility}};
+    if (r.tradeDeclared) {
+      item["tradeDeclared"] = true;
+      item["buyPrice"] = std::to_string(r.buyPrice);
+      item["sellPrice"] = std::to_string(r.sellPrice);
+    }
+    resources.push_back(std::move(item));
+  }
   for (const auto &b : c.buildingTypes) {
     Json storage = Json::array(), recipes = Json::array();
     for (const auto &s : b.storage)
@@ -491,12 +502,14 @@ Json Catalog(const economy_api::CatalogView &c) {
       recipes.push_back(Json{
           {"name", r.name}, {"intervalTicks", r.intervalTicks}, {"inputs", inputs}, {"outputs", outputs}});
     }
-    buildings.push_back(Json{{"id", b.id},
+    Json item{{"id", b.id},
                              {"name", b.name},
                              {"width", b.width},
                              {"depth", b.depth},
                              {"storage", storage},
-                             {"recipes", recipes}});
+                             {"recipes", recipes}};
+    if (b.tradePost) item["tradePost"] = true;
+    buildings.push_back(std::move(item));
   }
   for (const auto &v : c.vehicleTypes)
     vehicles.push_back(Json{{"id", v.id},
@@ -548,12 +561,14 @@ Json World(const economy_api::WorldView &w) {
                           {"vehicleCell", Cell(o.vehicleCell)}});
   for (const auto &u : w.utilityConnections)
     utilityConnections.push_back(Json{{"resource", u.resource}, {"a", u.a}, {"b", u.b}});
-  return Json{{"apiVersion", w.apiVersion},     {"revision", std::to_string(w.revision)},
+  Json result{{"apiVersion", w.apiVersion},     {"revision", std::to_string(w.revision)},
               {"tick", std::to_string(w.tick)}, {"stateHash", std::to_string(w.stateHash)},
               {"buildings", buildings},         {"roads", roads},
               {"vehicles", vehicles},           {"orders", orders},
               {"utilityConnections", utilityConnections},
               {"commandHistory", CommandHistory(w.commandHistory)}};
+  if (w.tradeEnabled) result["treasury"] = std::to_string(w.treasury);
+  return result;
 }
 Json Result(const Json &id, Json value) {
   return Json{{"id", id}, {"protocolVersion", ProtocolVersion}, {"ok", true}, {"result", value}};
@@ -644,7 +659,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     Json methods = Json::array();
     for (const char *name : {"hello", "capabilities", "catalog", "world", "summary", "utility_diagnostics", "explain", "advise", "rules_history", "poll", "events", "begin_checkpoint", "read_checkpoint"})
       methods.push_back(Json{{"name", name}, {"roles", roles}});
-    for (const char *name : {"submit", "step", "compact_history"})
+    for (const char *name : {"submit", "step", "compact_history", "trade_export", "trade_import"})
       methods.push_back(Json{{"name", name}, {"roles", control}});
     if (allowShutdown_)
       methods.push_back(Json{{"name", "shutdown"}, {"roles", control}});
@@ -1185,6 +1200,21 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                {"expiredHandles", std::to_string(compacted.expiredHandles)},
                {"revision", std::to_string(compacted.revision)},
                {"commandHistory", CommandHistory(compacted.history)}};
+  } else if (method == "trade_export" || method == "trade_import") {
+    if (!Fields(req, {"revision", "buildingId", "resource", "amount", "rateCap"}, message))
+      return invalid(message);
+    std::uint64_t revision{}, building{}, amount{}, rateCap{};
+    std::string resource;
+    if (!U64(req, "revision", revision, message) ||
+        !Unsigned(req, "buildingId", UINT32_MAX, building, message) ||
+        !String(req, "resource", resource, message) ||
+        !U64(req, "amount", amount, message) || !U64(req, "rateCap", rateCap, message))
+      return invalid(message);
+    const auto submitted = method == "trade_export"
+        ? api_->TradeExport(revision, static_cast<economy::BuildingId>(building), resource, amount, rateCap)
+        : api_->TradeImport(revision, static_cast<economy::BuildingId>(building), resource, amount, rateCap);
+    out = Json{{"errorCode", Error(submitted.error)}, {"handle", std::to_string(submitted.handle)},
+               {"state", State(submitted.state)}};
   } else if (method == "step") {
     if (!Fields(req, {"ticks"}, message))
       return invalid(message);
