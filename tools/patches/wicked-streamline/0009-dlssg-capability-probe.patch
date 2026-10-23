@@ -1,0 +1,153 @@
+From 4f93f3fd4f337aeb38dbfe410701b83024ccdd42 Mon Sep 17 00:00:00 2001
+From: OpenRepublic contributors <dev@openrepublic.invalid>
+Date: Fri, 23 Oct 2026 12:00:00 -0400
+Subject: [PATCH 9/9] Add opt-in DLSS-G capability probe
+
+Load Streamline DLSS-G and Reflex only when the private runtime probe flag is
+set. Query adapter support/state before present, explicitly submit eOff, and
+record why activation is withheld until the required frame inputs are wired.
+---
+ WickedEngine/wiGraphicsDevice_DX12.cpp | 82 +++++++++++++++++++++++++++++++-
+ 1 file changed, 80 insertions(+), 2 deletions(-)
+
+--- a/WickedEngine/wiGraphicsDevice_DX12.cpp
++++ b/WickedEngine/wiGraphicsDevice_DX12.cpp
+@@ -27,6 +27,8 @@
+ 
+ #include <map>
+ #include <string>
++#include <cstdlib>
++#include <cstring>
+ #include <pix.h>
+ 
+ #include <sstream>
+@@ -35,6 +37,9 @@
+ #include <intrin.h> // _BitScanReverse64
+ #ifdef OPENREPUBLIC_STREAMLINE
+ #include "sl.h"
++#include "sl_dlss_g.h"
++#include "sl_reflex.h"
++#include "sl_pcl.h"
+ #endif
+ 
+ using namespace Microsoft::WRL;
+@@ -63,6 +68,8 @@
+ 	static sl::Result (*streamline_shutdown)() = nullptr;
+ 	static sl::Result (*streamline_set_device)(void*) = nullptr;
+ 	static bool streamline_initialized = false;
++	static bool streamline_fg_probe_requested = false;
++	static bool streamline_fg_probe_completed = false;
+ 
+ 	static void WriteStreamlineDiagnostic(const std::string& message)
+ 	{
+@@ -80,6 +87,8 @@
+ 
+ 	static void InitializeStreamline()
+ 	{
++		const char* fgProbe = std::getenv("OPENREPUBLIC_DLSS_FRAME_GENERATION");
++		streamline_fg_probe_requested = fgProbe != nullptr && std::strcmp(fgProbe, "probe") == 0;
+ 		wchar_t executable[MAX_PATH]{};
+ 		GetModuleFileNameW(nullptr, executable, MAX_PATH);
+ 		std::wstring folder(executable);
+@@ -101,14 +110,14 @@
+ 			streamline_module = nullptr;
+ 			return;
+ 		}
+-		const sl::Feature features[] = { sl::kFeatureDLSS };
++		const sl::Feature features[] = { sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL };
+ 		const std::wstring plugin_folder = folder + L"\\plugins";
+ 		const wchar_t* paths[] = { plugin_folder.c_str(), folder.c_str() };
+ 		sl::Preferences preferences{};
+ 		preferences.pathsToPlugins = paths;
+ 		preferences.numPathsToPlugins = 2;
+ 		preferences.featuresToLoad = features;
+-		preferences.numFeaturesToLoad = 1;
++		preferences.numFeaturesToLoad = streamline_fg_probe_requested ? static_cast<uint32_t>(std::size(features)) : 1;
+ 		preferences.flags = sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+ 		preferences.renderAPI = sl::RenderAPI::eD3D12;
+ 		preferences.engine = sl::EngineType::eCustom;
+@@ -121,6 +130,7 @@
+ 		streamline_initialized = result == sl::Result::eOk;
+ 		std::ostringstream init_log;
+ 		init_log << "Streamline slInit result=" << static_cast<int>(result) << " initialized=" << (streamline_initialized ? "true" : "false") << "\n";
++		init_log << "Streamline DLSS-G probe requested=" << (streamline_fg_probe_requested ? "true" : "false") << "\n";
+ 		WriteStreamlineDiagnostic(init_log.str());
+ 		if (!streamline_initialized)
+ 		{
+@@ -5596,6 +5606,74 @@
+ 					{
+ 						presentFlags = DXGI_PRESENT_ALLOW_TEARING;
+ 					}
++					if (streamline_initialized && streamline_fg_probe_requested && !streamline_fg_probe_completed)
++					{
++						streamline_fg_probe_completed = true;
++						auto getFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(GetProcAddress(streamline_module, "slGetFeatureFunction"));
++						auto isSupported = reinterpret_cast<PFun_slIsFeatureSupported*>(GetProcAddress(streamline_module, "slIsFeatureSupported"));
++						const sl::ViewportHandle viewport(1);
++						if (getFeatureFunction && isSupported)
++						{
++							const LUID luid = device->GetAdapterLuid();
++						LUID luidCopy = luid;
++						 sl::AdapterInfo adapter{};
++						adapter.deviceLUID = reinterpret_cast<uint8_t*>(&luidCopy);
++						adapter.deviceLUIDSizeInBytes = sizeof(luidCopy);
++						const sl::Result supported = isSupported(sl::kFeatureDLSS_G, adapter);
++						std::ostringstream supportLog;
++						supportLog << "DLSS-G slIsFeatureSupported result=" << static_cast<int>(supported) << "\n";
++						WriteStreamlineDiagnostic(supportLog.str());
++						void* function = nullptr;
++						sl::Result result = getFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", function);
++						std::ostringstream stateLog;
++						stateLog << "DLSS-G slGetFeatureFunction(GetState) result=" << static_cast<int>(result) << " function=" << (function != nullptr) << "\n";
++						WriteStreamlineDiagnostic(stateLog.str());
++						if (result == sl::Result::eOk && function)
++						{
++							auto getState = reinterpret_cast<PFun_slDLSSGGetState*>(function);
++							sl::DLSSGState state{};
++							result = getState(viewport, state, nullptr);
++							std::ostringstream stateResult;
++							stateResult << "DLSS-G slDLSSGGetState result=" << static_cast<int>(result)
++								<< " status=" << static_cast<uint32_t>(state.status)
++								<< " minDimension=" << state.minWidthOrHeight
++								<< " maxGeneratedFrames=" << state.numFramesToGenerateMax
++								<< " dynamicMFG=" << static_cast<int>(state.bIsDynamicMFGSupported) << "\n";
++							WriteStreamlineDiagnostic(stateResult.str());
++						}
++						function = nullptr;
++						result = getFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", function);
++						if (result == sl::Result::eOk && function)
++						{
++							auto setOptions = reinterpret_cast<PFun_slDLSSGSetOptions*>(function);
++							sl::DLSSGOptions options{};
++							options.mode = sl::DLSSGMode::eOff;
++							result = setOptions(viewport, options);
++						}
++						std::ostringstream optionLog;
++						optionLog << "DLSS-G slDLSSGSetOptions(eOff probe) result=" << static_cast<int>(result)
++							<< "; enabling is withheld because no per-frame HUD-less/UI-alpha tags are wired\n";
++						WriteStreamlineDiagnostic(optionLog.str());
++						function = nullptr;
++						result = getFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", function);
++						if (result == sl::Result::eOk && function)
++						{
++							auto setReflex = reinterpret_cast<PFun_slReflexSetOptions*>(function);
++							sl::ReflexOptions options{};
++							options.mode = sl::ReflexMode::eLowLatency;
++							result = setReflex(options);
++						}
++						std::ostringstream reflexLog;
++						reflexLog << "DLSS-G probe slReflexSetOptions(eLowLatency) result=" << static_cast<int>(result)
++							<< "; PCL markers and slReflexSleep are not wired\n";
++						WriteStreamlineDiagnostic(reflexLog.str());
++						WriteStreamlineDiagnostic("DLSS-G probe only: no eOn option requested; generated frames inactive\n");
++					}
++						else
++						{
++							WriteStreamlineDiagnostic("DLSS-G probe failed: feature-query exports unavailable\n");
++						}
++					}
+ 
+ 					HRESULT hr = dx12_check(swapchain_internal->swapChain->Present(swapchain->desc.vsync, presentFlags));
+ 
+-- 
+2.45.0
