@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "overbuilt_generator",
+  "name": "Overbuilt generator",
+  "description": "Connected generator capacity exceeds the consumer's demand; surplus supply is discarded by the current synthetic model.",
+  "catalog": "openrepublic-economy 1\nresource ore\nutility power\nbuilding generator 1 1\n  recipe generate every 1 out power:8\nend\nbuilding powered_mine 1 1\n  store ore 32\n  recipe extract every 1 in power:2 out ore:1\nend\n",
+  "roads": [],
+  "buildings": [
+    { "type": "generator", "x": 1, "z": 1 },
+    { "type": "powered_mine", "x": 4, "z": 1 }
+  ],
+  "utilityConnections": [
+    { "resource": "power", "aBuilding": 0, "bBuilding": 1 }
+  ],
+  "score": { "metric": "utility_multi_objective" }
+}
