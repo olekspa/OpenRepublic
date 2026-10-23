@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <sstream>
@@ -20,6 +21,20 @@ namespace openrepublic::preview
 
 	namespace
 	{
+		class ShowcasePropsTimer
+		{
+		public:
+			explicit ShowcasePropsTimer(const char* stage) : stage_(stage), start_(std::chrono::steady_clock::now()) {}
+			~ShowcasePropsTimer()
+			{
+				const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::steady_clock::now() - start_).count();
+				wilog("[OpenRepublic] Showcase timing: %s %lld ms", stage_, static_cast<long long>(elapsed));
+			}
+		private:
+			const char* stage_;
+			std::chrono::steady_clock::time_point start_;
+		};
 		// OBSERVED: vehicle script.ini files place $LIGHT_FORWARD at +Z and $LIGHT_BACKWARD/exhaust at -Z, so the
 		// install meshes already face +Z like the procedural ones; no yaw offset is needed.
 		// Rotation applied to the install vehicle meshes so their front follows the road direction.
@@ -114,6 +129,7 @@ namespace openrepublic::preview
 		const ShowcaseTerrainData& terrain, double regionRadius, const std::filesystem::path& contentRoot,
 		ShowcasePropsInfo& info, std::string& error)
 	{
+		ShowcasePropsTimer totalTimer("BuildShowcaseProps total");
 		const TerrainTransform transform = MakeMapTerrainTransform(request.metadata);
 		const double cx = request.placement.X();
 		const double cz = request.placement.Z();
@@ -441,6 +457,7 @@ namespace openrepublic::preview
 		const double realRange = 3600.0;
 		const auto loadNetwork = [&](const char* fileName, openrepublic::content::LinearNetwork& network)
 		{
+			ShowcasePropsTimer timer(fileName);
 			std::ifstream stream(request.mapDirectory / fileName, std::ios::binary);
 			if (!stream)
 			{

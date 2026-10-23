@@ -17,6 +17,7 @@
 #include <set>
 #include <cctype>
 #include <cmath>
+#include <chrono>
 #include <cstring>
 #include <cwctype>
 #include <exception>
@@ -28,6 +29,23 @@
 
 namespace openrepublic::preview
 {
+	namespace
+	{
+		class ShowcasePreviewTimer
+		{
+		public:
+			explicit ShowcasePreviewTimer(const char* stage) : stage_(stage), start_(std::chrono::steady_clock::now()) {}
+			~ShowcasePreviewTimer()
+			{
+				const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::steady_clock::now() - start_).count();
+				wilog("[OpenRepublic] Showcase timing: %s %lld ms", stage_, static_cast<long long>(elapsed));
+			}
+		private:
+			const char* stage_;
+			std::chrono::steady_clock::time_point start_;
+		};
+	}
 		constexpr std::uint32_t kTerrainPreviewMaxSide = 257;
 		constexpr double kTerrainDisplayUnitsPerSourceUnit = 0.001;
 		constexpr double kTerrainVerticalPreviewExaggeration = 5.0;
@@ -1329,6 +1347,7 @@ namespace openrepublic::preview
 		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
 		std::vector<RegionInstance>* outInstances, ShowcaseEnvironmentInfo* environmentInfo)
 	{
+		ShowcasePreviewTimer totalTimer("CreateMapRegionPreview total");
 		using namespace openrepublic::content;
 		constexpr std::size_t kMaxRegionObjects = 1500;
 		constexpr std::size_t kMaxRegionTypes = 160;
@@ -1363,9 +1382,13 @@ namespace openrepublic::preview
 			return false;
 		}
 		ShowcaseTerrainData showcaseTerrain;
-		if (enhancedLook && !PrepareShowcaseTerrain(request, regionRadius, showcaseTerrain, error))
+		if (enhancedLook)
 		{
-			return false;
+			ShowcasePreviewTimer timer("PrepareShowcaseTerrain");
+			if (!PrepareShowcaseTerrain(request, regionRadius, showcaseTerrain, error))
+			{
+				return false;
+			}
 		}
 		if (enhancedLook)
 		{
@@ -1714,6 +1737,7 @@ namespace openrepublic::preview
 			RealTreeSet realTrees;
 			openrepublic::content::TreePlacements realPlacements;
 			{
+				ShowcasePreviewTimer realTreeTimer("real tree mesh loading");
 				const auto loadResource = [&](const std::filesystem::path& path)
 				{
 					std::error_code fileError;
@@ -1809,7 +1833,12 @@ namespace openrepublic::preview
 				for (const char* stem : { "topol" }) loadTree(stem, realTrees.poplars);
 				for (const char* stem : { "broadbush1", "broadbush2", "broadbush3", "kriak", "kriak2", "kriak3" }) loadTree(stem, realTrees.shrubs);
 				// The package's own tree species (trees.bin) and positions.
-				if (LoadTreePlacements(request.mapDirectory, realPlacements, nullptr))
+				bool loadedTreePlacements = false;
+				{
+					ShowcasePreviewTimer timer("LoadTreePlacements");
+					loadedTreePlacements = LoadTreePlacements(request.mapDirectory, realPlacements, nullptr);
+				}
+				if (loadedTreePlacements)
 				{
 					realTrees.placements = &realPlacements;
 					for (const auto& group : realPlacements.species)
