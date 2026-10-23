@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "road_gap",
+  "name": "Road gap",
+  "description": "OpenRepublic-authored synthetic layout with a farm and mill beside separate road fragments; their access cells are not connected by a route.",
+  "roads": [
+    { "a": { "x": 1, "z": 2 }, "b": { "x": 2, "z": 2 } },
+    { "a": { "x": 6, "z": 2 }, "b": { "x": 7, "z": 2 } }
+  ],
+  "buildings": [
+    { "type": "farm", "x": 1, "z": 3 },
+    { "type": "mill", "x": 7, "z": 3 }
+  ],
+  "score": { "metric": "stored_non_raw_units" }
+}
