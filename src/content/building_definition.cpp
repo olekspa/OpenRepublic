@@ -57,6 +57,13 @@ bool IsElectricalConnection(const std::string& name) {
            name == "$CONNECTION_ELETRIC_LOW_OUTPUT_ONLY";
 }
 
+bool IsEconomicRawDirective(const std::string& name) {
+    return StartsWith(name, "$COST_") || StartsWith(name, "$ELETRIC_CONSUMPTION_") ||
+           StartsWith(name, "$ELECTRIC_") || StartsWith(name, "$PRODUCTION_") ||
+           StartsWith(name, "$CONSUMPTION_") || StartsWith(name, "$WASTE_") ||
+           StartsWith(name, "$WATER_");
+}
+
 bool ParseElectricalPoint(const std::string& line, std::array<double, 3>& point) {
     std::size_t cursor = 0;
     for (double& coordinate : point) {
@@ -175,6 +182,19 @@ bool ParseBuildingDefinition(const std::string& text, BuildingDefinition& output
             candidate.storage.push_back({name, args[0], number, args.size() == 3 ? args[2] : std::string(),
                                          lineNumber});
         } else {
+            if (IsEconomicRawDirective(name)) {
+                BuildingEconomicRawDirective raw;
+                raw.name = name;
+                raw.arguments = args;
+                raw.line = lineNumber;
+                raw.numericArguments.reserve(args.size());
+                for (const auto& argument : args) {
+                    double parsed = 0.0;
+                    if (ParseFinite(argument, parsed)) raw.numericArguments.emplace_back(parsed);
+                    else raw.numericArguments.emplace_back(std::nullopt);
+                }
+                candidate.economicRaw.push_back(std::move(raw));
+            }
             candidate.other.push_back({name, args, lineNumber});
         }
     }
