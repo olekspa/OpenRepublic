@@ -131,10 +131,11 @@ class ScenarioHostIntegrationTests(unittest.TestCase):
 
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
     def test_power_objectives_report_measured_deficit_isolation_and_surplus(self):
+        # The live host reports last-tick utility amounts in catalog units (power:2 -> 2), not micro-scaled.
         expected = {
-            "power_deficit": (2_000_000, 2_000_000),
-            "unconnected_consumer": (0, 2_000_000),
-            "overbuilt_generator": (2_000_000, 0),
+            "power_deficit": (2, 2),
+            "unconnected_consumer": (0, 2),
+            "overbuilt_generator": (2, 0),
         }
         for name, (throughput, unmet) in expected.items():
             with self.subTest(scenario=name):
