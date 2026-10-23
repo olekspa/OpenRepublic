@@ -246,3 +246,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~05:45 EDT** Workers: DLSS-PLAN follow-up 10 (Frame Generation feasibility, patches 0009+) and BUILDING-LOD (distance-based LOD for placed buildings, measured on large maps) started.
 
 - **2026-10-23 ~06:00 EDT** The interactive --modern view now starts at the hero pose (yaw -110, 16 deg up) with the sun behind-left instead of the old steep top-down start with the sun in the lens (verified by screenshot: playable economy toolbar over the modern scene).
+
+- **2026-10-23 ~06:20 EDT** Worker LLM-REPUBLIC started: LLM-driven republic controller (codex/openai-compatible/scripted backends, schema validation, JSONL replay) run on the real N22 region and benchmarked against the rule-based autopilot.
