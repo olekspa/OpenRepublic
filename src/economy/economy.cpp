@@ -2211,6 +2211,78 @@ WorldSnapshot World::Snapshot() const {
     o.utilityConnections = s.utilityConnections;
     return o;
 }
+WorldSnapshotPage World::SnapshotPage(SnapshotCollection collection, std::size_t offset,
+                                      std::size_t limit) const {
+    const auto &s = impl_->state;
+    WorldSnapshotPage page;
+    page.revision = s.revision;
+    switch (collection) {
+    case SnapshotCollection::Buildings: page.total = s.buildings.size(); break;
+    case SnapshotCollection::Roads: page.total = s.roads.size(); break;
+    case SnapshotCollection::Vehicles: page.total = s.vehicles.size(); break;
+    case SnapshotCollection::Orders: page.total = s.orders.size(); break;
+    case SnapshotCollection::UtilityConnections: page.total = s.utilityConnections.size(); break;
+    }
+    page.offset = offset;
+    if (offset >= page.total || limit == 0)
+        return page;
+    page.count = std::min(limit, page.total - offset);
+    const auto end = offset + page.count;
+    switch (collection) {
+    case SnapshotCollection::Buildings:
+        page.buildings.reserve(page.count);
+        for (std::size_t i = offset; i < end; ++i) {
+            const auto &building = s.buildings[i];
+            BuildingSnapshot value;
+            value.id = building.id;
+            value.type = building.type;
+            value.origin = building.origin;
+            value.access = building.access;
+            value.enabled = building.enabled;
+            value.stall = building.stall;
+            const auto *type = s.catalog->BuildingType(building.type);
+            for (std::size_t slot = 0; slot < type->storage.size(); ++slot)
+                value.inventory.push_back({type->storage[slot].resource, building.inventory[slot],
+                                           type->storage[slot].capacity});
+            for (std::size_t recipe = 0; recipe < type->recipes.size(); ++recipe)
+                value.recipes.push_back({building.remaining[recipe], building.completed[recipe]});
+            page.buildings.push_back(std::move(value));
+        }
+        break;
+    case SnapshotCollection::Roads:
+        page.roads.reserve(page.count);
+        for (std::size_t i = offset; i < end; ++i) {
+            const auto &road = s.roads[i];
+            page.roads.push_back({road.id, road.a, road.b, road.enabled});
+        }
+        break;
+    case SnapshotCollection::Vehicles:
+        page.vehicles.reserve(page.count);
+        for (std::size_t i = offset; i < end; ++i) {
+            const auto &vehicle = s.vehicles[i];
+            page.vehicles.push_back({vehicle.id, vehicle.order, vehicle.type, vehicle.cell,
+                                     vehicle.cargo, vehicle.state});
+        }
+        break;
+    case SnapshotCollection::Orders:
+        page.orders.reserve(page.count);
+        for (std::size_t i = offset; i < end; ++i) {
+            const auto &order = s.orders[i];
+            const auto *vehicle = FindVehicle(s, order.vehicle);
+            page.orders.push_back({order.id, order.source, order.destination, order.resource,
+                order.vehicleType, order.vehicle, vehicle ? vehicle->state : HaulState::NoRoute,
+                vehicle ? vehicle->failure : HaulFailure::NoRoute, vehicle ? vehicle->cargo : 0,
+                vehicle ? vehicle->cell : Cell{}});
+        }
+        break;
+    case SnapshotCollection::UtilityConnections:
+        page.utilityConnections.reserve(page.count);
+        page.utilityConnections.insert(page.utilityConnections.end(),
+            s.utilityConnections.begin() + offset, s.utilityConnections.begin() + end);
+        break;
+    }
+    return page;
+}
 TickEventSnapshot World::CaptureTickEvents() const {
     const auto &s = impl_->state;
     TickEventSnapshot snapshot;

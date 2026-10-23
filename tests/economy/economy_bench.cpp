@@ -2,6 +2,10 @@
 #include "openrepublic/economy/economy.h"
 #include "openrepublic/economy_api/economy_api.h"
 
+#ifdef OPENREPUBLIC_ECONOMY_HOST_AVAILABLE
+#include "economy_protocol.h"
+#endif
+
 #include <chrono>
 #include <iostream>
 
@@ -37,6 +41,28 @@ int main() {
                 std::chrono::steady_clock::now() - queryStart).count();
             std::cout << "API 40000-building step: " << apiMs / 20 << " ms/tick; QueryWorld: "
                       << queryMs / 5 << " ms/query, hash " << w.Snapshot().stateHash << '\n';
+            const auto revision = w.Revision();
+            const auto pageStart = std::chrono::steady_clock::now();
+            for (int i = 0; i < 100; ++i)
+                api.QueryWorld(revision, "buildings", static_cast<std::size_t>(i) * 32, 32);
+            const auto pageMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - pageStart).count();
+            std::cout << "API 40000-building page(32): " << pageMs / 100 << " ms/query\n";
+#ifdef OPENREPUBLIC_ECONOMY_HOST_AVAILABLE
+            openrepublic::economy_host::Dispatcher host(openrepublic::economy_host::Role::Controller, w);
+            const auto fullJsonStart = std::chrono::steady_clock::now();
+            const auto fullJson = host.HandleLine("{\"id\":\"full\",\"protocolVersion\":0,\"method\":\"world\"}");
+            const auto fullJsonMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - fullJsonStart).count();
+            const std::string pageRequest = "{\"id\":\"page\",\"protocolVersion\":0,\"method\":\"world\",\"revision\":\"" +
+                std::to_string(revision) + "\",\"kind\":\"buildings\",\"offset\":0,\"limit\":32}";
+            const auto pageJsonStart = std::chrono::steady_clock::now();
+            const auto pageJson = host.HandleLine(pageRequest);
+            const auto pageJsonMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - pageJsonStart).count();
+            std::cout << "Host 40000-building world JSON: " << fullJsonMs << " ms, " << fullJson.size()
+                      << " bytes; page(32): " << pageJsonMs << " ms, " << pageJson.size() << " bytes\n";
+#endif
         }
     }
     // Haul movement: one road row with farm/mill pairs and a truck per order.

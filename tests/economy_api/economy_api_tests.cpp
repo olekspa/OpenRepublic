@@ -41,6 +41,20 @@ int main() {
     const auto page = api.QueryWorld(world.world.revision, "buildings", 0, 32);
     Check(page.error == economy_api::ErrorCode::None && page.page.buildings.size() == 1,
         "revision-checked entity page");
+    Check(page.page.total == world.world.buildings.size() && page.page.nextOffset == 1 &&
+          page.page.buildings.front().id == world.world.buildings.front().id &&
+          page.page.buildings.front().type == world.world.buildings.front().type &&
+          page.page.buildings.front().cell == world.world.buildings.front().cell &&
+          page.page.buildings.front().inventory.size() == world.world.buildings.front().inventory.size(),
+        "paged building view matches the full query and reports its cursor");
+    Check(api.QueryWorld(world.world.revision, "buildings", 1, 32).page.buildings.empty() &&
+          api.QueryWorld(world.world.revision, "buildings", 2, 32).error ==
+              economy_api::ErrorCode::InvalidArgument &&
+          api.QueryWorld(world.world.revision, "unknown", 0, 32).error ==
+              economy_api::ErrorCode::InvalidArgument,
+        "paged query handles end, out-of-range, and unknown collection requests");
+    Check(api.QueryWorld().world.stateHash == world.world.stateHash,
+        "full and paged reads preserve the authoritative state hash");
     Check(api.QueryWorld(world.world.revision + 1, "buildings", 0, 1).error ==
         economy_api::ErrorCode::StaleRevision, "stale page rejected");
     Check(api.Explain(world.world.buildings.front().id).error == economy_api::ErrorCode::None,
