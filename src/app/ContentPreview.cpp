@@ -1868,7 +1868,7 @@ namespace openrepublic::preview
 			<< center.typeName << "); " << selected.size() << " placements selected, " << unresolvedTypes
 			<< " unresolved types, " << failedLoads << " failed loads, " << lodFallbackTypeNames.size()
 			<< " types used a lower available LOD, " << skippedByLimit
-			<< " skipped by the instance/type limits; " << roadEdges << " road links drawn as chords; 1:1 metres,"
+			<< " skipped by the instance/type limits; " << roadEdges << " road links drawn (decoded curves where available, else chords); 1:1 metres,"
 			<< " verified terrain transform, placement"
 			<< " matrices applied as stored";
 		description = summary.str();

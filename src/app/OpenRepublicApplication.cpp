@@ -1,4 +1,6 @@
 #include "OpenRepublicApplication.h"
+#include "ShowcaseProps.h"
+#include "openrepublic/procgeo/vehicles.h"
 #include "ModelImporter.h"
 #include "ContentPreview.h"
 #include "MapShowcaseCapture.h"
@@ -2409,13 +2411,32 @@ namespace openrepublic
 		}
 		while (regionTruckEntities.size() < regionEconomySnapshot->vehicles.size())
 		{
-			const wi::ecs::Entity truck = previewWorld.Entity_CreateCube("app-owned economy truck marker");
-			if (wi::scene::MaterialComponent* material = previewWorld.materials.GetComponent(truck))
+			wi::ecs::Entity truck = wi::ecs::INVALID_ENTITY;
+			if (mapShowcaseEnhancedLook && mapPlacement)
 			{
-				material->SetBaseColor(XMFLOAT4(1.0f, 0.2f, 0.1f, 1.0f));
-				material->CreateRenderData(true);
+				// Modern look: a real (procedural) truck model instead of a debug cube.
+				if (regionTruckMesh == wi::ecs::INVALID_ENTITY)
+				{
+					regionTruckMesh = preview::CreateProceduralMeshEntity(previewWorld, "app-owned economy truck mesh",
+						openrepublic::procgeo::MakeVehicle(openrepublic::procgeo::VehicleKind::CargoTruck, 5), 0.5f, 0.1f);
+				}
+				if (regionTruckMesh != wi::ecs::INVALID_ENTITY)
+				{
+					truck = previewWorld.Entity_CreateObject("app-owned economy truck marker");
+					previewWorld.objects.GetComponent(truck)->meshID = regionTruckMesh;
+				}
+			}
+			if (truck == wi::ecs::INVALID_ENTITY)
+			{
+				truck = previewWorld.Entity_CreateCube("app-owned economy truck marker");
+				if (wi::scene::MaterialComponent* material = previewWorld.materials.GetComponent(truck))
+				{
+					material->SetBaseColor(XMFLOAT4(1.0f, 0.2f, 0.1f, 1.0f));
+					material->CreateRenderData(true);
+				}
 			}
 			regionTruckEntities.push_back(truck);
+			regionTruckPose.push_back({ 0.0, 0.0, 0.0 });
 		}
 		for (std::size_t i = 0; i < regionTruckEntities.size(); ++i)
 		{
@@ -2462,6 +2483,22 @@ namespace openrepublic
 					std::min(std::max(worldZ, terrainTransform.originZ), terrainTransform.originZ + terrainTransform.sizeZ), height, nullptr);
 			}
 			marker->ClearTransform();
+			if (regionTruckMesh != wi::ecs::INVALID_ENTITY && previewWorld.objects.GetComponent(regionTruckEntities[i]) != nullptr &&
+				previewWorld.objects.GetComponent(regionTruckEntities[i])->meshID == regionTruckMesh)
+			{
+				auto& last = regionTruckPose[i];
+				if ((last[0] != 0.0 || last[1] != 0.0) && std::hypot(worldX - last[0], worldZ - last[1]) > 0.5)
+				{
+					last[2] = std::atan2(worldX - last[0], worldZ - last[1]);
+				}
+				last[0] = worldX;
+				last[1] = worldZ;
+				marker->RotateRollPitchYaw(XMFLOAT3(0.0f, static_cast<float>(last[2]), 0.0f));
+				marker->Translate(XMFLOAT3(static_cast<float>(worldX - centerX), static_cast<float>(height) + 0.35f,
+					static_cast<float>(worldZ - centerZ)));
+				marker->UpdateTransform();
+				continue;
+			}
 			constexpr float truckHalfHeight = 0.45f;
 			marker->Scale(XMFLOAT3(0.65f, truckHalfHeight, 0.9f));
 			marker->Translate(XMFLOAT3(static_cast<float>(worldX - centerX),

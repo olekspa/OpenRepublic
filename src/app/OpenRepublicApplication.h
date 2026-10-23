@@ -194,6 +194,8 @@ namespace openrepublic
 		XMFLOAT3 sceneCameraTarget{};
 		float sceneCameraDistance = 1.0f;
 		bool sceneCameraKnown = false;
+		wi::ecs::Entity regionTruckMesh = wi::ecs::INVALID_ENTITY;
+		std::vector<std::array<double, 3>> regionTruckPose;
 		void UpdateSceneControl();
 		void ApplySceneLook(const openrepublic::scenectl::SceneLook& look);
 		float cameraSpeedScale = 1.0f;
