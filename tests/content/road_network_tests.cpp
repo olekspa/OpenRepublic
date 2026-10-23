@@ -30,7 +30,8 @@ void AppendSegment(std::string& out, std::uint32_t nodeA, std::uint32_t nodeB,
                    const std::vector<RoadPoint>& points,
                    const std::vector<std::uint32_t>& nestedArrayCounts = {},
                    std::uint8_t conditionalReferenceCount = 0,
-                   std::uint8_t vectorFlag = 1) {
+                   std::uint8_t vectorFlag = 1,
+                   std::uint32_t opaqueHeaderWord = 0) {
     const std::size_t start = out.size();
     out.resize(start + 0x88, '\0');
     const auto count = static_cast<std::uint32_t>(points.size());
@@ -39,6 +40,7 @@ void AppendSegment(std::string& out, std::uint32_t nodeA, std::uint32_t nodeB,
     std::memcpy(out.data() + start + 4, &nodeA, sizeof(nodeA));
     std::memcpy(out.data() + start + 8, &nodeB, sizeof(nodeB));
     std::memcpy(out.data() + start + 0x34, &nestedCount, sizeof(nestedCount));
+    std::memcpy(out.data() + start + 0x38, &opaqueHeaderWord, sizeof(opaqueHeaderWord));
     out[start + 0x84] = static_cast<char>(vectorFlag);
     out[start + 0x85] = static_cast<char>(conditionalReferenceCount);
     for (const std::uint32_t arrayCount : nestedArrayCounts) {
@@ -73,7 +75,7 @@ void AppendNode(std::string& out, float x, float y, float z, const std::vector<s
     out.resize(start + 0x48, '\0');
     for (std::uint32_t i = 0; i < 3 * triple; ++i) U32(out, 7);
     for (const auto id : neighbors) U32(out, id);
-    for (std::uint32_t i = 0; i < n; ++i) U32(out, 100 + i); // segment ids
+    for (std::uint32_t i = 0; i < n; ++i) U32(out, i);       // segment indices
     for (std::uint32_t i = 0; i < n; ++i) U32(out, 24);      // type ids
     for (std::uint32_t i = 0; i < n; ++i) U32(out, 0);       // extra words
 }
@@ -86,7 +88,8 @@ std::string MakeNetwork() {
     AppendNode(out, 10.0f, 1.0f, -20.0f, {1}, 1);
     AppendNode(out, 30.0f, 2.0f, -20.0f, {0, 2}, 0);
     AppendNode(out, 50.0f, 3.0f, -20.0f, {1}, 0);
-    AppendSegment(out, 0, 1, {{10, 1, -20}, {20, 1.5f, -20}, {30, 2, -20}});
+    AppendSegment(out, 0, 1, {{10, 1, -20}, {20, 1.5f, -20}, {30, 2, -20}}, {}, 0, 1,
+                  0x3f000000u);
     AppendSegment(out, 1, 2, {{30, 2, -20}, {40, 2.5f, -20}, {50, 3, -20}});
     return out;
 }
@@ -100,7 +103,7 @@ void TestExtraction() {
     Check(network.nodes.size() == 3 && network.nodes[1].x == 30.0f && network.nodes[1].z == -20.0f &&
               network.nodes[1].neighbors == std::vector<std::uint32_t>{0, 2},
           "positions and neighbors are read");
-    Check(network.nodes.size() == 3 && network.nodes[1].segmentIds[1] == 101 &&
+    Check(network.nodes.size() == 3 && network.nodes[1].segmentIds[1] == 1 &&
               network.nodes[1].typeIds[0] == 24,
           "segment and type ids follow the neighbors");
     Check(network.asymmetricLinks == 0, "a symmetric network reports no asymmetric links");
@@ -108,6 +111,10 @@ void TestExtraction() {
               network.segments[0].nodeA == 0 && network.segments[0].nodeB == 1 &&
               network.segments[0].polyline.size() == 3 && network.segments[0].polyline[1].x == 20.0f,
           "segment endpoints and point-list geometry are decoded");
+    Check(network.segments[0].typeId == 24 && network.segments[0].rawHeader[0x38] == 0 &&
+              network.segments[0].rawHeader[0x39] == 0 && network.segments[0].rawHeader[0x3a] == 0 &&
+              network.segments[0].rawHeader[0x3b] == 0x3f,
+          "matching endpoint type id is retained and opaque header bytes are exposed verbatim");
     const auto sampled = SampleRoadPolyline(network.segments[0].polyline, 3);
     Check(sampled.size() == 3 && sampled.front().x == 10.0f && sampled.back().x == 30.0f &&
               std::abs(sampled[1].x - 20.0f) < 1e-5f,

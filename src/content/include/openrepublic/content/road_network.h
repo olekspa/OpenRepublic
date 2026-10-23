@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -35,6 +36,11 @@ struct RoadSegment {
     // Present only when endpoint connection arrays agree on this value.
     // The game's semantic meaning for the value is not yet known.
     std::optional<std::uint32_t> typeId;
+    // Exact serialized header bytes. The writer exposes several scalar and
+    // flag fields in this 0x88-byte block, but their road-width, lane,
+    // material, and vertical-offset meanings are not established. Retaining
+    // the bytes allows later evidence-backed interpretation without guessing.
+    std::array<std::uint8_t, 0x88> rawHeader{};
     // The 0x18-record XYZ sequence. Centerline interpretation is INFERRED;
     // points are retained in file order.
     std::vector<RoadPoint> polyline;

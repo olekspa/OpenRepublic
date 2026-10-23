@@ -110,6 +110,7 @@ bool DecodeSegments(std::string_view bytes, std::size_t& offset, RoadNetwork& ne
         segment.nodeA = nodeA;
         segment.nodeB = nodeB;
         segment.typeId = SharedTypeForSegment(network, nodeA, nodeB, i);
+        std::memcpy(segment.rawHeader.data(), bytes.data() + header, kSegmentHeaderBytes);
         segment.polyline.reserve(pointCount);
         for (std::uint32_t p = 0; p < pointCount; ++p) {
             const std::size_t pos = pointsOffset + static_cast<std::size_t>(p) * 0x18;
