@@ -168,7 +168,7 @@ def processed_units(world, raw):
     return total / 1_000_000
 
 
-def place_near(host, catalog, type_name, cell):
+def place_near(host, catalog, type_name, cell, final_tick=None):
     """Place a building so its access cell sits on a road, nearest road cell first."""
     width = next(b["width"] for b in catalog["buildingTypes"] if b["name"] == type_name)
     cells = set()
@@ -178,6 +178,8 @@ def place_near(host, catalog, type_name, cell):
                 cells.add((road[end]["x"], road[end]["z"]))
     candidates = sorted(cells, key=lambda c: abs(c[0] - cell["x"]) + abs(c[1] - cell["z"]))
     for rx, rz in candidates[:400]:
+        if final_tick is not None and int(_world(host)["tick"]) >= final_tick:
+            break
         handle = _queue_single(host, {
             "kind": "place_building", "type": type_name,
             "x": rx - (width - 1) // 2, "z": rz + 1})
@@ -330,7 +332,7 @@ def _queue_trades(host, world, catalog, direction=None):
 
 
 def run_round(host, catalog, ticks, placed, round_number=1, count_generated=False,
-              retain_command_results=1024):
+              retain_command_results=1024, final_tick=None):
     """Run one bounded controller round; exposed for deterministic fake-host tests."""
     stats = _new_stats()
     plan = _plan(host)
@@ -342,7 +344,7 @@ def run_round(host, catalog, ticks, placed, round_number=1, count_generated=Fals
         maker = raw_producer_type(catalog, need["resource"])
         if maker and need["resource"] not in placed:
             consumer = next((b for b in initial_world["buildings"] if b["id"] == need["building"]), None)
-            if consumer and place_near(host, catalog, maker, consumer["cell"]):
+            if consumer and place_near(host, catalog, maker, consumer["cell"], final_tick):
                 print(f"  placed a {maker} near building {consumer['id']} for {need['resource']}")
                 placed.add(need["resource"])
                 placed_this_round += 1
@@ -351,19 +353,21 @@ def run_round(host, catalog, ticks, placed, round_number=1, count_generated=Fals
     if _world(host)["revision"] != initial_world["revision"]:
         plan = _plan(host)
 
-    retarget_handles, blocked_pairs, queued_orders = _submit_retargets(host, plan, stats)
+    retarget_handles, blocked_pairs, queued_orders = _submit_retargets(host, plan, stats) if final_tick is None or int(_world(host)["tick"]) < final_tick else ([], set(), set())
     # A concurrent writer can advance the world after advise. Refresh once and
     # retry advice-derived retargets under the newer adviser revision only.
-    if _world(host)["revision"] != plan["revision"]:
+    if (final_tick is None or int(_world(host)["tick"]) < final_tick) and _world(host)["revision"] != plan["revision"]:
         plan = _plan(host)
         refreshed_handles, refreshed_pairs, _ = _submit_retargets(host, plan, stats, queued_orders)
         retarget_handles.extend(refreshed_handles)
         blocked_pairs.update(refreshed_pairs)
     # Retargets are queued before creates and use the adviser revision. Exclude any
     # same-tick create that would duplicate the new source/destination/resource tuple.
-    create_handles = _queue_creates(host, _create_commands(plan, blocked_pairs), stats)
-    trade_handles = _queue_trades(host, _world(host), catalog)
-    _step(host, ticks)
+    create_handles = _queue_creates(host, _create_commands(plan, blocked_pairs), stats) if final_tick is None or int(_world(host)["tick"]) < final_tick else []
+    trade_handles = _queue_trades(host, _world(host), catalog) if final_tick is None or int(_world(host)["tick"]) < final_tick else []
+    step_ticks=ticks if final_tick is None else min(ticks,max(0,final_tick-int(_world(host)["tick"])))
+    if step_ticks:
+        _step(host, step_ticks)
     for handle in retarget_handles:
         if _poll_terminal(host, handle) == "accepted":
             stats["accepted_retargets"] += 1
@@ -379,18 +383,24 @@ def run_round(host, catalog, ticks, placed, round_number=1, count_generated=Fals
     stats["trade_queued"] = len(trade_handles)
     # Production may create exportable stock during the requested ticks. Apply
     # exports before planning imports so proceeds can fund them in this round.
-    post_trade_handles = _queue_trades(host, _world(host), catalog, "export")
-    if post_trade_handles:
+    post_trade_handles = _queue_trades(host, _world(host), catalog, "export") if final_tick is None or int(_world(host)["tick"]) < final_tick else []
+    if post_trade_handles and (final_tick is None or int(_world(host)["tick"]) < final_tick):
         _step(host, 1)
         for handle in post_trade_handles:
             _poll_terminal(host, handle)
     stats["trade_queued"] += len(post_trade_handles)
-    import_handles = _queue_trades(host, _world(host), catalog, "import")
-    if import_handles:
+    import_handles = _queue_trades(host, _world(host), catalog, "import") if final_tick is None or int(_world(host)["tick"]) < final_tick else []
+    if import_handles and (final_tick is None or int(_world(host)["tick"]) < final_tick):
         _step(host, 1)
         for handle in import_handles:
             _poll_terminal(host, handle)
     stats["trade_queued"] += len(import_handles)
+
+    if final_tick is not None:
+        world_at_end = _world(host)
+        while int(world_at_end["tick"]) < final_tick:
+            _step(host, min(MAX_TICKS, final_tick-int(world_at_end["tick"])))
+            world_at_end = _world(host)
 
     world, removed = _compact_history(host, _world(host), retain_command_results)
     stats["command_results_removed"] = removed
@@ -449,6 +459,7 @@ def main(argv=None):
     parser.add_argument("--count-electricity", action="store_true",
                         help="also score stored output of power plants (comparable with REPUBLIC-1's definition)")
     parser.add_argument("--json", action="store_true", help="print one JSON result line (controller vs idle baseline)")
+    parser.add_argument("--exact-round-ticks", action="store_true", help="include helper placement/trade ticks inside each round's tick budget")
     args, host_args = parser.parse_known_args(argv)
     host_args = [a for a in host_args if a != "--"]
 
@@ -459,13 +470,17 @@ def main(argv=None):
         placed = set()
         raw = raw_resources(catalog, args.count_electricity)
         world = _world(host)
+        first_tick = int(world["tick"])
         command_results_retired = 0
+        rejected_actions = 0
         for round_number in range(1, args.rounds + 1):
             result = run_round(host, catalog, args.ticks, placed, round_number=round_number,
                                count_generated=args.count_electricity,
-                               retain_command_results=args.retain_command_results)
+                               retain_command_results=args.retain_command_results,
+                               final_tick=(first_tick+round_number*args.ticks if args.exact_round_ticks else None))
             world = result["world"]
             command_results_retired += result["command_results_removed"]
+            rejected_actions += result["rejected_creates"] + result["rejected_retargets"]
             if round_number == 1:
                 blocked = [n for n in _plan(host)["unservedInputs"] if not n["producers"]]
                 if blocked:
@@ -496,6 +511,7 @@ def main(argv=None):
             idle.close()
         print(json.dumps({"benchmark": "stored_non_raw_units", "tick": final_tick, "controller": final_score,
                           "idle": idle_score, "gain": final_score - idle_score, "orders": orders,
+                          "rejectedActions": rejected_actions,
                           "generatorsPlaced": sorted(placed), "commandResultsRetired": command_results_retired,
                           "commandResultsRetention": args.retain_command_results}))
     return 0

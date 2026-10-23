@@ -250,10 +250,12 @@ def score_record(scenario, world, catalog, controller_ticks):
     return {**stable, "scoreHash": digest}
 
 
-def run_scenario(host_exe, scenario, ticks, host_args=()):
+def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rounds=1):
     """Run setup and one autopilot round; return a canonical, hashable score record."""
     if isinstance(ticks, bool) or not isinstance(ticks, int) or not 1 <= ticks <= MAX_TICKS:
         raise ValueError(f"ticks must be from 1 through {MAX_TICKS}")
+    if isinstance(rounds, bool) or not isinstance(rounds, int) or not 1 <= rounds <= ticks or ticks % rounds:
+        raise ValueError("rounds must be a positive divisor of ticks")
     temporary = tempfile.TemporaryDirectory(prefix="openrepublic-scenario-") if "catalog" in scenario else None
     args = list(host_args)
     if temporary:
@@ -267,7 +269,19 @@ def run_scenario(host_exe, scenario, ticks, host_args=()):
         autopilot._check_error(catalog, "catalog")
         _seed(host, scenario)
         with contextlib.redirect_stdout(io.StringIO()):
-            result = autopilot.run_round(host, catalog, ticks, set(), round_number=1)
+            start_tick = int(autopilot._world(host)["tick"])
+            placed = set()
+            totals = {"placements_accepted": 0, "retargets_queued": 0, "accepted_retargets": 0,
+                      "rejected_retargets": 0, "creates_queued": 0, "accepted_creates": 0,
+                      "rejected_creates": 0}
+            per_round = ticks // rounds
+            for round_number in range(1, rounds + 1):
+                result = autopilot.run_round(
+                    host, catalog, per_round, placed, round_number=round_number,
+                    final_tick=start_tick+round_number*per_round if exact_ticks else None)
+                for field in totals:
+                    totals[field] += result[field]
+            result["autopilotTotals"] = totals
         world = result["world"]
         if scenario["score"]["metric"] == "utility_multi_objective":
             diagnostics = host.call("utility_diagnostics", revision=world["revision"], offset=0, limit=128)
@@ -284,9 +298,7 @@ def run_scenario(host_exe, scenario, ticks, host_args=()):
         stable = score_record(scenario, world, catalog, ticks)
         stable = {key: value for key, value in stable.items() if key != "scoreHash"}
         stable.update({
-            "autopilot": {key: result[key] for key in (
-                "placements_accepted", "retargets_queued", "accepted_retargets", "rejected_retargets",
-                "creates_queued", "accepted_creates", "rejected_creates")},
+            "autopilot": result["autopilotTotals"],
         })
         digest = hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":"),
                                            ensure_ascii=False).encode("utf-8")).hexdigest()
