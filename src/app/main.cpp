@@ -36,7 +36,7 @@ namespace
 		static constexpr std::wstring_view incompatible[] = {
 			L"--scene-probe", L"--glb-probe", L"--nmf-probe", L"--content-root", L"--economy-url",
 			L"--map-package", L"--map-building", L"--map-region", L"--synthetic-region-fixture",
-			L"--map-radius", L"--map-lod", L"--showcase-capture", L"--showcase-look",
+			L"--map-radius", L"--map-lod", L"--map-lod-distances", L"--showcase-capture", L"--showcase-look",
 			L"--showcase-camera", L"--scene-pipe-name", L"--showcase-sun", L"--building-type",
 			L"--building-lod", L"--nmf-texture-root", L"--nmf-unlit-preview",
 			L"--nmf-material-unlit-preview", L"--capture-preview", L"--capture-preview-zoom",
@@ -224,6 +224,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	double mapRadiusMeters = 0.0;
 	int mapBuildingModelLevel = 0;
 	bool mapBuildingModelLevelGiven = false;
+	bool mapBuildingDynamicLod = false;
+	float mapLodNearDistance = 250.0f;
+	float mapLodFarDistance = 700.0f;
+	bool mapLodDistancesGiven = false;
 	std::string buildingTypeName;
 	std::string economyHost;
 	int economyPort = 0;
@@ -470,19 +474,60 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			{
 				if (i + 1 >= argumentCount)
 				{
-					nmfCaptureArgumentError = "--map-lod requires 0, 1 or 2";
+					nmfCaptureArgumentError = "--map-lod requires 0, 1, 2 or auto";
 				}
 				else
 				{
 					const std::wstring_view level = arguments[++i];
-					if (level == L"0" || level == L"1" || level == L"2")
+					if (level == L"auto")
+					{
+						mapBuildingModelLevel = 2;
+						mapBuildingDynamicLod = true;
+						mapBuildingModelLevelGiven = true;
+					}
+					else if (level == L"0" || level == L"1" || level == L"2")
 					{
 						mapBuildingModelLevel = level[0] - L'0';
 						mapBuildingModelLevelGiven = true;
 					}
 					else
 					{
-						nmfCaptureArgumentError = "--map-lod requires 0, 1 or 2";
+						nmfCaptureArgumentError = "--map-lod requires 0, 1, 2 or auto";
+					}
+				}
+			}
+			else if (std::wstring_view(arguments[i]) == L"--map-lod-distances")
+			{
+				if (i + 1 >= argumentCount)
+				{
+					nmfCaptureArgumentError = "--map-lod-distances requires near,far distances in meters";
+				}
+				else
+				{
+					const std::wstring_view pair(arguments[++i]);
+					const std::size_t comma = pair.find(L',');
+					double nearDistance = 0.0, farDistance = 0.0;
+					const std::wstring nearText(pair.substr(0, comma));
+					const std::wstring farText = comma == std::wstring_view::npos ? L"" : std::wstring(pair.substr(comma + 1));
+					if (comma == std::wstring_view::npos || pair.find(L',', comma + 1) != std::wstring_view::npos ||
+						!ParseFiniteDouble(nearText.c_str(), nearDistance) || !ParseFiniteDouble(farText.c_str(), farDistance) ||
+						nearDistance <= 0.0 || farDistance <= nearDistance || farDistance > 100000.0)
+					{
+						nmfCaptureArgumentError = "--map-lod-distances requires 0 < near < far <= 100000 meters, formatted near,far";
+					}
+					else
+					{
+						mapLodNearDistance = static_cast<float>(nearDistance);
+						mapLodFarDistance = static_cast<float>(farDistance);
+						if (!std::isfinite(mapLodNearDistance) || !std::isfinite(mapLodFarDistance) ||
+							mapLodNearDistance <= 0.0f || mapLodFarDistance <= mapLodNearDistance)
+						{
+							nmfCaptureArgumentError = "--map-lod-distances are not representable as distinct positive float meters";
+						}
+						else
+						{
+							mapLodDistancesGiven = true;
+						}
 					}
 				}
 			}
@@ -867,6 +912,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		nmfCaptureArgumentError = "--map-lod requires --map-package and --map-region";
 	}
+	if (nmfCaptureArgumentError.empty() && mapLodDistancesGiven && !mapBuildingDynamicLod)
+	{
+		nmfCaptureArgumentError = "--map-lod-distances requires --map-lod auto";
+	}
 	if (nmfCaptureArgumentError.empty() && localEconomyPipeNameGiven)
 	{
 		if (economyUrlArgumentSeen || economyPort > 0)
@@ -887,7 +936,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	if (nmfCaptureArgumentError.empty() && syntheticRegionFixture &&
 		(!mapPackage.empty() || !contentRoot.empty() || mapRegion || mapBuildingIndexGiven ||
-			mapBuildingModelLevelGiven || mapRadiusMeters != 0.0 || economyUrlArgumentSeen ||
+			mapBuildingModelLevelGiven || mapLodDistancesGiven || mapRadiusMeters != 0.0 || economyUrlArgumentSeen ||
 			economyPort > 0 || localEconomyPipeNameGiven || !sceneProbePath.empty() ||
 			!glbProbePath.empty() || !nmfProbePath.empty() || !terrainProbePath.empty() ||
 			!buildingTypeName.empty() || !mapShowcaseCapturePath.empty() || !nmfCapturePaths.empty() ||
@@ -1208,7 +1257,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		application.SetRegionCatalogImportOptions(std::move(regionCatalogOptions));
 		application.SetMapPlacement(std::move(*mapPlacementRequest), mapRadiusMeters, mapRegion,
-			contentRoot, mapBuildingModelLevel);
+			contentRoot, mapBuildingModelLevel, mapBuildingDynamicLod, mapLodNearDistance, mapLodFarDistance);
 	}
 	application.SetNmfUnlitPreview(nmfUnlitPreview);
 	application.SetNmfMaterialUnlitPreview(nmfMaterialUnlitPreview);

@@ -1,6 +1,7 @@
 add_executable(OpenRepublic WIN32
     main.cpp
     ContentPreview.cpp
+    BuildingLodController.cpp
     EconomyOverlay.cpp
     NativeEconomyScene.cpp
     NativeEconomyTools.cpp
@@ -13,6 +14,7 @@ add_executable(OpenRepublic WIN32
     NativeEconomyScene.h
     NativeEconomyTools.h
     ContentPreview.h
+    BuildingLodController.h
     LocalEconomyPipeEndpoint.cpp
     LocalEconomyPipeEndpoint.h
     MapShowcaseCapture.h

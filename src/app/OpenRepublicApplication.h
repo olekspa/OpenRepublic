@@ -5,6 +5,7 @@
 #include "openrepublic/compat/region_import.h"
 #include "openrepublic/compat/catalog_import.h"
 #include "EconomyOverlay.h"
+#include "BuildingLodController.h"
 #include "NativeEconomyScene.h"
 #include "NativeEconomyTools.h"
 #include "openrepublic/economy/checkpoint.h"
@@ -48,7 +49,8 @@ namespace openrepublic
 		void SetLocalEconomyPipeName(std::wstring name);
 		void SetRegionCatalogImportOptions(openrepublic::compat::CatalogImportOptions options);
 		void SetMapPlacement(openrepublic::content::MapPlacementRequest request, double radiusMeters,
-			bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel);
+			bool regionPreview, std::filesystem::path contentRoot, int regionModelLevel,
+			bool dynamicLod = false, float lodNearDistance = 250.0f, float lodFarDistance = 700.0f);
 		void SetSyntheticRegionFixture();
 		void SetEconomyCheckpoint(openrepublic::economy::RestoredCheckpoint checkpoint, bool freshWorld = false);
 		void SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees);
@@ -178,6 +180,10 @@ namespace openrepublic
 		double syntheticRegionCenterX = 0.0;
 		double syntheticRegionCenterZ = 0.0;
 		int mapRegionModelLevel = 0;
+		bool mapRegionDynamicLod = false;
+		float mapLodNearDistance = 250.0f;
+		float mapLodFarDistance = 700.0f;
+		BuildingLodController buildingLodController;
 		bool mapShowcaseCaptureMode = false;
 		bool mapShowcaseEnhancedLook = false;
 		std::filesystem::path mapShowcaseCapturePath;
