@@ -315,3 +315,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~23:10 EDT** HANDOFF-23 merged (docs/HANDOFF_2026-10-23.md, reviewed by me for labels and absence of private paths; docs only, no build needed).
 
 - **2026-10-23 ~23:30 EDT** Worker VARIANCE started (handoff step 3: matched repeated controller runs with mean/min/max/stddev at a common final tick).
+
+- **2026-10-23 ~23:50 EDT** VARIANCE merged: republic_tournament --repeats/--final-tick with mean/min/max/stddev and single-run non-conclusive marking; extended OpenRepublicScenarioTournament test. CTest 76/76 (the standalone unittest run without a host argument fails by design).
