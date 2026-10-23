@@ -109,7 +109,7 @@ void TestFixedBlockLayout() {
     MapHeaderFixedBlock untouched;
     untouched.version = 77;
     auto wrongVersion = bytes;
-    WriteU32LE(wrongVersion, 0, 121);
+    WriteU32LE(wrongVersion, 0, 120);
     Check(!ParseMapHeaderFixedBlock(wrongVersion, untouched, &error) && untouched.version == 77,
           "other versions rejected without modifying output");
     Check(!ParseMapHeaderFixedBlock(bytes.substr(0, 0x20b), untouched, &error) && untouched.version == 77,

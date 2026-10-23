@@ -55,7 +55,8 @@ struct MapHeaderFixedBlock {
     std::int32_t gameYear = 0;  // +0x19c
 };
 
-// Requires version 124 and at least 0x20c bytes; everything else fails unchanged.
+// Requires version 121 to 124 (see the .cpp note) and at least 0x20c bytes;
+// everything else fails unchanged.
 bool ParseMapHeaderFixedBlock(std::string_view bytes, MapHeaderFixedBlock& output,
                               std::string* error = nullptr);
 

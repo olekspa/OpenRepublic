@@ -93,8 +93,11 @@ bool ParseMapHeaderFixedBlock(std::string_view bytes, MapHeaderFixedBlock& outpu
     };
     MapHeaderFixedBlock candidate;
     candidate.version = readU32(0);
-    if (candidate.version != 124)
-        return Fail(error, "map header fixed block layout is only evidenced for version 124");
+    // The loader reads the same fixed 0x20c structure regardless of version (no
+    // version-dependent offsets seen); the writer evidence is for 124 and a version-121
+    // package shows consistent values (OBSERVED), so 121..124 are accepted.
+    if (candidate.version < 121 || candidate.version > 124)
+        return Fail(error, "map header fixed block layout is only evidenced for versions 121 to 124");
     for (std::size_t i = 0; i < MapHeaderFixedBlock::kWordCount; ++i)
         candidate.words[i] = readU32(kWordsOffset + i * 4);
     for (std::size_t i = 0; i < candidate.flagBytes.size(); ++i)
