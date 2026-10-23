@@ -313,3 +313,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~22:40 EDT** TRADE-AI merged (autopilot and LLM tooling use trade commands; extra trade scenarios; baseline table). Full build + CTest 76/76. Worker HANDOFF-23 started (consolidated handoff document for 2026-10-23).
 
 - **2026-10-23 ~23:10 EDT** HANDOFF-23 merged (docs/HANDOFF_2026-10-23.md, reviewed by me for labels and absence of private paths; docs only, no build needed).
+
+- **2026-10-23 ~23:30 EDT** Worker VARIANCE started (handoff step 3: matched repeated controller runs with mean/min/max/stddev at a common final tick).
