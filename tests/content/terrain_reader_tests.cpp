@@ -1,6 +1,7 @@
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/content/terrain_preview.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <array>
 #include <chrono>
@@ -47,6 +48,28 @@ std::vector<std::uint8_t> MakeDds(std::uint32_t width = 2, std::uint32_t height 
     return bytes;
 }
 
+std::vector<std::uint8_t> MakeRgbaDds(std::uint32_t width = 2, std::uint32_t height = 1) {
+    std::vector<std::uint8_t> bytes(kHeaderBytes + static_cast<std::size_t>(width) * height * 4, 0);
+    bytes[0] = 'D'; bytes[1] = 'D'; bytes[2] = 'S'; bytes[3] = ' ';
+    PutU32(bytes, 4, 124);
+    PutU32(bytes, 8, kFlags);
+    PutU32(bytes, 12, height);
+    PutU32(bytes, 16, width);
+    PutU32(bytes, 20, width * 4u);
+    PutU32(bytes, 24, 0);
+    PutU32(bytes, 28, 0);
+    PutU32(bytes, 76, 32);
+    PutU32(bytes, 80, 0x41); // DDPF_RGB | DDPF_ALPHAPIXELS
+    PutU32(bytes, 84, 0);    // no FourCC
+    PutU32(bytes, 88, 32);   // RGBA8
+    PutU32(bytes, 92, 0x000000ffu);
+    PutU32(bytes, 96, 0x0000ff00u);
+    PutU32(bytes, 100, 0x00ff0000u);
+    PutU32(bytes, 104, 0xff000000u);
+    PutU32(bytes, 108, 0x1000);
+    return bytes;
+}
+
 void Check(bool condition, const std::string& label) {
     if (!condition) {
         std::cerr << "FAIL: " << label << '\n';
@@ -78,6 +101,39 @@ void TestValidDds() {
     Check(error.empty(), "success clears optional diagnostic");
     Check(output.width == 2 && output.height == 2, "width and height are returned");
     Check(output.samples == std::vector<float>({1.0f, 2.0f, 3.0f, 4.0f}), "samples decode as raw row-major floats");
+}
+
+void TestRgbaDds() {
+    auto bytes = MakeRgbaDds();
+    const std::array<std::uint8_t, 8> sample{{1, 2, 3, 4, 250, 128, 17, 255}};
+    std::copy(sample.begin(), sample.end(), bytes.begin() + static_cast<std::ptrdiff_t>(kHeaderBytes));
+    Rgba8Raster raster;
+    std::string error;
+    Check(LoadLegacyRgba8(bytes, raster, &error), "valid synthetic RGBA8 DDS decodes");
+    Check(error.empty(), "RGBA8 success clears optional diagnostic");
+    Check(raster.width == 2 && raster.height == 1, "RGBA8 dimensions are returned");
+    Check(raster.pixels == std::vector<std::uint8_t>(sample.begin(), sample.end()),
+          "RGBA8 channel bytes are preserved in row-major order");
+
+    auto expectFailure = [&](std::vector<std::uint8_t> invalid, const std::string& label) {
+        Rgba8Raster unchanged{1, 1, {9, 8, 7, 6}};
+        error.clear();
+        Check(!LoadLegacyRgba8(invalid, unchanged, &error) && !error.empty(), label + " rejected with diagnostic");
+        Check(unchanged.width == 1 && unchanged.height == 1 && unchanged.pixels == std::vector<std::uint8_t>{9, 8, 7, 6},
+              label + " leaves caller output unchanged");
+    };
+    bytes = MakeRgbaDds();
+    PutU32(bytes, 92, 0x000000f0u);
+    expectFailure(bytes, "unsupported channel masks");
+    bytes = MakeRgbaDds();
+    PutU32(bytes, 20, 7);
+    expectFailure(bytes, "invalid RGBA8 row pitch");
+    bytes = MakeRgbaDds();
+    bytes.push_back(0);
+    expectFailure(bytes, "RGBA8 trailing payload byte");
+    bytes = MakeRgbaDds();
+    PutU32(bytes, 28, 2);
+    expectFailure(bytes, "RGBA8 mip chain");
 }
 
 void TestDdsFailures() {
@@ -437,6 +493,7 @@ void TestTerrainPreviewGrid() {
 
 int main() {
     TestValidDds();
+    TestRgbaDds();
     TestDdsFailures();
     TestFileDdsReader();
     TestTerrainMetadata();

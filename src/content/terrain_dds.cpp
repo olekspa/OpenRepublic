@@ -23,6 +23,8 @@ constexpr std::uint32_t kDdsdMipMapCount = 0x00020000u;
 constexpr std::uint32_t kDdsdLinearSize = 0x00080000u;
 constexpr std::uint32_t kDdsdDepth = 0x00800000u;
 constexpr std::uint32_t kDdpfFourCc = 0x00000004u;
+constexpr std::uint32_t kDdpfRgb = 0x00000040u;
+constexpr std::uint32_t kDdpfAlphaPixels = 0x00000001u;
 constexpr std::uint32_t kDdsCapsTexture = 0x00001000u;
 constexpr std::uint32_t kDdsCapsComplex = 0x00000008u;
 constexpr std::uint32_t kDdsCapsMipMap = 0x00400000u;
@@ -166,6 +168,82 @@ bool LoadLegacyR32F(const std::filesystem::path& path, Heightmap& output, std::s
     if (!stream || stream.peek() != std::char_traits<char>::eof())
         return Fail(error, "DDS file changed during read or could not be read completely");
     return ParseDds(bytes, output, error);
+}
+
+bool LoadLegacyRgba8(const std::vector<std::uint8_t>& bytes, Rgba8Raster& output,
+                     std::string* error) {
+    if (bytes.size() > kMaxFileBytes) return Fail(error, "DDS input exceeds the 256 MiB file limit");
+    if (bytes.size() < kDdsHeaderBytes) return Fail(error, "DDS is shorter than its 128-byte legacy header");
+    if (bytes[0] != 'D' || bytes[1] != 'D' || bytes[2] != 'S' || bytes[3] != ' ')
+        return Fail(error, "DDS magic is missing");
+
+    const auto* h = bytes.data() + 4;
+    const std::uint32_t headerSize = ReadU32LE(h + 0);
+    const std::uint32_t flags = ReadU32LE(h + 4);
+    const std::uint32_t height = ReadU32LE(h + 8);
+    const std::uint32_t width = ReadU32LE(h + 12);
+    const std::uint32_t pitch = ReadU32LE(h + 16);
+    const std::uint32_t depth = ReadU32LE(h + 20);
+    const std::uint32_t mipCount = ReadU32LE(h + 24);
+    const std::uint32_t pixelFormatSize = ReadU32LE(h + 72);
+    const std::uint32_t pixelFormatFlags = ReadU32LE(h + 76);
+    const std::uint32_t fourCc = ReadU32LE(h + 80);
+    const std::uint32_t rgbBits = ReadU32LE(h + 84);
+    const std::uint32_t redMask = ReadU32LE(h + 88);
+    const std::uint32_t greenMask = ReadU32LE(h + 92);
+    const std::uint32_t blueMask = ReadU32LE(h + 96);
+    const std::uint32_t alphaMask = ReadU32LE(h + 100);
+    const std::uint32_t caps = ReadU32LE(h + 104);
+    const std::uint32_t caps2 = ReadU32LE(h + 108);
+
+    if (headerSize != 124u || pixelFormatSize != 32u)
+        return Fail(error, "DDS legacy header or pixel-format structure has an invalid size");
+    constexpr std::uint32_t requiredFlags = kDdsdCaps | kDdsdHeight | kDdsdWidth | kDdsdPitch | kDdsdPixelFormat;
+    if ((flags & requiredFlags) != requiredFlags || (flags & (kDdsdLinearSize | kDdsdDepth)) != 0)
+        return Fail(error, "DDS flags do not describe a pitched 2D texture");
+    if (pixelFormatFlags != (kDdpfRgb | kDdpfAlphaPixels) || fourCc != 0 || rgbBits != 32u ||
+        redMask != 0x000000ffu || greenMask != 0x0000ff00u ||
+        blueMask != 0x00ff0000u || alphaMask != 0xff000000u)
+        return Fail(error, "only legacy byte-ordered RGBA8 pixel masks are supported");
+    if (width == 0 || height == 0) return Fail(error, "DDS width and height must be nonzero");
+    if (depth != 0 || mipCount > 1 || ((flags & kDdsdMipMapCount) != 0 && mipCount != 1))
+        return Fail(error, "volume DDS files and mip chains are unsupported");
+    if ((caps & kDdsCapsTexture) == 0 || (caps & (kDdsCapsComplex | kDdsCapsMipMap)) != 0 ||
+        (caps2 & (kDdsCaps2CubeMapFlags | kDdsCaps2Volume)) != 0)
+        return Fail(error, "cubemap, volume, complex, or non-texture DDS topology is unsupported");
+
+    const std::uint64_t texelCount = static_cast<std::uint64_t>(width) * height;
+    if (texelCount == 0 || texelCount > kMaxSamples)
+        return Fail(error, "DDS dimensions exceed the 64M-texel limit");
+    const std::uint64_t expectedPitch = static_cast<std::uint64_t>(width) * 4u;
+    if (expectedPitch > std::numeric_limits<std::uint32_t>::max() || pitch != expectedPitch)
+        return Fail(error, "DDS row pitch must equal width times four bytes");
+    const std::uint64_t expectedBytes = kDdsHeaderBytes + texelCount * 4u;
+    if (expectedBytes > kMaxFileBytes || bytes.size() != expectedBytes)
+        return Fail(error, "DDS payload length does not exactly match its dimensions");
+
+    Rgba8Raster candidate;
+    candidate.width = width;
+    candidate.height = height;
+    candidate.pixels.assign(bytes.begin() + static_cast<std::ptrdiff_t>(kDdsHeaderBytes), bytes.end());
+    output = std::move(candidate);
+    if (error) error->clear();
+    return true;
+}
+
+bool LoadLegacyRgba8(const std::filesystem::path& path, Rgba8Raster& output, std::string* error) {
+    std::error_code ec;
+    const auto fileSize = std::filesystem::file_size(path, ec);
+    if (ec) return Fail(error, "could not determine DDS file size");
+    if (fileSize > kMaxFileBytes) return Fail(error, "DDS file exceeds the 256 MiB file limit");
+    if (fileSize < kDdsHeaderBytes) return Fail(error, "DDS file is shorter than its 128-byte legacy header");
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) return Fail(error, "could not open DDS file");
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(fileSize));
+    stream.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!stream || stream.peek() != std::char_traits<char>::eof())
+        return Fail(error, "DDS file changed during read or could not be read completely");
+    return LoadLegacyRgba8(bytes, output, error);
 }
 
 bool ParseTerrainMetadata(const std::string& text, const Heightmap& heightmap,
