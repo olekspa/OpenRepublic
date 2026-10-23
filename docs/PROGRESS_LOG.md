@@ -307,3 +307,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~21:05 EDT** New goal: identify next steps. Read handoff/ledger/board: ROAD-TYPES evidence is exhausted without a class table (road widths/classes stay UNKNOWN). Worker TRADE started (synthetic border trade: treasury, import/export commands, API/host/persistence, scenario; explicitly not WRSR parity).
 
 - **2026-10-23 ~21:50 EDT** TRADE merged: OpenRepublic-synthetic border trade (catalog trade prices, treasury, import/export via API and host, persistence, scenario grain_export_for_power, docs/TRADE.md). Not WRSR parity (UNKNOWN). Full build + CTest 76/76.
+
+- **2026-10-23 ~22:00 EDT** Worker TRADE-AI started (autopilot and LLM tooling use the trade commands; two more trade scenarios).
