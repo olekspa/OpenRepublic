@@ -15,9 +15,8 @@ path still verifies exact dimensions before evaluation.
 diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
 --- a/WickedEngine/wiRenderPath3D.cpp
 +++ b/WickedEngine/wiRenderPath3D.cpp
-@@ -3300,6 +3300,6 @@ void RenderPath3D::setDLSSEnabled(bool value)
- 			return;
- 		}
+@@ -3238,5 +3238,5 @@ void RenderPath3D::setDLSSEnabled(bool value)
+ 		// Use max so truncating internal-size conversion does not land one pixel below either optimal dimension.
 -		const float targetScale = std::max(float(optimal.optimalRenderWidth) / float(GetPhysicalWidth()), float(optimal.optimalRenderHeight) / float(GetPhysicalHeight()));
 +		const float targetScale = std::min(float(optimal.optimalRenderWidth) / float(GetPhysicalWidth()), float(optimal.optimalRenderHeight) / float(GetPhysicalHeight()));
  		fsr2Enabled = false;

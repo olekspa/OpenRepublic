@@ -1,4 +1,4 @@
-﻿# Streamline integration plan for Wicked Engine
+# Streamline integration plan for Wicked Engine
 
 **Status (23 October 2026, Follow-up 10): the opt-in path compiles and evaluates DLSS Quality; the Streamline 2.14.16 DLSS-G plugin reports the RTX 5070 Ti as supported, but generation remains disabled.** The new 0009 patch is deliberately a runtime capability probe: it loads DLSS-G/Reflex only with `OPENREPUBLIC_DLSS_FRAME_GENERATION=probe`, queries feature state, sets FG `eOff`, and logs the missing integration pieces. It does not activate generated frames. Streamline state reported `status=eOk`, maximum 5 generated frames, and dynamic MFG support; the SDK also warned that its state query must be synchronized with the present thread. The scene's output and DLSS dispatch were 3840×2132 and 2560×1421. Current native and DLSS probe runs did not emit the app's `Modern view: N fps` line into captured stdout, so there are no comparable Follow-up 10 FPS values; FG FPS is not applicable. Follow-up 9's earlier readings (native 101.45, FSR2 Quality 70.41, DLSS Quality 69.60, DLSS Performance 75.48) are retained as prior-run context only, not as this round's measurements. DLSS-G still requires UI color/alpha and HUD-less tags at the correct frame extent, complete Reflex/PCL timing and sleep integration, and a verified presenting-thread/state/present lifecycle before `eOn` can be tested responsibly.
 
@@ -174,3 +174,39 @@ Patch `0009-dlssg-capability-probe.patch` layers after 0001–0008. Behind the s
 | HAGS requirement | **UNKNOWN configuration** (registry path had no value, UI not checked; runtime feature query succeeded) |
 
 **Acceptance still required:** create and tag correctly sized HUD-less, UI-color and UI-alpha resources; add frame-correlated simulation/render/present PCL markers and Reflex sleep; synchronize DLSS-G state/options on the presenting thread; verify interposer present routing and one `presentCommon()` call per frame; validate supported color/backbuffer formats and FG lifecycle on resize/fullscreen transitions; then run an `eOn` test and capture comparable native, DLSS SR and DLSS SR+FG frame rates. Current evidence is capability probing only.
+
+### Follow-up 11: Reflex path correction and DLSS-G eOn runtime attempt (23 October 2026)
+
+Patch 0010-dlssg-runtime.patch adds opt-in DLSS-G activation, Reflex/PCL markers, shared per-frame tokens, HUD-less and UI color-plus-alpha tags, and an eOn option with 1-3 generated-frame settings. Patch 0011-reflex-feature-function-lookup.patch routes Reflex function lookup through slGetFeatureFunction(kFeatureReflex, ...) and logs lookup/call results. Patch 0012-log-dlssg-runtime-requirements.patch logs the SDK requirement flags, version floors, and required buffer tags before device creation. Runtime activation remains off unless OPENREPUBLIC_DLSS_FRAME_GENERATION=on; OPENREPUBLIC_DLSSG_FRAMES accepts 1, 2, or 3.
+
+- **VERIFIED (compile):** the private Windows VS2022 Release OpenRepublic target rebuilt after both patches; Wicked Engine and the app linked successfully. Existing MSVC getenv deprecation and exception-option warnings remained, with no build errors.
+- **OBSERVED (runtime setup):** a private windowed run at 3840x2132 on RTX 5070 Ti / driver 616.56 / Streamline 2.14.16 logged slInit=0, repeated DLSS slEvaluateFeature=0, PCL lookups/markers returning 0, Reflex slReflexSetOptions(eLowLatency) and slReflexSleep lookups/calls returning 0, and DLSS-G slDLSSGSetOptions(eOn)=0. slDLSSGGetState returned API result/status 0/0; requests for 1, 2, and 3 generated frames were accepted. Startup "missing common constants" warnings ended when lazy DLSS setup completed and slSetConstants/DLSS evaluation started succeeding.
+- **OBSERVED (presented frame rate):** same map/building/radius 450, RTAO, ray-traced reflections and diffuse, and bloom were used. Native app CSV averaged about **54.84 FPS** over stable samples. DLSS Quality without FG reported **61.30 FPS**. With patches 0010-0011, FG requests for 1, 2, and 3 generated frames reported **60.63**, **60.47**, and **60.74 presented FPS**, respectively. After rebuilding with 0012 for startup requirement logging, the FG1 rerun reported **60.39 FPS**. Those are DLSSGState::numFramesActuallyPresented counts over approximately five-second windows; native is the app CSV. All values remain near the base app rate and do not show a 2x/3x/4x multiplier. They are not PresentMon captures. One native nvidia-smi snapshot read 100% GPU utilization and about 4 GiB memory; matching samples were not collected for other modes.
+- **OBSERVED (data/lifecycle):** all six PCL markers used the same Streamline token index as the app frame index and returned 0. When FG was requested, the render path submitted HUD-less 3D color, depth, motion vectors, and the 2D UI color-alpha resource with eValidUntilPresent. Successful API calls do not prove the interposer consumed the composition correctly; presentCommon() was not directly instrumented.
+- **UNKNOWN (host requirement):** the Streamline guide requires HAGS for DLSS-G. The checked registry value was absent and HAGS was not independently checked in Windows settings; its state remains unknown. The requirements query returned 0 with hagsRequired=true, vsyncOffRequired=false, OS requirement 10.0.19041 and driver requirement 512.15.0; the detected OS 10.0.26300 and driver 616.56 exceed these version floors. The SDK required tags are 0/1/2/23, corresponding to depth, motion vectors, HUD-less color, and UI color-alpha; all four are submitted by the patch. HAGS enabled state remains unknown because the registry value was absent and Windows Settings was not checked.
+- **UNKNOWN (visual acceptance):** no generated frame was demonstrated, so toolbar or moving-object interpolation artifacts could not be inspected. The UI alpha tag was submitted, but its content/format semantics were not independently validated.
+- **INFERRED:** eOn options and an OK state show successful API calls, but the lack of a presentation multiplier leaves actual frame generation unproven. Available logs do not identify a single cause. HAGS, the windowed-present path (fullscreen iFlip is 0), resource/composition correctness, and generated-frame accounting remain candidates.
+
+| Mode | Requested generated frames | Measured presented rate | Source |
+| --- | ---: | ---: | --- |
+| Native | Off | **54.84 FPS** | App FPS CSV, stable samples |
+| DLSS Quality | Off | **61.30 FPS** | State counter, patches 0001-0011 |
+| DLSS Quality + FG (2x multiplier requested) | 1 | **60.63 FPS** | State counter, patches 0010-0011 |
+| DLSS Quality + FG (3x multiplier requested) | 2 | **60.47 FPS** | State counter, patches 0010-0011 |
+| DLSS Quality + FG (4x multiplier requested) | 3 | **60.74 FPS** | State counter, patches 0010-0011 |
+
+| Follow-up 11 acceptance item | Result |
+| --- | --- |
+| Private app compiled with patches 0001-0012 | **YES** (VS2022 Release app target linked) |
+| App ran at 3840x2132 with requested RT workload | **YES** (private, windowed run) |
+| slInit / DLSS SR evaluation | **YES** (0 / repeated 0) |
+| Reflex low-latency setup and sleep | **YES, API calls** (lookups/calls returned 0; visual latency not measured) |
+| PCL markers and frame-token match | **YES, logged** (marker results 0; app and token frame indices matched) |
+| HUD-less, depth, motion-vector, UI color-alpha tags | **Submitted** with present lifecycle; format/content and compositor consumption unverified |
+| DLSS-G eOn, requested counts 1 / 2 / 3 | **YES, options accepted** (slDLSSGSetOptions=0; state result/status 0/0) |
+| DLSS-G generated output / multiplier confirmed | **NO** (state FPS stayed near base app FPS for all three requests) |
+| GPU utilization matched across modes | **NO** (one native snapshot only: 100%, about 4 GiB) |
+| Moving-frame FG artifact review | **NOT POSSIBLE** (no generated frames demonstrated; toolbar/object artifacts remain unknown) |
+| HAGS requirement flag / enabled state | **Requirement YES** (SDK says required); **enabled state UNKNOWN** |
+
+**Acceptance remains open:** confirm HAGS enabled state, establish flip-model/interposer present routing and presentCommon() lifecycle, verify UI-alpha and tagged-resource consumption, then capture with PresentMon or a generated-frame counter after a multiplier is observed. Do not treat eOn returning 0 alone as proof that DLSS Frame Generation is active.

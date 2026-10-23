@@ -1,25 +1,27 @@
-From 4f93f3fd4f337aeb38dbfe410701b83024ccdd42 Mon Sep 17 00:00:00 2001
+From 2a767dd685ce5b841487c958bcac360c6582257c Mon Sep 17 00:00:00 2001
 From: OpenRepublic contributors <dev@openrepublic.invalid>
-Date: Thu, 22 Oct 2026 12:00:00 -0400
-Subject: [PATCH 8/8] Fix Streamline jitter and motion-vector contracts
+Date: Fri, 23 Oct 2026 03:33:00 -0400
+Subject: [PATCH] Fix Streamline temporal input contract
 
 ---
+ WickedEngine/wiRenderPath3D.cpp | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/WickedEngine/wiRenderPath3D.cpp b/WickedEngine/wiRenderPath3D.cpp
+index 1410a23d..cf9cded7 100644
 --- a/WickedEngine/wiRenderPath3D.cpp
 +++ b/WickedEngine/wiRenderPath3D.cpp
-@@ -81,9 +81,10 @@
- 		options.useAutoExposure = sl::Boolean::eTrue;
+@@ -68,7 +68,8 @@ namespace wi
  		sl::DLSSOptimalSettings optimal{};
- 		result = getOptimal(options, optimal); logResult("slDLSSGetOptimalSettings(frame)", result);
- 		if (result != sl::Result::eOk || optimal.optimalRenderWidth != inputColor.desc.width || optimal.optimalRenderHeight != inputColor.desc.height) { std::ostringstream message; message << "DLSS render/input mismatch optimal=" << optimal.optimalRenderWidth << "x" << optimal.optimalRenderHeight << " input=" << inputColor.desc.width << "x" << inputColor.desc.height << " output=" << output.desc.width << "x" << output.desc.height << "\n"; LogDLSSRun(message.str()); return false; }
--		result = setOptions(viewport, options); logResult("slDLSSSetOptions", result);
+ 		if (getOptimal(options, optimal) != sl::Result::eOk || optimal.optimalRenderWidth != inputColor.desc.width || optimal.optimalRenderHeight != inputColor.desc.height)
+ 			return false; // resource recreation for a changed optimal size must happen before dispatch
+-		if (setOptions(viewport, options) != sl::Result::eOk) return false;
 +		options.sharpness = optimal.optimalSharpness;
-+		result = setOptions(viewport, options); logResult("slDLSSSetOptions", result);
- 		if (result != sl::Result::eOk) return false;
++`t`tif (setOptions(viewport, options) != sl::Result::eOk) return false;
  
  		sl::FrameToken* token = nullptr;
- 		result = getToken(token, nullptr); logResult("slGetNewFrameToken", result);
-@@ -97,13 +98,13 @@
- 				for (uint32_t col = 0; col < 4; ++col)
+ 		if (getToken(token, nullptr) != sl::Result::eOk || token == nullptr) return false;
+@@ -81,11 +82,11 @@ namespace wi
  					(&dst[row].x)[col] = data[row * 4 + col];
  		};
  		XMFLOAT4X4 projection = camera.Projection;
@@ -35,29 +37,24 @@ Subject: [PATCH 8/8] Fix Streamline jitter and motion-vector contracts
  		const XMMATRIX viewToClip = XMLoadFloat4x4(&projection);
  		const XMMATRIX clipToView = XMMatrixInverse(nullptr, viewToClip);
  		const XMMATRIX currentViewProjection = camera.GetView() * viewToClip;
- 		const XMMATRIX previousViewProjection = previousCamera.GetView() * XMLoadFloat4x4(&previousProjection);
-@@ -118,9 +119,9 @@
- 		toSLMatrix(clipToViewStore, constants.clipToCameraView);
+@@ -102,7 +103,7 @@ namespace wi
  		toSLMatrix(clipToPreviousStore, constants.clipToPrevClip);
  		toSLMatrix(previousToClipStore, constants.prevClipToClip);
  		constants.jitterOffset = { camera.jitter.x * inputColor.desc.width * 0.5f, camera.jitter.y * inputColor.desc.height * -0.5f };
 -		constants.mvecScale = { 1.0f, 1.0f };
 +		constants.mvecScale = { 1.0f, -1.0f };
- 		constants.cameraPinholeOffset = { 0.0f, 0.0f };
  		constants.cameraPos = { camera.Eye.x, camera.Eye.y, camera.Eye.z };
  		constants.cameraUp = { camera.Up.x, camera.Up.y, camera.Up.z };
  		const XMVECTOR rightVector = camera.GetRight();
-@@ -136,9 +137,9 @@
- 		constants.cameraAspectRatio = camera.width / camera.height;
+@@ -119,7 +120,7 @@ namespace wi
  		constants.depthInverted = sl::Boolean::eTrue;
  		constants.cameraMotionIncluded = sl::Boolean::eTrue;
  		constants.motionVectors3D = sl::Boolean::eFalse;
 -		constants.motionVectorsJittered = sl::Boolean::eTrue;
 +		constants.motionVectorsJittered = sl::Boolean::eFalse;
  		constants.reset = reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
- 		LogDLSSRun("before slSetConstants\n");
- 		const sl::Result constantsResult = setConstants(constants, *token, viewport);
- 		{ std::ostringstream message; message << "slSetConstants result=" << static_cast<int>(constantsResult) << "\n"; LogDLSSRun(message.str()); }
-
+ 		if (setConstants(constants, *token, viewport) != sl::Result::eOk) return false;
+ 
 -- 
-2.45.2
+2.47.1.windows.2
+

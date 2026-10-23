@@ -1,0 +1,40 @@
+From 9231a0012ab3aa665523aa0012be43bcf0c00122 Mon Sep 17 00:00:00 2001
+From: OpenRepublic contributors <dev@openrepublic.invalid>
+Date: Fri, 23 Oct 2026 16:00:00 -0400
+Subject: [PATCH 12/12] Log DLSS-G host and input requirements
+
+Query Streamline feature requirements before device creation and report the
+required OS/driver, HAGS/VSync flags and buffer tags for diagnosis.
+---
+diff --git a/WickedEngine/wiGraphicsDevice_DX12.cpp b/WickedEngine/wiGraphicsDevice_DX12.cpp
+index 85242183..f2d93c68 100644
+--- a/WickedEngine/wiGraphicsDevice_DX12.cpp
++++ b/WickedEngine/wiGraphicsDevice_DX12.cpp
+@@ -146,6 +146,27 @@ namespace dx12_internal
+ 			<< " enabled=" << (streamline_fg_enabled ? "true" : "false")
+ 			<< " requestedGeneratedFrames=" << streamline_fg_generated_frames << "\n";
+ 		WriteStreamlineDiagnostic(init_log.str());
++		if (streamline_initialized && (streamline_fg_probe_requested || streamline_fg_enabled))
++		{
++			auto getRequirements = reinterpret_cast<PFun_slGetFeatureRequirements*>(GetProcAddress(streamline_module, "slGetFeatureRequirements"));
++			sl::FeatureRequirements requirements{};
++			const sl::Result requirementsResult = getRequirements ? getRequirements(sl::kFeatureDLSS_G, requirements) : sl::Result::eErrorFeatureNotSupported;
++			std::ostringstream requirementsLog;
++			requirementsLog << "DLSS-G requirements result=" << static_cast<int>(requirementsResult);
++			if (requirementsResult == sl::Result::eOk)
++			{
++				requirementsLog << " flags=" << static_cast<uint32_t>(requirements.flags)
++					<< " hagsRequired=" << ((static_cast<uint32_t>(requirements.flags) & static_cast<uint32_t>(sl::FeatureRequirementFlags::eHardwareSchedulingRequired)) != 0)
++					<< " vsyncOffRequired=" << ((static_cast<uint32_t>(requirements.flags) & static_cast<uint32_t>(sl::FeatureRequirementFlags::eVSyncOffRequired)) != 0)
++					<< " osDetected=" << requirements.osVersionDetected.toStr() << " osRequired=" << requirements.osVersionRequired.toStr()
++					<< " driverDetected=" << requirements.driverVersionDetected.toStr() << " driverRequired=" << requirements.driverVersionRequired.toStr()
++					<< " requiredTagCount=" << requirements.numRequiredTags;
++				for (uint32_t i = 0; i < requirements.numRequiredTags && requirements.requiredTags != nullptr; ++i)
++					requirementsLog << " requiredTag[" << i << "]=" << requirements.requiredTags[i];
++			}
++			requirementsLog << "\n";
++			WriteStreamlineDiagnostic(requirementsLog.str());
++		}
+ 		if (!streamline_initialized)
+ 		{
+ 			FreeLibrary(streamline_module);

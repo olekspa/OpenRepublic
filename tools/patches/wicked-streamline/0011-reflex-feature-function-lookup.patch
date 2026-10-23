@@ -1,0 +1,52 @@
+From 7a9246b1f6c86d69be0c37bc332e710b7b7d0011 Mon Sep 17 00:00:00 2001
+From: OpenRepublic contributors <dev@openrepublic.invalid>
+Date: Fri, 23 Oct 2026 15:00:00 -0400
+Subject: [PATCH 11/11] Resolve Reflex calls through the Streamline feature API
+
+Use slGetFeatureFunction for the Reflex feature functions and log lookup and
+call results. This makes Reflex sleep and low-latency setup observable.
+---
+diff --git a/WickedEngine/wiGraphicsDevice_DX12.cpp b/WickedEngine/wiGraphicsDevice_DX12.cpp
+index 24bf48c7..85242183 100644
+--- a/WickedEngine/wiGraphicsDevice_DX12.cpp
++++ b/WickedEngine/wiGraphicsDevice_DX12.cpp
+@@ -1821,16 +1821,33 @@ using namespace dx12_internal;
+ 			SetStreamlineMarker(sl::PCLMarker::eSimulationStart);
+ 		if (streamline_fg_enabled)
+ 		{
+-			auto setReflex = reinterpret_cast<PFun_slReflexSetOptions*>(GetProcAddress(streamline_module, "slReflexSetOptions"));
+-			if (setReflex)
++			auto getFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(GetProcAddress(streamline_module, "slGetFeatureFunction"));
++			void* reflexFunction = nullptr;
++			sl::Result reflexLookup = getFeatureFunction ? getFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", reflexFunction) : sl::Result::eErrorFeatureNotSupported;
++			sl::Result reflexOptionsResult = reflexLookup;
++			if (reflexLookup == sl::Result::eOk && reflexFunction)
+ 			{
++				auto setReflex = reinterpret_cast<PFun_slReflexSetOptions*>(reflexFunction);
+ 				sl::ReflexOptions reflexOptions{};
+ 				reflexOptions.mode = sl::ReflexMode::eLowLatency;
+-				setReflex(reflexOptions);
++				reflexOptionsResult = setReflex(reflexOptions);
++			}
++			void* sleepFunction = nullptr;
++			sl::Result sleepLookup = getFeatureFunction ? getFeatureFunction(sl::kFeatureReflex, "slReflexSleep", sleepFunction) : sl::Result::eErrorFeatureNotSupported;
++			sl::Result sleepResult = sleepLookup;
++			if (sleepLookup == sl::Result::eOk && sleepFunction)
++			{
++				auto reflexSleep = reinterpret_cast<PFun_slReflexSleep*>(sleepFunction);
++				sleepResult = reflexSleep(*streamline_frame_token);
++			}
++			static uint64_t reflexLogCount = 0;
++			if (reflexLogCount++ < 4)
++			{
++				std::ostringstream reflexLog;
++				reflexLog << "Streamline Reflex SetOptions lookup=" << static_cast<int>(reflexLookup) << " result=" << static_cast<int>(reflexOptionsResult)
++					<< " Sleep lookup=" << static_cast<int>(sleepLookup) << " result=" << static_cast<int>(sleepResult) << "\n";
++				WriteStreamlineDiagnostic(reflexLog.str());
+ 			}
+-			auto reflexSleep = reinterpret_cast<PFun_slReflexSleep*>(GetProcAddress(streamline_module, "slReflexSleep"));
+-			if (reflexSleep)
+-				reflexSleep(*streamline_frame_token);
+ 		}
+ 		return streamline_frame_token;
+ 	}
