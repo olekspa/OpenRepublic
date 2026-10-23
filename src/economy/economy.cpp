@@ -852,9 +852,11 @@ void Haul(State &s, Order &o) {
     }
 }
 std::atomic<unsigned> g_productionThreads{0};
-constexpr std::size_t kParallelBuildingThreshold = 1024;
+constexpr std::size_t kParallelBuildingThreshold = 16384;
+// The haul-heavy benchmark has 10,000 mostly idle buildings; spawning workers each tick
+// costs more than its production work. Keep parallel production for measured larger worlds.
 // Production only touches its own building (catalog is read-only), so chunks can run concurrently
-// and the result does not depend on the chunking. Haul movement stays serial: it couples buildings.
+// and the result does not depend on the chunking.
 void ProductionPhase(State &s) {
     unsigned threads = g_productionThreads.load();
     if (threads == 0)

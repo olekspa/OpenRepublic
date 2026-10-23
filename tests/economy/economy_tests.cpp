@@ -215,10 +215,10 @@ int main() {
         // Parallel production must be bit-identical to the serial path.
         auto run = [&](unsigned threads) {
             SetProductionThreads(threads);
-            World w(catalog, 260, 260);
-            for (int gx = 0; gx < 60; ++gx)
-                for (int gz = 0; gz < 40; ++gz)
-                    w.PlaceBuilding(static_cast<BuildingTypeId>((gx + gz) % 2 == 0 ? 0 : 1), {2 + gx * 4, 3 + gz * 6});
+            World w(catalog, 520, 520);
+            for (int gx = 0; gx < 128; ++gx)
+                for (int gz = 0; gz < 128; ++gz)
+                    w.PlaceBuilding(static_cast<BuildingTypeId>((gx + gz) % 2 == 0 ? 0 : 1), {2 + gx * 4, 3 + gz * 4});
             for (std::uint32_t i = 0; i < 40; ++i)
                 w.Step();
             const auto snap = w.Snapshot();
@@ -227,7 +227,7 @@ int main() {
         const auto serial = run(1);
         const auto parallel = run(8);
         SetProductionThreads(0);
-        Check(serial.second >= 1024, "parallel determinism world exceeds the threading threshold");
+        Check(serial.second >= 16384, "parallel determinism world exceeds the threading threshold");
         Check(serial == parallel, "parallel production matches serial production bit for bit");
     }
     {
