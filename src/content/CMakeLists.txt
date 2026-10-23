@@ -1,4 +1,5 @@
 add_library(OpenRepublicContent STATIC
+    building_construction.cpp
     building_definition.cpp
     building_record_walk.cpp
     building_types.cpp

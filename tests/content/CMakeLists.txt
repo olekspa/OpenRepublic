@@ -94,6 +94,13 @@ target_link_libraries(OpenRepublicBuildingDefinitionTests PRIVATE OpenRepublicCo
 target_compile_features(OpenRepublicBuildingDefinitionTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicBuildingDefinitionTests COMMAND OpenRepublicBuildingDefinitionTests)
 
+add_executable(OpenRepublicBuildingConstructionTests
+    building_construction_tests.cpp
+)
+target_link_libraries(OpenRepublicBuildingConstructionTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicBuildingConstructionTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicBuildingConstructionTests COMMAND OpenRepublicBuildingConstructionTests)
+
 add_executable(OpenRepublicTextTableTests
     text_table_tests.cpp
 )

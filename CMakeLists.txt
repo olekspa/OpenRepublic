@@ -13,6 +13,12 @@ option(OPENREPUBLIC_BUILD_TESTS "Build OpenRepublic simulation verification targ
 add_subdirectory(src/sim)
 add_subdirectory(src/agent_api)
 add_subdirectory(src/content)
+
+# Explicit read-only inspection target; not a default build or a CTest corpus run.
+add_executable(OpenRepublicConstructionProfileProbe EXCLUDE_FROM_ALL tools/construction_profile_probe.cpp)
+target_link_libraries(OpenRepublicConstructionProfileProbe PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicConstructionProfileProbe PRIVATE cxx_std_17)
+
 add_subdirectory(src/economy)
 add_subdirectory(src/procgeo)
 add_subdirectory(src/runtime)

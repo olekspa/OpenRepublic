@@ -1,5 +1,28 @@
 # OpenRepublic project plan
 
+**Construction profile increment (23 October 2026):** ordered cost/work/recipe
+declarations and opaque station rows now have a bounded source profile and an
+aggregate-only inspection target. All 488 named local definitions extract;
+474 retain construction declarations, with unresolved selectors/formulas
+explicitly diagnosed. Full Release builds and CTest **79/79 headless, 80/80
+client** pass. [Receipt](DEVELOPMENT_REPORT_2026-10-23_CONSTRUCTION_PROFILE.md).
+This complements parallel construction work without changing native gameplay.
+Original material-delivery/removal and work-argument semantics remain research
+gates; native construction lifecycle and full WRSR parity remain incomplete.
+
+**Current development increment (23 October 2026):** workforce assignment is
+linear per production phase/snapshot; disabled workplaces release residents.
+Population save/reload bounds and Lua population/trade metadata preservation
+are covered by full Release builds and **78/78 headless, 79/79 client tests**.
+Matched synthetic workforce benchmarks retain exact hashes. See the
+[workforce receipt](DEVELOPMENT_REPORT_2026-10-23_WORKFORCE.md), expanded
+[full-parity roadmap](PARITY_ROADMAP.md), and newly established
+[construction loader evidence](CONSTRUCTION_EVIDENCE.md). Next gameplay goal:
+an explicitly authored native construction lifecycle, with original cost import
+still gated on numeric/geometry evidence. Full WRSR feature parity remains
+active and incomplete. Workforce source/tests are committed locally as `70f551a`;
+the receipt retains the state of its original working-tree checkpoint.
+
 **Current handoff (23 October 2026):** see [HANDOFF_2026-10-23.md](HANDOFF_2026-10-23.md) for the consolidated status, evidence boundaries, build/run instructions, open risks, and next steps.
 
 **Latest - electrical declarations and import identities (22 October 2026):** desktop/headless imports retain exact native source identities independently of rendering. The content reader retains optional electrical coordinates with diagnostics; all 488 local definitions and 143 declarations pass. Both Release builds and CTest68/68 client,67/67 headless pass. Automatic topology still requires port/domain semantics. See the [receipt](DEVELOPMENT_REPORT_2026-10-22_ELECTRICAL_PORTS.md). Global goal remains incomplete.

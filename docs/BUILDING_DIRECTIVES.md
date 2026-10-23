@@ -4,7 +4,7 @@
 
 **Parser coverage:** ?Yes? means the current `ParseBuildingDefinition` extracts a typed field or retains a typed raw economic declaration. ?No? means the line is preserved only as opaque `other` arguments (and does not imply the directive is ignored by WRSR). Electrical declarations are extracted as source geometry/diagnostics, not native port semantics. Raw economic fields are only retained; no economy rules consume them.
 
-**Meaning evidence:** only `$WORKERS_NEEDED`, `$PRODUCTION`, `$CONSUMPTION`, and `$CONSUMPTION_PER_SECOND` are marked VERIFIED because their loader behavior is documented in the ledger. Other labels are lexical inferences or unknowns; names/shapes are not loader evidence.
+**Meaning evidence:** `$WORKERS_NEEDED`, `$PRODUCTION`, `$CONSUMPTION`, and `$CONSUMPTION_PER_SECOND` have loader evidence in the ledger. The construction follow-up also establishes ordered static operations for four cost declarations; units and gameplay formulas remain UNKNOWN. See [construction evidence](CONSTRUCTION_EVIDENCE.md). Other labels are lexical inferences or unknowns; names/shapes are not loader evidence.
 
 ## Complete directive inventory
 
@@ -104,10 +104,10 @@
 | `$CONSUMPTION_INCREASE_ACCORDING_YEAR` | 2 | 2 | 3 args (2 occurrences) | Yes | INFERRED - name suggests domain; exact behavior not established |
 | `$CONSUMPTION_PER_SECOND` | 38 | 38 | 2 args (38 occurrences) | Yes | VERIFIED - loader behavior documented in ledger |
 | `$CONSUMPTION_WATER_REQUIRED_QUALITY` | 13 | 13 | 1 args (13 occurrences) | Yes | INFERRED - name suggests domain; exact behavior not established |
-| `$COST_ALL_MULTIPLY` | 7 | 7 | 1 args (7 occurrences) | Yes | INFERRED - name suggests domain; exact behavior not established |
-| `$COST_RESOURCE` | 3 | 12 | 2 args (12 occurrences) | Yes | INFERRED - name suggests domain; exact behavior not established |
-| `$COST_RESOURCE_AUTO` | 474 | 1386 | 2 args (1386 occurrences) | Yes | INFERRED - name suggests domain; exact behavior not established |
-| `$COST_WORK` | 474 | 1132 | 2 args (1132 occurrences) | Yes | INFERRED - name suggests domain; exact behavior not established |
+| `$COST_ALL_MULTIPLY` | 7 | 7 | 1 args (7 occurrences) | Yes | VERIFIED static operation: scales two numeric fields of existing cost entries immediately; field meanings UNKNOWN. |
+| `$COST_RESOURCE` | 3 | 12 | 2 args (12 occurrences) | Yes | VERIFIED static operation: resource lookup and append to latest work record; units/consumption UNKNOWN. |
+| `$COST_RESOURCE_AUTO` | 474 | 1386 | 2 args (1386 occurrences) | Yes | VERIFIED static operation: geometry-dependent recipe expansion for latest work record; complete formulas/units UNKNOWN. |
+| `$COST_WORK` | 474 | 1132 | 2 args (1132 occurrences) | Yes | VERIFIED static operation: resolves phase text and appends ordered work record; timing/units UNKNOWN. |
 | `$COST_WORK_BUILDING_ALL` | 44 | 81 | 0 args (81 occurrences) | Yes | INFERRED - name suggests domain; exact behavior not established |
 | `$COST_WORK_BUILDING_KEYWORD` | 132 | 229 | 1 args (229 occurrences) | Yes | INFERRED - name suggests domain; exact behavior not established |
 | `$COST_WORK_BUILDING_NODE` | 418 | 1751 | 1 args (1751 occurrences) | Yes | INFERRED - name suggests domain; exact behavior not established |
