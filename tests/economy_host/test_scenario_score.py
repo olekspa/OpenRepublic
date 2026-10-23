@@ -15,6 +15,14 @@ HOST_EXE = sys.argv[1] if len(sys.argv) > 1 else None
 
 
 class ScenarioLoaderTests(unittest.TestCase):
+    def test_resolves_exact_name_and_existing_path(self):
+        named = scenario_score.resolve_scenario("full_chain")
+        pathed = scenario_score.resolve_scenario(str(scenario_score.SCENARIO_DIR / "full_chain.json"))
+        self.assertEqual(named["id"], "full_chain")
+        self.assertEqual(named, pathed)
+        with self.assertRaisesRegex(scenario_score.ScenarioError, "scenario path does not exist"):
+            scenario_score.resolve_scenario("../full_chain")
+
     def test_shipped_scenarios_load_as_version_one(self):
         scenarios = sorted(scenario_score.SCENARIO_DIR.glob("*.json"))
         self.assertGreaterEqual(len(scenarios), 3)
