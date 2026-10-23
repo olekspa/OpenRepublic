@@ -287,3 +287,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~16:10 EDT** All earlier workers confirmed merged (ROAD-TYPES, LUA-SCENE, SHOWCASE-PERF). Sidewalks are off by default (OR_ROAD_SIDEWALKS=1), so the bright-sidewalk note only applies when enabled. Worker SCENARIOS started (deterministic AI-controller scenario suite + scorer).
 
 - **2026-10-23 ~16:40 EDT** SCENARIOS merged: four synthetic scenarios (data/scenarios), tools/scenario_score.py deterministic scorer, docs/SCENARIOS.md. Build + CTest 72/72.
+
+- **2026-10-23 ~17:10 EDT** Worker SCEN-LLM started (scenario scoring for LLM republic/tournament harness, scripted backend only in tests).
