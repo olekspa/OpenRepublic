@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import statistics
 from pathlib import Path
 
 from llm_republic import Host
@@ -35,13 +36,14 @@ def score_idle(host_exe, host_args, target_tick):
     finally: host.close()
 
 
-def execute_one(host_exe, world, controller, rounds, ticks, root):
+def execute_one(host_exe, world, controller, rounds, ticks, root, repeat, exact_ticks=False):
     name=f"{world['name']} / {controller['name']}"
     host_args=world.get("host_args",[])
-    transcript=str(root/(safe_name(world['name'])+"-"+safe_name(controller['name'])+".jsonl"))
+    transcript=str(root/(safe_name(world['name'])+"-"+safe_name(controller['name'])+f"-r{repeat}.jsonl"))
     if controller["kind"]=="autopilot":
         command=[sys.executable,str(Path(__file__).with_name("republic_autopilot.py")),"--host",host_exe,
                  "--rounds",str(rounds),"--ticks",str(ticks),"--json","--",*host_args]
+        if exact_ticks: command.insert(command.index("--json"), "--exact-round-ticks")
         result=subprocess.run(command,text=True,capture_output=True,timeout=7200,check=False)
         if result.returncode: raise RuntimeError(f"{name}: autopilot exit {result.returncode}: {result.stderr[-1000:]}")
         row=next((json.loads(line) for line in reversed(result.stdout.splitlines()) if line.startswith('{"benchmark"')),None)
@@ -62,23 +64,28 @@ def execute_one(host_exe, world, controller, rounds, ticks, root):
         idle=score_idle(host_exe,host_args,target)
         errors=sum(1 for x in rows if x.get("backendError"))
         no_action=sum(1 for x in rows if not x.get("actions"))
+        rejected=sum(1 for row in rows for outcome in row.get("outcomes", [])
+                     if str(outcome.get("state", "")).startswith("rejected"))
         return {"world":world["name"],"controller":controller["name"],"kind":"llm","tick":target,
                 "score":final,"idle":idle,"gain":final-idle,"backendErrors":errors,"emptyActionRounds":no_action,
-                "transcript":transcript}
+                "rejectedActions":rejected,"repeat":repeat,"transcript":transcript}
     else: raise ValueError(f"unknown controller kind: {controller['kind']}")
     return {"world":world["name"],"controller":controller["name"],"kind":"autopilot","tick":target,
-            "score":final,"idle":idle,"gain":final-idle,"backendErrors":0,"emptyActionRounds":None}
+            "score":final,"idle":idle,"gain":final-idle,"backendErrors":0,"emptyActionRounds":None,
+            "rejectedActions":int(row.get("rejectedCreates",0))+int(row.get("rejectedRetargets",0)),"repeat":repeat}
 
 
-def execute_scenario(host_exe, scenario_arg, scenario, controller, rounds, ticks, root):
+def execute_scenario(host_exe, scenario_arg, scenario, controller, rounds, ticks, root, repeat, exact_ticks=False):
     """Run a controller on the shared scenario fixture and scorer metric."""
     name=controller["name"]
     if controller.get("kind")=="autopilot":
-        receipt=scenario_score.run_scenario(host_exe,scenario,rounds*ticks)
+        receipt=scenario_score.run_scenario(host_exe,scenario,rounds*ticks,exact_ticks=exact_ticks,rounds=rounds)
         return {"world":scenario["id"],"controller":name,"kind":"autopilot-baseline",
-                "tick":receipt["tick"],"scoreMicroUnits":receipt["scoreMicroUnits"],
-                "scoreUnits":receipt["scoreUnits"],"scoreHash":receipt["scoreHash"]}
-    transcript=str(root/(safe_name(scenario["id"])+"-"+safe_name(name)+".jsonl"))
+                "tick":receipt["tick"],"scoreMicroUnits":receipt.get("scoreMicroUnits"),
+                "scoreUnits":receipt.get("scoreUnits"),"scoreHash":receipt["scoreHash"],
+                "scoreBreakdown":receipt.get("scoreBreakdown"),
+                "rejectedActions":sum(int(receipt.get("autopilot",{}).get(k,0)) for k in ("rejected_retargets","rejected_creates")),"repeat":repeat}
+    transcript=str(root/(safe_name(scenario["id"])+"-"+safe_name(name)+f"-r{repeat}.jsonl"))
     command=[sys.executable,str(Path(__file__).with_name("llm_republic.py")),"--host",host_exe,
              "--scenario",scenario_arg,"--backend",controller.get("backend","codex"),
              "--rounds",str(rounds),"--ticks",str(ticks),"--transcript",transcript]
@@ -95,9 +102,36 @@ def execute_scenario(host_exe, scenario_arg, scenario, controller, rounds, ticks
     receipt=receipts[-1]
     rows=[json.loads(line) for line in result.stdout.splitlines() if line.startswith('{') and '"round"' in line]
     return {"world":scenario["id"],"controller":name,"kind":"llm","tick":receipt["tick"],
-            "scoreMicroUnits":receipt["scoreMicroUnits"],"scoreUnits":receipt["scoreUnits"],
+            "scoreMicroUnits":receipt.get("scoreMicroUnits"),"scoreUnits":receipt.get("scoreUnits"),
+            "scoreBreakdown":receipt.get("scoreBreakdown"),
             "scoreHash":receipt["scoreHash"],"backendErrors":sum(bool(x.get("backendError")) for x in rows),
-            "emptyActionRounds":sum(not x.get("actions") for x in rows),"transcript":transcript}
+            "emptyActionRounds":sum(not x.get("actions") for x in rows),
+            "rejectedActions":sum(str(o.get("state","")).startswith("rejected") for row in rows for o in row.get("outcomes",[])),
+            "repeat":repeat,"transcript":transcript}
+
+
+def summarize(results):
+    """Build stable per-controller aggregates from successful independent runs."""
+    groups={}
+    for row in results:
+        if "error" not in row:
+            groups.setdefault((row["world"],row["controller"]),[]).append(row)
+    summaries=[]
+    for (world,controller),rows in sorted(groups.items()):
+        keys=["scoreUnits"] if rows[0].get("scoreUnits") is not None else (["score"] if "score" in rows[0] else ["scoreMicroUnits"])
+        # Utility scenarios have no scalar score; summarize each declared numeric objective.
+        if rows[0].get("scoreUnits") is None and "score" not in rows[0] and rows[0].get("scoreBreakdown"):
+            keys=sorted(k for k,v in rows[0]["scoreBreakdown"].items() if isinstance(v,(int,float)) and not isinstance(v,bool))
+        metrics={}
+        for key in keys:
+            values=[float(r[key] if key in r else r["scoreBreakdown"][key]) for r in rows]
+            metrics[key]={"mean":statistics.fmean(values),"min":min(values),"max":max(values),
+                          "sampleStddev":statistics.stdev(values) if len(values)>1 else None}
+        summaries.append({"world":world,"controller":controller,"runs":len(rows),"metrics":metrics,
+                          "rejectedActions":sum(int(r.get("rejectedActions",0)) for r in rows),
+                          "meanRejectedActions":statistics.fmean(int(r.get("rejectedActions",0)) for r in rows),
+                          "ticks":sorted({int(r["tick"]) for r in rows})})
+    return summaries
 
 
 def safe_name(value):
@@ -110,8 +144,10 @@ def main():
     p.add_argument("--rounds",type=int,default=8); p.add_argument("--ticks",type=int,default=500)
     p.add_argument("--parallel",type=int,default=1); p.add_argument("--output-json"); p.add_argument("--scenario",help="synthetic scenario ID or JSON path")
     p.add_argument("--transcript-dir",default=str(Path(tempfile.gettempdir())/"openrepublic-tournament"))
+    p.add_argument("--repeats",type=int,default=1,help="independent fresh-host runs per pair; one run is non-conclusive")
+    p.add_argument("--final-tick",type=int,help="absolute shared scoring tick; controller horizon must divide evenly across rounds")
     a=p.parse_args()
-    if not 1<=a.rounds<=1000 or not 1<=a.ticks<=100000 or not 1<=a.parallel<=16: p.error("rounds/ticks/parallel outside bounds")
+    if not 1<=a.rounds<=1000 or not 1<=a.ticks<=100000 or not 1<=a.parallel<=16 or not 1<=a.repeats<=100: p.error("rounds/ticks/parallel/repeats outside bounds")
     with open(a.manifest,encoding="utf-8-sig") as f: manifest=json.load(f)
     worlds=manifest.get("worlds",[]); controllers=manifest.get("controllers",[])
     if not controllers: p.error("manifest needs at least one controller")
@@ -128,24 +164,46 @@ def main():
         if controller.get("kind") not in ("llm","autopilot") or not isinstance(controller.get("name"),str): p.error("invalid controller entry")
         if controller.get("kind")=="llm" and controller.get("backend","codex") not in ("codex","openai-compatible","claude","scripted"): p.error("invalid LLM backend")
     root=Path(a.transcript_dir).resolve(); root.mkdir(parents=True,exist_ok=True)
-    jobs=[(w,c) for w in worlds for c in controllers]; results=[]
+    if a.final_tick is not None:
+        setup_ticks=(1 if scenario and (scenario["roads"] or scenario["buildings"]) else 0)+(1 if scenario and scenario.get("utilityConnections") else 0)
+        horizon=a.final_tick-setup_ticks if scenario else a.final_tick
+        if not 1<=a.final_tick<=100000 or horizon<1 or horizon%a.rounds:
+            p.error("final-tick must be 1..100000 and leave a positive controller horizon divisible by --rounds; scenario setup ticks are deducted")
+        ticks=horizon//a.rounds
+    else:
+        ticks=a.ticks
+    jobs=[(w,c,n) for w in worlds for c in controllers for n in range(1,a.repeats+1)]; results=[]
     if scenario is not None and not any(c.get("kind") == "autopilot" for c in controllers):
-        jobs.append((worlds[0],{"name":"autopilot-baseline","kind":"autopilot"}))
+        jobs.extend((worlds[0],{"name":"autopilot-baseline","kind":"autopilot"},n) for n in range(1,a.repeats+1))
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.parallel) as pool:
-        futures={pool.submit(execute_scenario,a.host,a.scenario,scenario,c,a.rounds,a.ticks,root)
-                 if scenario is not None else pool.submit(execute_one,a.host,w,c,a.rounds,a.ticks,root):(w,c)
-                 for w,c in jobs}
+        futures={pool.submit(execute_scenario,a.host,a.scenario,scenario,c,a.rounds,ticks,root,n,a.final_tick is not None)
+                 if scenario is not None else pool.submit(execute_one,a.host,w,c,a.rounds,ticks,root,n,a.final_tick is not None):(w,c,n)
+                 for w,c,n in jobs}
         for future in concurrent.futures.as_completed(futures):
-            w,c=futures[future]
-            try: results.append(future.result())
-            except Exception as e: results.append({"world":w["name"],"controller":c["name"],"error":str(e)})
-    results.sort(key=lambda r:(r["world"],r["controller"]))
+            w,c,n=futures[future]
+            try:
+                row=future.result()
+                if a.final_tick is not None and int(row["tick"]) != a.final_tick:
+                    raise RuntimeError(f"matched-tick requirement failed: observed {row['tick']}, expected {a.final_tick}")
+                results.append(row)
+            except Exception as e: results.append({"world":w["name"],"controller":c["name"],"repeat":n,"error":str(e)})
+    results.sort(key=lambda r:(r["world"],r["controller"],r.get("repeat",0)))
+    summaries=summarize(results)
+    complete_sample=(a.repeats>1 and not any("error" in r for r in results) and
+                     all(summary["runs"]==a.repeats for summary in summaries))
+    print(f"Runs: {a.repeats}; {'CONCLUSIVE SAMPLE' if complete_sample else 'NON-CONCLUSIVE: single or incomplete sample'}")
+    print("| World | Controller | Metric | Mean | Min | Max | Sample stddev | Rejected actions |")
+    print("|---|---|---|---:|---:|---:|---:|---:|")
+    for summary in summaries:
+        for metric, values in summary["metrics"].items():
+            stddev="—" if values["sampleStddev"] is None else f"{values['sampleStddev']:.6f}"
+            print(f"| {summary['world']} | {summary['controller']} | {metric} | {values['mean']:.6f} | {values['min']:.6f} | {values['max']:.6f} | {stddev} | {summary['rejectedActions']} |")
     if scenario is not None:
         print("| Scenario | Controller | Tick | Score (stored non-raw units) | Empty rounds | Errors |")
         print("|---|---|---:|---:|---:|---:|")
         for r in results:
             if "error" in r: print(f"| {r['world']} | {r['controller']} | — | — | — | {r['error']} |")
-            else: print(f"| {r['world']} | {r['controller']} | {r['tick']} | {r['scoreUnits']:.6f} | {r.get('emptyActionRounds','—')} | {r.get('backendErrors',0)} |")
+            else: print(f"| {r['world']} | {r['controller']} | {r['tick']} | {r['scoreUnits'] if r.get('scoreUnits') is not None else 'multi-objective'} | {r.get('emptyActionRounds','—')} | {r.get('backendErrors',0)} |")
     else:
         print("| World | Controller | Tick | Score | Idle | Gain | Empty rounds | Errors |")
         print("|---|---|---:|---:|---:|---:|---:|---:|")
@@ -154,7 +212,7 @@ def main():
             if "error" in r: print(f"| {r['world']} | {r['controller']} | — | — | — | — | — | {r['error']} |")
             else: print(f"| {r['world']} | {r['controller']} | {r['tick']} | {r['score']:.3f} | {r['idle']:.3f} | {r['gain']:.3f} | {r['emptyActionRounds'] if r['emptyActionRounds'] is not None else '—'} | {r['backendErrors']} |")
     if a.output_json:
-        with open(a.output_json,"w",encoding="utf-8") as f: json.dump({"rounds":a.rounds,"ticksPerRound":a.ticks,"scenarioId":scenario["id"] if scenario else None,"scenarioMetric":scenario["score"]["metric"] if scenario else None,"results":results},f,indent=2)
+        with open(a.output_json,"w",encoding="utf-8") as f: json.dump({"rounds":a.rounds,"ticksPerRound":ticks,"requestedTicksPerRound":a.ticks,"finalTick":a.final_tick,"repeats":a.repeats,"conclusiveSample":complete_sample,"scenarioId":scenario["id"] if scenario else None,"scenarioMetric":scenario["score"]["metric"] if scenario else None,"results":results,"summary":summaries},f,indent=2,sort_keys=True)
     return 1 if any("error" in r for r in results) else 0
 
 if __name__=="__main__": sys.exit(main())

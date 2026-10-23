@@ -25,19 +25,51 @@ class ScenarioTournamentTests(unittest.TestCase):
             responses.write_text(json.dumps([{"actions": [], "notes": "bounded test"}]), encoding="utf-8")
             completed = subprocess.run([
                 sys.executable, str(TOURNAMENT), "--host", HOST, "--manifest", str(manifest),
-                "--scenario", "grain_shortage", "--rounds", "1", "--ticks", "1",
+                "--scenario", "grain_shortage", "--rounds", "2", "--ticks", "1",
+                "--repeats", "2", "--final-tick", "7",
                 "--transcript-dir", str(root / "transcripts"), "--output-json", str(output)],
                 text=True, capture_output=True, timeout=60, check=False)
             self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
             result = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(result["scenarioId"], "grain_shortage")
             self.assertEqual(result["scenarioMetric"], "stored_non_raw_units")
+            self.assertEqual(result["repeats"], 2)
+            self.assertTrue(result["conclusiveSample"])
             rows = result["results"]
+            self.assertEqual(len(rows), 4)
             self.assertEqual({row["controller"] for row in rows}, {"scripted", "autopilot-baseline"})
             for row in rows:
                 self.assertIn("scoreMicroUnits", row)
                 self.assertIn("scoreHash", row)
+                self.assertEqual(row["tick"], 7)
+                self.assertIn("rejectedActions", row)
+            for controller in ("scripted", "autopilot-baseline"):
+                hashes = {row["scoreHash"] for row in rows if row["controller"] == controller}
+                self.assertEqual(len(hashes), 1, f"{controller} repeat receipts should be deterministic")
+            self.assertEqual({entry["runs"] for entry in result["summary"]}, {2})
+            self.assertTrue(all(entry["metrics"]["scoreUnits"]["sampleStddev"] is not None
+                                for entry in result["summary"]))
             self.assertIn("stored non-raw units", completed.stdout)
+            self.assertIn("CONCLUSIVE SAMPLE", completed.stdout)
+
+    def test_single_run_is_marked_non_conclusive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            manifest = root / "manifest.json"
+            responses = root / "responses.json"
+            output = root / "results.json"
+            manifest.write_text(json.dumps({"controllers": [
+                {"name": "scripted", "kind": "llm", "backend": "scripted",
+                 "scripted_responses": str(responses)}]}), encoding="utf-8")
+            responses.write_text(json.dumps([{"actions": [], "notes": "bounded test"}]), encoding="utf-8")
+            completed = subprocess.run([
+                sys.executable, str(TOURNAMENT), "--host", HOST, "--manifest", str(manifest),
+                "--scenario", "grain_shortage", "--rounds", "1", "--ticks", "1",
+                "--transcript-dir", str(root / "transcripts"), "--output-json", str(output)],
+                text=True, capture_output=True, timeout=60, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            self.assertFalse(json.loads(output.read_text(encoding="utf-8"))["conclusiveSample"])
+            self.assertIn("NON-CONCLUSIVE", completed.stdout)
 
 
 if __name__ == "__main__":
