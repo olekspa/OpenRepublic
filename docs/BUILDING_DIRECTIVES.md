@@ -4,7 +4,7 @@
 
 **Parser coverage:** ?Yes? means the current `ParseBuildingDefinition` extracts a typed field or retains a typed raw economic declaration. ?No? means the line is preserved only as opaque `other` arguments (and does not imply the directive is ignored by WRSR). Electrical declarations are extracted as source geometry/diagnostics, not native port semantics. Raw economic fields are only retained; no economy rules consume them.
 
-**Meaning evidence:** only `$WORKERS_NEEDED`, `$PRODUCTION`, `$CONSUMPTION`, and `$CONSUMPTION_PER_SECOND` are marked VERIFIED because their loader behavior is documented in the ledger. Other labels are lexical inferences or unknowns; names/shapes are not loader evidence.
+**Meaning evidence:** only `$WORKERS_NEEDED`, `$PRODUCTION`, `$CONSUMPTION`, and `$CONSUMPTION_PER_SECOND` are marked VERIFIED because their loader behavior is documented in the ledger. Other labels are lexical inferences or unknowns; names/shapes are not loader evidence. Construction `$COST_*` declarations remain raw. The opt-in `--construction-costs` host diagnostic reports them unsupported; it performs no conversion because this economy has no construction-site lifecycle. In particular, work-to-tick conversion, automatic resource naming, and node/keyword multiplier semantics remain UNKNOWN.
 
 ## Complete directive inventory
 

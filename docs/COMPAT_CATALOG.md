@@ -14,6 +14,28 @@ compatibility. Tests use synthetic definitions only.
 
 ## Conversion rules and evidence
 
+### Construction cost diagnostics (not a conversion)
+
+The economy currently has no construction-site lifecycle: `PlaceBuilding`
+creates a completed building, and haul orders deliver only to ordinary building
+inventories. The opt-in economy-host flag `--construction-costs` asks the
+catalog importer to report each retained `$COST_*` declaration as unsupported.
+It does not change catalog fields or hashes. The flag is diagnostic only and
+must not be read as construction-cost import support.
+
+All source-to-economy conversion factors remain **UNKNOWN**: `$COST_WORK` raw
+units to simulation ticks; `$COST_RESOURCE_AUTO` resource identity/amount rules;
+`$COST_RESOURCE` argument roles, resource identity, and amount units; and
+`$COST_ALL_MULTIPLY`, `$COST_WORK_BUILDING_NODE`,
+`$COST_WORK_BUILDING_KEYWORD`, `$COST_WORK_BUILDING_ALL`, and related
+node/keyword multipliers and selection rules. These fields remain raw and are
+reported in `ImportReport::warnings`; no resource names, costs, multipliers, or
+work durations are guessed. A native construction site, material-delivery
+target, work progression, persistence, and completion transition are required
+before an economy conversion can be added. The scenario economy API does not
+currently support that lifecycle, so no `build_a_mill` scored construction
+scenario is claimed.
+
 - **OBSERVED, one reviewed game build:** the loader scales some production and
   consumption values by workers when `$WORKERS_NEEDED` was already read, and
   multiplies `$CONSUMPTION_PER_SECOND` values by 60 before storing them.

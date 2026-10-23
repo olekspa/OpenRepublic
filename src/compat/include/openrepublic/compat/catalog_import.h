@@ -25,6 +25,9 @@ struct CatalogImportOptions {
     // Resources supplied by utility connections. Each name must also occur in
     // the parsed building definitions.
     std::set<std::string> utilityResources;
+    // Diagnostic opt-in for retained $COST_* declarations. The current native
+    // economy has no construction-site state, so this never changes the catalog.
+    bool constructionCosts = false;
 };
 
 struct SkippedBuilding {
@@ -47,6 +50,7 @@ struct ImportReport {
     std::size_t storageOnlyBuildingsImported{};
     std::size_t utilityResourcesImported{};
     std::size_t utilityStorageEntriesIgnored{};
+    std::size_t constructionCostDirectivesObserved{};
     std::vector<SkippedBuilding> skippedBuildings;
     std::vector<std::string> warnings;
     std::vector<std::string> storageDiagnostics;
