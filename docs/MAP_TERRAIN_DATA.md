@@ -60,3 +60,13 @@ All readers should be version-scoped, reject unsupported DDS encodings, retain r
 2. **Explicit tree placement:** likely high visual impact in a city-region view; first recover and validate `trees.bin` records and shared type lookup.
 3. **Water extents and level:** implement only after identifying the map’s actual water representation and transform.
 4. **Grass generation and minor overlays:** add after resolving the grassmap size discrepancy and emissive/far/farm semantics.
+
+## Mask channels versus slope (24 October 2026)
+
+**OBSERVED (one package, `mask.dds` 2048 x 2048 RGBA8 with standard channel masks, `heightmap.dds` 2048 x 2048 R32F, world 20,000 m square so about 9.8 m per cell; private numpy analysis, nothing copied):**
+
+- Channel R is **zero everywhere**; the base tile is therefore probably the implicit remainder (INFERRED).
+- Channel G is non-zero in only 5,852 cells (0.14%), all inside one 473 x 234-cell zone, and 5,850 of them also have channel A set.
+- Channel B is non-zero in 112,599 cells (2.7%) spread across the whole map; the mean terrain slope under them is about 13 times that of the other cells (0.013 against 0.001 height-units per cell), so B behaves like a **steep-ground (rock or cliff) weight** (INFERRED).
+- Channel A is non-zero in 47,034 cells (1.1%) spread across the map on essentially **flat** ground (mean slope 0.000), overlapping 595 B cells.
+- The map script declares four tiles (`$TILESIZE1..4` = 1000, 1000, 750, 500 m with per-tile displacement 0, 0.03, 0.01, 0.05 and tessellation 0, 3, 0, -16) and `$MASKTILESIZE4` = 9 (the other mask repeats are 1). `material.mtl` lists the tile textures in slot order: grass (`grass2`), field (`field1`), dirt (`burma_dirt2`), rock (`rockburma`) with bump maps, plus a desert pair. **UNKNOWN:** which channel selects which of the four tiles (the data suggests the tile order does not simply follow channel order: the steep channel is B while the rock texture is the fourth tile), and the blend formula. Do not hard-code a channel-to-texture mapping from this.
