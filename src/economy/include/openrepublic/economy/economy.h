@@ -456,7 +456,9 @@ public:
     CommandId TradeImport(BuildingId building, ResourceId resource, std::uint64_t amount, std::uint64_t rateCap);
     /** Swaps in a tuned catalog of identical structure (names, ids, recipe and storage layout) between ticks.
      *  Rejects the swap, leaving the world untouched, if the structure differs or building inventory
-     *  or onboard cargo would exceed a reduced capacity. The new catalog must outlive the world. */
+     *  or onboard cargo would exceed a reduced capacity. Population opt-ins and food-resource
+     *  bindings must match; occupied housing cannot shrink below its resident count.
+     *  The new catalog must outlive the world. */
     bool ReplaceCatalog(const Catalog &catalog, std::string &error);
     /** Returns queued, accepted, rejected, or unknown command status. */
     CommandResult GetCommandResult(CommandId command) const;

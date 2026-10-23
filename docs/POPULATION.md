@@ -35,15 +35,39 @@ provide storage for that resource wherever it expects food stock to be held.
 When no food rule is declared, residents fill declared housing capacity. When a
 food rule is declared, residents can move into housing up to capacity based on
 available food, and the configured quantity is consumed at each food interval.
-Housing and worker totals are accumulated across placed buildings. Buildings
-with worker requirements receive available residents in deterministic building
-order; production at a staffed building scales with assigned workers up to the
-declared requirement. Buildings with no worker declaration retain their prior
-production behavior.
+Housing and worker totals are accumulated across placed buildings. Enabled
+buildings with worker requirements receive available residents in deterministic
+building-ID order; disabled workplaces do not reserve residents. The required
+worker total still includes disabled buildings, while assigned workers counts
+residents allocated to enabled workplaces. Production at a staffed building
+scales with assigned workers up to the declared requirement. Buildings with no
+worker declaration retain their prior production behavior.
 
 These are deliberately simple synthetic rules. They do not model commuting,
 household assignment, job qualifications, wages, education, health, age,
 unemployment policy, or any other unimplemented mechanic.
+
+Assignment is computed once in stable building order for each production phase
+and snapshot. Parallel production reads the same immutable assignment plan;
+no assignment cache is serialized or included in the state hash. Aggregate
+population and worker totals saturate at the uint64 maximum. Partial staffing
+retains the existing deterministic whole-cycle schedule rather than rounding
+each recipe's resource amounts.
+
+## Persistence and tuning
+
+Population catalogs use native world format v6 with per-building resident
+counts. All recipe progress remains bounded by its declared interval, including
+v6 saves; invalid loads leave the destination unchanged. Saves remain subject
+to the native 1 MiB world payload limit, so a successful large in-memory run
+does not establish checkpoint support at the same scale.
+
+Catalog reload treats housing/worker opt-in presence and the food resource
+binding as structural. Same-structure numeric housing, worker, food-rate and
+interval tuning remains possible, but occupied housing cannot shrink below
+its resident count. Rejected reloads preserve the world, revision and catalog.
+Lua economy tuning preserves population, food and trade declarations while
+changing only its supported tuning fields.
 
 ## API summary
 

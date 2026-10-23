@@ -435,15 +435,22 @@ void Produce(Building &b, const BuildingTypeDef &t, const RecipeDef &r) {
         b.inventory[Slot(t, a.resource)] += a.amount;
 }
 std::uint64_t SaturatingAdd(std::uint64_t a, std::uint64_t b);
-std::uint64_t AssignedWorkers(const State &s, BuildingId id) {
-    std::uint64_t residents = 0, assignedBefore = 0;
-    for (const auto &building : s.buildings) residents = SaturatingAdd(residents, building.residents);
-    for (const auto &building : s.buildings) {
+std::vector<std::uint64_t> AssignedWorkers(const State &s) {
+    std::uint64_t residents = 0;
+    for (const auto &building : s.buildings)
+        residents = SaturatingAdd(residents, building.residents);
+
+    std::vector<std::uint64_t> assigned(s.buildings.size());
+    std::uint64_t assignedBefore = 0;
+    for (std::size_t i = 0; i < s.buildings.size(); ++i) {
+        const auto &building = s.buildings[i];
         const auto *type = s.catalog->BuildingType(building.type);
-        if (building.id == id) return std::min(type->workers, residents > assignedBefore ? residents - assignedBefore : 0);
+        if (!type->workers || !building.enabled)
+            continue;
+        assigned[i] = std::min(type->workers, residents > assignedBefore ? residents - assignedBefore : 0);
         assignedBefore = SaturatingAdd(assignedBefore, type->workers);
     }
-    return 0;
+    return assigned;
 }
 std::uint64_t MultiplyModulo(std::uint64_t a, std::uint64_t b, std::uint64_t modulus) {
     std::uint64_t result = 0;
@@ -455,15 +462,14 @@ std::uint64_t MultiplyModulo(std::uint64_t a, std::uint64_t b, std::uint64_t mod
     }
     return result;
 }
-bool StaffedThisTick(const State &s, const Building &b, const BuildingTypeDef &type) {
+bool StaffedThisTick(const State &s, const BuildingTypeDef &type, std::uint64_t assigned) {
     if (!type.workers) return true;
-    const auto assigned = AssignedWorkers(s, b.id);
     if (!assigned) return false;
     if (assigned >= type.workers) return true;
     const auto phase = MultiplyModulo(s.tick % type.workers, assigned, type.workers);
     return phase >= type.workers - assigned;
 }
-void Production(State &s, Building &b) {
+void Production(State &s, Building &b, std::uint64_t assigned) {
     const auto *t = s.catalog->BuildingType(b.type);
     b.stall = {b.id, StallReason::MissingInput, InvalidResourceId, 0};
     if (!b.enabled) {
@@ -474,7 +480,7 @@ void Production(State &s, Building &b) {
     ResourceId mr = InvalidResourceId, fr = InvalidResourceId;
     for (std::size_t i = 0; i < t->recipes.size(); ++i) {
         const auto &r = t->recipes[i];
-        if (!StaffedThisTick(s, b, *t)) continue;
+        if (!StaffedThisTick(s, *t, assigned)) continue;
         const auto interval = r.intervalTicks;
         if (b.remaining[i]) {
             running = true;
@@ -921,13 +927,14 @@ constexpr std::size_t kParallelBuildingThreshold = 16384;
 // Production only touches its own building (catalog is read-only), so chunks can run concurrently
 // and the result does not depend on the chunking.
 void ProductionPhase(State &s) {
+    const auto assignedWorkers = AssignedWorkers(s);
     unsigned threads = g_productionThreads.load();
     if (threads == 0)
         threads = std::max(1u, std::thread::hardware_concurrency());
     const std::size_t n = s.buildings.size();
     if (threads <= 1 || n < kParallelBuildingThreshold) {
-        for (auto &b : s.buildings)
-            Production(s, b);
+        for (std::size_t i = 0; i < n; ++i)
+            Production(s, s.buildings[i], assignedWorkers[i]);
         return;
     }
     threads = static_cast<unsigned>(std::min<std::size_t>(threads, n / 256));
@@ -935,13 +942,13 @@ void ProductionPhase(State &s) {
     const std::size_t chunk = (n + threads - 1) / threads;
     for (unsigned t = 1; t < threads; ++t) {
         const std::size_t begin = t * chunk, end = std::min(n, begin + chunk);
-        pool.emplace_back([&s, begin, end] {
+        pool.emplace_back([&s, &assignedWorkers, begin, end] {
             for (std::size_t i = begin; i < end; ++i)
-                Production(s, s.buildings[i]);
+                Production(s, s.buildings[i], assignedWorkers[i]);
         });
     }
     for (std::size_t i = 0; i < std::min(n, chunk); ++i)
-        Production(s, s.buildings[i]);
+        Production(s, s.buildings[i], assignedWorkers[i]);
     for (auto &th : pool)
         th.join();
 }
@@ -1127,6 +1134,7 @@ bool IsGenerator(const State &s, const RecipeDef &recipe) {
     return HasUtility(*s.catalog, recipe.outputs);
 }
 UtilityDiagnostics UtilityProductionPhase(State &s) {
+    const auto assignedWorkers = AssignedWorkers(s);
     const auto components = UtilityComponents(s);
     std::map<UtilityBudgetKey, UtilityBudget> budget;
     std::map<UtilityBudgetKey, UtilityAmount> requested, consumed;
@@ -1144,7 +1152,7 @@ UtilityDiagnostics UtilityProductionPhase(State &s) {
             continue;
         for (std::size_t ri = 0; ri < type->recipes.size(); ++ri) {
             const auto &recipe = type->recipes[ri];
-            if (!StaffedThisTick(s, building, *type)) continue;
+            if (!StaffedThisTick(s, *type, assignedWorkers[bi])) continue;
             if (!IsGenerator(s, recipe))
                 continue;
             ResourceId blocked{};
@@ -1184,7 +1192,7 @@ UtilityDiagnostics UtilityProductionPhase(State &s) {
             continue;
         for (std::size_t ri = 0; ri < type->recipes.size(); ++ri) {
             const auto &recipe = type->recipes[ri];
-            if (!StaffedThisTick(s, building, *type)) continue;
+            if (!StaffedThisTick(s, *type, assignedWorkers[bi])) continue;
             if (IsGenerator(s, recipe))
                 continue;
             if (HasUtility(*s.catalog, recipe.inputs)) {
@@ -2134,6 +2142,9 @@ bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
     const auto &ob = old.BuildingTypes(), &nb = next.BuildingTypes();
     const auto &ov = old.VehicleTypes(), &nv = next.VehicleTypes();
     bool same = or_.size() == nr.size() && ob.size() == nb.size() && ov.size() == nv.size();
+    // Population opt-ins and the food resource are structure, just like recipe
+    // resource bindings. Numeric requirements/rates may still be tuned.
+    same = same && old.Food().resource == next.Food().resource;
     for (std::size_t i = 0; same && i < or_.size(); ++i)
         same = or_[i].name == nr[i].name && or_[i].utility == nr[i].utility &&
                or_[i].tradeDeclared == nr[i].tradeDeclared;
@@ -2141,6 +2152,7 @@ bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
         same = ov[i].name == nv[i].name;
     for (std::size_t i = 0; same && i < ob.size(); ++i) {
         same = ob[i].name == nb[i].name && ob[i].width == nb[i].width && ob[i].depth == nb[i].depth &&
+               bool(ob[i].housing) == bool(nb[i].housing) && bool(ob[i].workers) == bool(nb[i].workers) &&
                ob[i].tradePost == nb[i].tradePost && ob[i].storage.size() == nb[i].storage.size() &&
                ob[i].recipes.size() == nb[i].recipes.size();
         for (std::size_t j = 0; same && j < ob[i].storage.size(); ++j)
@@ -2158,12 +2170,17 @@ bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
         error = "the new catalog does not have the same structure as the running one";
         return false;
     }
-    for (const auto &b : impl_->state.buildings)
+    for (const auto &b : impl_->state.buildings) {
+        if (b.residents > nb[b.type].housing) {
+            error = "resident count exceeds the reduced housing capacity of its building type";
+            return false;
+        }
         for (std::size_t i = 0; i < b.inventory.size(); ++i)
             if (b.inventory[i] > nb[b.type].storage[i].capacity) {
                 error = "a stored amount exceeds the reduced capacity of its building type";
                 return false;
             }
+    }
     for (const auto &v : impl_->state.vehicles)
         if (v.cargo > nv[v.type].capacity) {
             error = "onboard cargo exceeds the reduced capacity of its vehicle type";
@@ -2378,6 +2395,7 @@ UtilityDiagnostics World::QueryUtilityDiagnostics() const {
 }
 WorldSnapshot World::Snapshot() const {
     const auto &s = impl_->state;
+    const auto assignedWorkers = AssignedWorkers(s);
     WorldSnapshot o;
     o.gridWidth = s.width;
     o.gridDepth = s.depth;
@@ -2386,11 +2404,12 @@ WorldSnapshot World::Snapshot() const {
     o.treasury = s.treasury;
     for (const auto &building : s.buildings)
         o.population = SaturatingAdd(o.population, building.residents);
-    for (const auto &building : s.buildings) {
+    for (std::size_t i = 0; i < s.buildings.size(); ++i) {
+        const auto &building = s.buildings[i];
         const auto *type = s.catalog->BuildingType(building.type);
         if (type->workers) {
             o.workersRequired = SaturatingAdd(o.workersRequired, type->workers);
-            o.workersAssigned = SaturatingAdd(o.workersAssigned, AssignedWorkers(s, building.id));
+            o.workersAssigned = SaturatingAdd(o.workersAssigned, assignedWorkers[i]);
         }
     }
     o.stateHash = Hash(s);
@@ -2733,7 +2752,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
                 return false;
             }
         for (std::size_t i = 0; i < b.remaining.size(); ++i)
-            if ((version != "6" && b.remaining[i] > t->recipes[i].intervalTicks) ||
+            if (b.remaining[i] > t->recipes[i].intervalTicks ||
                 ((HasUtility(c, t->recipes[i].inputs) || HasUtility(c, t->recipes[i].outputs)) &&
                  b.remaining[i] != 0)) {
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "progress exceeds definition");

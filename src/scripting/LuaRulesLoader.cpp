@@ -431,6 +431,15 @@ namespace openrepublic::scripting
 			{
 				return failed();
 			}
+			if (r.tradeDeclared && !builder.AddTradePrice({ id, r.buyPrice, r.sellPrice }, info))
+			{
+				return failed();
+			}
+		}
+		if (base.Food().resource != economy::InvalidResourceId &&
+			!builder.SetFood(base.Food().resource, base.Food().amount, base.Food().intervalTicks, info))
+		{
+			return failed();
 		}
 		for (const auto& t : base.BuildingTypes())
 		{
@@ -438,6 +447,12 @@ namespace openrepublic::scripting
 			const BuildingTuning tuning = found != buildingTuning.end() ? found->second : BuildingTuning{};
 			economy::BuildingTypeId id;
 			if (!builder.AddBuildingType(t.name, t.width, t.depth, &id, info))
+			{
+				return failed();
+			}
+			if ((t.housing && !builder.SetHousing(id, t.housing, info)) ||
+				(t.workers && !builder.SetWorkers(id, t.workers, info)) ||
+				(t.tradePost && !builder.SetTradePost(id, true, info)))
 			{
 				return failed();
 			}
