@@ -1,5 +1,5 @@
-add_library(OpenRepublicScripting LuaRulesLoader.cpp)
+add_library(OpenRepublicScripting LuaRulesLoader.cpp scene_script.cpp)
 target_include_directories(OpenRepublicScripting PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_include_directories(OpenRepublicScripting PRIVATE "${WICKED_ROOT_DIR}/WickedEngine/LUA")
+target_include_directories(OpenRepublicScripting PRIVATE "${WICKED_ROOT_DIR}/WickedEngine/LUA" "${OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR}")
 target_compile_features(OpenRepublicScripting PUBLIC cxx_std_17)
-target_link_libraries(OpenRepublicScripting PUBLIC OpenRepublicSimulation OpenRepublicEconomy LUA)
+target_link_libraries(OpenRepublicScripting PUBLIC OpenRepublicSimulation OpenRepublicEconomy OpenRepublicSceneControl LUA)
