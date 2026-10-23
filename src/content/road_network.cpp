@@ -107,8 +107,11 @@ bool DecodeSegments(std::string_view bytes, std::size_t& offset, RoadNetwork& ne
         const std::size_t pointsOffset = cursor - static_cast<std::size_t>(pointCount) * 0x18;
 
         RoadSegment segment;
+        segment.pointCount = pointCount;
         segment.nodeA = nodeA;
         segment.nodeB = nodeB;
+        segment.nestedRecordCount = nestedCount;
+        segment.hasTrailingVectors = static_cast<unsigned char>(bytes[header + 0x84]) == 1;
         segment.typeId = SharedTypeForSegment(network, nodeA, nodeB, i);
         std::memcpy(segment.rawHeader.data(), bytes.data() + header, kSegmentHeaderBytes);
         segment.polyline.reserve(pointCount);
