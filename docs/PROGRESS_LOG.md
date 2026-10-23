@@ -285,3 +285,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~15:40 EDT** ECON-UI merged: deterministic economy summary (text + JSON) and a `summary` host method (additive, protocol v0). Full client build + CTest 71/71.
 
 - **2026-10-23 ~16:10 EDT** All earlier workers confirmed merged (ROAD-TYPES, LUA-SCENE, SHOWCASE-PERF). Sidewalks are off by default (OR_ROAD_SIDEWALKS=1), so the bright-sidewalk note only applies when enabled. Worker SCENARIOS started (deterministic AI-controller scenario suite + scorer).
+
+- **2026-10-23 ~16:40 EDT** SCENARIOS merged: four synthetic scenarios (data/scenarios), tools/scenario_score.py deterministic scorer, docs/SCENARIOS.md. Build + CTest 72/72.
