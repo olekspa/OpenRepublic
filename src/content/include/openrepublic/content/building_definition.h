@@ -36,6 +36,16 @@ struct BuildingDefinitionDirective {
     std::size_t line = 0;
 };
 
+// Raw numeric tokens from economically relevant declarations that do not yet
+// have ledger-supported gameplay semantics. Non-numeric arguments are retained
+// as nullopt in numericArguments; source spelling/order and line are preserved.
+struct BuildingEconomicRawDirective {
+    std::string name;
+    std::vector<std::string> arguments;
+    std::vector<std::optional<double>> numericArguments;
+    std::size_t line = 0;
+};
+
 // Source declaration only. Directive names and coordinate order are retained
 // exactly as written; `_ONLY` and the coordinates have no interpreted meaning.
 // A malformed declaration remains available with `valid == false` and a
@@ -59,6 +69,9 @@ struct BuildingDefinition {
     std::vector<BuildingResourceRate> consumption;
     std::vector<BuildingResourceRate> consumptionPerSecond;
     std::vector<BuildingStorageEntry> storage;
+    // Candidate construction/utility/waste declarations kept as raw typed
+    // arguments only. They are not consumed by economy rules.
+    std::vector<BuildingEconomicRawDirective> economicRaw;
     // Recognized electrical connection declarations, in source order. This
     // retains source geometry only; it does not identify a native port.
     std::vector<BuildingElectricalConnection> electricalConnections;

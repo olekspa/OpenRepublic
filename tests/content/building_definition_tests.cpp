@@ -92,6 +92,10 @@ const std::string kSynthetic =
     "$CONSUMPTION_PER_SECOND eletric 2.5\r\n"
     "$STORAGE RESOURCE_TRANSPORT_COVERED 75\r\n"
     "$STORAGE_IMPORT_SPECIAL RESOURCE_TRANSPORT_GRAVEL 100.00 bauxite\r\n"
+    "$COST_RESOURCE_AUTO gravel 12.5\r\n"
+    "$COST_WORK 8 3.25\r\n"
+    "$ELETRIC_CONSUMPTION_LOADING_FIXED 0.75\r\n"
+    "$PRODUCTION_CONNECT_TO_WIND 0.4\r\n"
     "$STORAGE_PACKCONTAINERS_FROM_STORAGE 0\r\n"
     "$RESOURCE_VISUALIZATION 1\r\n"
     "position 0.0 0.0 -12.0\r\n"
@@ -121,11 +125,21 @@ void TestTypedExtraction() {
               definition.storage[1].directive == "$STORAGE_IMPORT_SPECIAL" &&
               definition.storage[1].resource == "bauxite",
           "storage directives keep their class, amount and optional resource");
+    Check(definition.economicRaw.size() == 4 &&
+              definition.economicRaw[0].name == "$COST_RESOURCE_AUTO" &&
+              definition.economicRaw[0].arguments.size() == 2 &&
+              !definition.economicRaw[0].numericArguments[0] &&
+              definition.economicRaw[0].numericArguments[1] == 12.5 &&
+              definition.economicRaw[1].numericArguments[0] == 8.0 &&
+              definition.economicRaw[1].numericArguments[1] == 3.25 &&
+              definition.economicRaw[2].numericArguments[0] == 0.75 &&
+              definition.economicRaw[3].numericArguments[0] == 0.4,
+          "economic cost and utility declarations retain source arguments with optional numeric typing");
     bool preserved = false;
     for (const auto& directive : definition.other) {
         preserved = preserved || directive.name == "$STORAGE_PACKCONTAINERS_FROM_STORAGE";
     }
-    Check(preserved && definition.other.size() == 3 && definition.ignoredLines == 2,
+    Check(preserved && definition.other.size() == 7 && definition.ignoredLines == 2,
           "other directives are preserved and data/separator rows are counted");
 }
 
