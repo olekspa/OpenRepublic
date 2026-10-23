@@ -4,6 +4,11 @@ target_compile_features(OpenRepublicEconomyTests PRIVATE cxx_std_17)
 enable_testing()
 add_test(NAME Economy COMMAND OpenRepublicEconomyTests)
 
+add_executable(OpenRepublicEconomySummaryTests economy_summary_tests.cpp)
+target_link_libraries(OpenRepublicEconomySummaryTests PRIVATE OpenRepublicEconomyApi)
+target_compile_features(OpenRepublicEconomySummaryTests PRIVATE cxx_std_17)
+add_test(NAME EconomySummary COMMAND OpenRepublicEconomySummaryTests)
+
 add_executable(OpenRepublicHaulRetargetTests haul_retarget_tests.cpp)
 target_link_libraries(OpenRepublicHaulRetargetTests PRIVATE OpenRepublicEconomy)
 add_test(NAME EconomyHaulRetarget COMMAND OpenRepublicHaulRetargetTests)
