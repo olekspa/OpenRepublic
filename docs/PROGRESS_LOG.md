@@ -271,3 +271,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~12:10 EDT** ECON-SCALE follow-up merged: World::SnapshotPage and a paged EconomyApi::QueryWorld route (a 32-building page on the 40,000-building world: 0.007 ms typed, 0.35 ms host JSON/7.9 KB vs 526 ms/9.74 MB for the full world), plus a real-region benchmark (N22 radius 1000 import with repeatable hashes and read-only query hash guard). Full client build and CTest 69/69 after the merge.
 
 - **2026-10-23 ~12:35 EDT** BUILDING-LOD measured (N22, 2,500 m radius, 500 instances of 149 types, camera 5 km away): update time fixed LOD0 13.5 ms (73.9 fps derived) vs dynamic auto 14.5 ms: NO gain (slightly worse) in this scene, because it is not triangle-bound with 500 buildings; no popping seen in two matched capture pairs (not a temporal proof). So --map-lod auto is functionally correct but not yet a win; it may matter with many more buildings or heavier models.
+
+- **2026-10-23 ~12:50 EDT** Worker ROAD-RENDER started (junctions, mitred curves, shoulders, kerbs, terrain-conforming road meshes in a new src/app/RoadMesh).
