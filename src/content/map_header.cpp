@@ -1,6 +1,7 @@
 #include "openrepublic/content/map_header.h"
 
 #include <cstddef>
+#include <cstring>
 #include <utility>
 
 namespace openrepublic::content {
@@ -98,6 +99,14 @@ bool ParseMapHeaderFixedBlock(std::string_view bytes, MapHeaderFixedBlock& outpu
         candidate.words[i] = readU32(kWordsOffset + i * 4);
     for (std::size_t i = 0; i < candidate.flagBytes.size(); ++i)
         candidate.flagBytes[i] = data[0x208 + i];
+    auto asFloat = [](std::uint32_t bits) { float f; static_assert(sizeof(f) == sizeof(bits)); std::memcpy(&f, &bits, sizeof(f)); return f; };
+    for (std::size_t i = 0; i < 3; ++i) {
+        candidate.cameraPosition[i] = asFloat(readU32(0x1a4 + i * 4));
+        candidate.cameraLookAt[i] = asFloat(readU32(0x1b0 + i * 4));
+    }
+    candidate.extendedBlockFlag = readU32(0x1d8);
+    candidate.firstRecordListCount = readU32(0x1e0);
+    candidate.secondRecordListCount = readU32(0x1dc);
     output = candidate;
     if (error) error->clear();
     return true;

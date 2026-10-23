@@ -88,11 +88,19 @@ void TestFixedBlockLayout() {
     WriteU32LE(bytes, 0x184, 0x11111111u);
     WriteU32LE(bytes, 0x184 + 32 * 4, 0xabcdef01u);  // last word, ends at +0x207
     bytes[0x208] = 1; bytes[0x209] = 2; bytes[0x20a] = 3;
+    WriteU32LE(bytes, 0x1a4, 0x3f800000u);  // 1.0f camera position x
+    WriteU32LE(bytes, 0x1b8, 0x40000000u);  // 2.0f look-at z
+    WriteU32LE(bytes, 0x1d8, 1);
+    WriteU32LE(bytes, 0x1e0, 7);
+    WriteU32LE(bytes, 0x1dc, 9);
     MapHeaderFixedBlock block;
     std::string error;
     Check(ParseMapHeaderFixedBlock(bytes, block, &error), "fixed block parses for version 124");
     Check(block.version == 124 && block.words[0] == 0x11111111u && block.words[32] == 0xabcdef01u,
           "fixed block first and last words");
+    Check(block.cameraPosition[0] == 1.0f && block.cameraLookAt[2] == 2.0f, "camera vectors read as floats");
+    Check(block.extendedBlockFlag == 1 && block.firstRecordListCount == 7 && block.secondRecordListCount == 9,
+          "extended flag and record list counts");
     Check(block.flagBytes[0] == 1 && block.flagBytes[1] == 2 && block.flagBytes[2] == 3, "fixed block flag bytes");
 
     MapHeaderFixedBlock untouched;

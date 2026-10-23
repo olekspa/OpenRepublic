@@ -36,6 +36,17 @@ struct MapHeaderFixedBlock {
     std::uint32_t version = 0;
     std::array<std::uint32_t, kWordCount> words{};  // words[i] is at +0x184 + 4*i
     std::array<std::uint8_t, 3> flagBytes{};        // +0x208, +0x209, +0x20a
+    // VERIFIED by the original import loader (static review, build context 23935965):
+    // +0x1a4 is passed to the camera's set-position call and +0x1b0 to its set-look-at
+    // call, each as three 32-bit floats (stored here as read, no unit/axis claim);
+    // +0x1d8 == 1 gates reading the extended block that follows; +0x1e0 and +0x1dc are
+    // the counts of the two lists of 0x80-byte text records that follow the 0x54-byte block
+    // (the +0x1e0 list is read first). Record contents beyond "text" remain UNKNOWN.
+    std::array<float, 3> cameraPosition{};
+    std::array<float, 3> cameraLookAt{};
+    std::uint32_t extendedBlockFlag = 0;
+    std::uint32_t firstRecordListCount = 0;   // +0x1e0
+    std::uint32_t secondRecordListCount = 0;  // +0x1dc
 };
 
 // Requires version 124 and at least 0x20c bytes; everything else fails unchanged.

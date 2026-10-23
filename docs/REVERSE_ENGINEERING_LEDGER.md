@@ -499,3 +499,5 @@ Next: recover or repeat the missing private serializer trace, identify the exact
 ## Map header writer layout - 24 October 2026
 
 - **VERIFIED (static writer review, build context 23935965):** header.bin starts with a 0x20c-byte structure: u32 version (writer value 124), UTF-16LE text at +0x004, 33 32-bit numeric slots at +0x184..+0x207, flag bytes at +0x208..+0x20a. A 0x54-byte block and 0x80-byte and 8-byte record lists follow. Slot meanings, block contents and other versions are **UNKNOWN**. See docs/MAP_SURVEY.md; reader: ParseMapHeaderFixedBlock (raw slots, version 124 only).
+
+- **VERIFIED (static import-loader review, build context 23935965):** header.bin slots +0x1a4/+0x1b0 are camera position/look-at float triplets; +0x1d8 == 1 gates the extended block; +0x1e0/+0x1dc count two lists of 0x80-byte text records. **OBSERVED:** the roads are loaded by one routine from road.bin and road_secondary.bin into two networks, and rail.bin/rail_secondary.bin likewise. **UNKNOWN:** the meaning of the secondary networks and all other header slots.
