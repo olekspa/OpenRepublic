@@ -47,6 +47,11 @@ struct RecipeDef {
     std::vector<RecipeAmount> inputs;
     std::vector<RecipeAmount> outputs;
 };
+struct FoodDef {
+    ResourceId resource{InvalidResourceId};
+    std::uint64_t amount{};
+    std::uint32_t intervalTicks{1};
+};
 struct ResourceDef {
     ResourceId id{};
     std::string name;
@@ -63,6 +68,8 @@ struct BuildingTypeDef {
     std::vector<StorageDef> storage;
     std::vector<RecipeDef> recipes;
     bool tradePost{};
+    std::uint64_t housing{};
+    std::uint64_t workers{};
 };
 struct VehicleTypeDef {
     VehicleTypeId id{};
@@ -108,6 +115,7 @@ public:
     const std::vector<BuildingTypeDef> &BuildingTypes() const noexcept;
     /** Returns vehicle types in dense immutable ID order. */
     const std::vector<VehicleTypeDef> &VehicleTypes() const noexcept;
+    const FoodDef &Food() const noexcept;
     /** Looks up an exact resource name without modifying the immutable catalog. */
     bool FindResource(std::string_view name, ResourceId &id) const noexcept;
     /** Looks up an exact building type name without modifying the immutable catalog. */
@@ -126,6 +134,7 @@ private:
     std::vector<ResourceDef> resources_;
     std::vector<BuildingTypeDef> buildingTypes_;
     std::vector<VehicleTypeDef> vehicleTypes_;
+    FoodDef food_;
 };
 
 class CatalogBuilder final {
@@ -147,6 +156,10 @@ public:
                         VehicleTypeId *outId, CatalogErrorInfo &error);
     bool AddTradePrice(const TradePriceDef &price, CatalogErrorInfo &error);
     bool SetTradePost(BuildingTypeId building, bool enabled, CatalogErrorInfo &error);
+    bool SetHousing(BuildingTypeId building, std::uint64_t capacity, CatalogErrorInfo &error);
+    bool SetWorkers(BuildingTypeId building, std::uint64_t requirement, CatalogErrorInfo &error);
+    bool SetFood(ResourceId resource, std::uint64_t amount, std::uint32_t intervalTicks,
+                 CatalogErrorInfo &error);
     /** Resolves a resource name and adds its storage slot. */
     bool AddStorage(BuildingTypeId building, std::string_view resource, std::uint64_t capacity,
                     CatalogErrorInfo &error);
@@ -372,6 +385,9 @@ struct WorldSnapshot {
     std::vector<HaulOrderSnapshot> orders;
     std::vector<UtilityConnectionSnapshot> utilityConnections;
     std::uint64_t treasury{};
+    std::uint64_t population{};
+    std::uint64_t workersAssigned{};
+    std::uint64_t workersRequired{};
 };
 
 enum class SnapshotCollection : std::uint8_t { Buildings, Roads, Vehicles, Orders, UtilityConnections };

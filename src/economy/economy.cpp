@@ -157,6 +157,7 @@ struct Building {
     std::vector<std::uint32_t> remaining;
     std::vector<std::uint64_t> completed;
     StallRecord stall;
+    std::uint64_t residents{};
 };
 struct Road {
     RoadId id{};
@@ -433,6 +434,35 @@ void Produce(Building &b, const BuildingTypeDef &t, const RecipeDef &r) {
     for (auto a : r.outputs)
         b.inventory[Slot(t, a.resource)] += a.amount;
 }
+std::uint64_t SaturatingAdd(std::uint64_t a, std::uint64_t b);
+std::uint64_t AssignedWorkers(const State &s, BuildingId id) {
+    std::uint64_t residents = 0, assignedBefore = 0;
+    for (const auto &building : s.buildings) residents = SaturatingAdd(residents, building.residents);
+    for (const auto &building : s.buildings) {
+        const auto *type = s.catalog->BuildingType(building.type);
+        if (building.id == id) return std::min(type->workers, residents > assignedBefore ? residents - assignedBefore : 0);
+        assignedBefore = SaturatingAdd(assignedBefore, type->workers);
+    }
+    return 0;
+}
+std::uint64_t MultiplyModulo(std::uint64_t a, std::uint64_t b, std::uint64_t modulus) {
+    std::uint64_t result = 0;
+    a %= modulus;
+    while (b) {
+        if (b & 1) result = result >= modulus - a ? result - (modulus - a) : result + a;
+        b >>= 1;
+        if (b) a = a >= modulus - a ? a - (modulus - a) : a + a;
+    }
+    return result;
+}
+bool StaffedThisTick(const State &s, const Building &b, const BuildingTypeDef &type) {
+    if (!type.workers) return true;
+    const auto assigned = AssignedWorkers(s, b.id);
+    if (!assigned) return false;
+    if (assigned >= type.workers) return true;
+    const auto phase = MultiplyModulo(s.tick % type.workers, assigned, type.workers);
+    return phase >= type.workers - assigned;
+}
 void Production(State &s, Building &b) {
     const auto *t = s.catalog->BuildingType(b.type);
     b.stall = {b.id, StallReason::MissingInput, InvalidResourceId, 0};
@@ -444,11 +474,13 @@ void Production(State &s, Building &b) {
     ResourceId mr = InvalidResourceId, fr = InvalidResourceId;
     for (std::size_t i = 0; i < t->recipes.size(); ++i) {
         const auto &r = t->recipes[i];
+        if (!StaffedThisTick(s, b, *t)) continue;
+        const auto interval = r.intervalTicks;
         if (b.remaining[i]) {
             running = true;
-            if (b.remaining[i] < r.intervalTicks)
+            if (b.remaining[i] < interval)
                 ++b.remaining[i];
-            if (b.remaining[i] == r.intervalTicks) {
+            if (b.remaining[i] >= interval) {
                 ResourceId x{};
                 if (Room(b, *t, r, x)) {
                     Produce(b, *t, r);
@@ -478,7 +510,7 @@ void Production(State &s, Building &b) {
         Consume(b, *t, r);
         b.remaining[i] = 1;
         running = true;
-        if (r.intervalTicks == 1) {
+        if (interval == 1) {
             Produce(b, *t, r);
             b.remaining[i] = 0;
             ++b.completed[i];
@@ -1112,6 +1144,7 @@ UtilityDiagnostics UtilityProductionPhase(State &s) {
             continue;
         for (std::size_t ri = 0; ri < type->recipes.size(); ++ri) {
             const auto &recipe = type->recipes[ri];
+            if (!StaffedThisTick(s, building, *type)) continue;
             if (!IsGenerator(s, recipe))
                 continue;
             ResourceId blocked{};
@@ -1151,6 +1184,7 @@ UtilityDiagnostics UtilityProductionPhase(State &s) {
             continue;
         for (std::size_t ri = 0; ri < type->recipes.size(); ++ri) {
             const auto &recipe = type->recipes[ri];
+            if (!StaffedThisTick(s, building, *type)) continue;
             if (IsGenerator(s, recipe))
                 continue;
             if (HasUtility(*s.catalog, recipe.inputs)) {
@@ -1277,12 +1311,50 @@ UtilityDiagnostics UtilityProductionPhase(State &s) {
     }
     return MakeUtilityDiagnostics(s, components, budget, requested, consumed, starved);
 }
+std::uint64_t SaturatingAdd(std::uint64_t a, std::uint64_t b) {
+    return b > UINT64_MAX - a ? UINT64_MAX : a + b;
+}
 UtilityDiagnostics AdvanceTick(State &s) {
     auto pending = std::move(s.pending);
     s.pending.clear();
     for (const auto &p : pending) {
         Apply(s, p);
         ++s.revision;
+    }
+    const auto food = s.catalog->Food();
+    if (food.resource == InvalidResourceId) {
+        for (auto &building : s.buildings) {
+            const auto *type = s.catalog->BuildingType(building.type);
+            if (type->housing) building.residents = type->housing;
+        }
+    } else if ((s.tick + 1) % food.intervalTicks == 0) {
+        std::uint64_t capacity = 0;
+        for (const auto &building : s.buildings) {
+            const auto *type = s.catalog->BuildingType(building.type);
+            if (type->housing) capacity = SaturatingAdd(capacity, type->housing);
+        }
+        std::uint64_t stocked = 0;
+        for (const auto &building : s.buildings) {
+            const auto *type = s.catalog->BuildingType(building.type);
+            const auto slot = Slot(*type, food.resource);
+            if (slot < type->storage.size()) stocked = SaturatingAdd(stocked, building.inventory[slot]);
+        }
+        const auto residents = std::min(capacity, stocked / food.amount);
+        std::uint64_t remaining = residents * food.amount;
+        for (auto &building : s.buildings) {
+            const auto *type = s.catalog->BuildingType(building.type);
+            const auto slot = Slot(*type, food.resource);
+            if (slot < type->storage.size()) {
+                const auto used = std::min(remaining, building.inventory[slot]);
+                building.inventory[slot] -= used; remaining -= used;
+            }
+        }
+        std::uint64_t toHouse = residents;
+        for (auto &building : s.buildings) {
+            const auto *type = s.catalog->BuildingType(building.type);
+            building.residents = std::min(type->housing, toHouse);
+            toHouse -= building.residents;
+        }
     }
     // Monotone IDs plus order-preserving removal keep entity vectors sorted.
     bool hasUtilityRecipes = false;
@@ -1331,6 +1403,13 @@ std::uint64_t Hash(const State &s) {
     HashU(h, s.nextOrder);
     HashU(h, s.nextVehicle);
     HashU(h, s.nextCommand);
+    const bool populationDeclared = s.catalog->Food().resource != InvalidResourceId ||
+        std::any_of(s.catalog->BuildingTypes().begin(), s.catalog->BuildingTypes().end(),
+                    [](const BuildingTypeDef &type) { return type.housing || type.workers; });
+    if (populationDeclared) {
+        HashS(h, "openrepublic.synthetic-population-workforce.v1");
+        for (const auto &building : s.buildings) HashU(h, building.residents);
+    }
     const bool tradeDeclared = std::any_of(s.catalog->Resources().begin(), s.catalog->Resources().end(),
                                            [](const ResourceDef &r) { return r.tradeDeclared; });
     if (tradeDeclared) { HashS(h, "openrepublic.synthetic-trade.treasury.v1"); HashU(h, s.treasury); }
@@ -1473,6 +1552,7 @@ const std::vector<BuildingTypeDef> &Catalog::BuildingTypes() const noexcept {
 const std::vector<VehicleTypeDef> &Catalog::VehicleTypes() const noexcept {
     return vehicleTypes_;
 }
+const FoodDef &Catalog::Food() const noexcept { return food_; }
 bool Catalog::FindResource(std::string_view n, ResourceId &i) const noexcept {
     for (const auto &x : resources_)
         if (Same(n, x.name)) {
@@ -1548,6 +1628,25 @@ bool CatalogBuilder::AddTradePrice(const TradePriceDef &price, CatalogErrorInfo 
 bool CatalogBuilder::SetTradePost(BuildingTypeId building, bool enabled, CatalogErrorInfo &e) {
     if (building >= draft_.buildingTypes_.size()) { CatError(e, CatalogError::UnknownBuildingType, "unknown building type"); return false; }
     draft_.buildingTypes_[building].tradePost = enabled; e = {}; return true;
+}
+bool CatalogBuilder::SetHousing(BuildingTypeId building, std::uint64_t capacity, CatalogErrorInfo &e) {
+    if (building >= draft_.buildingTypes_.size() || !capacity || draft_.buildingTypes_[building].housing) {
+        CatError(e, CatalogError::InvalidCapacity, "housing requires a positive unique capacity"); return false;
+    }
+    draft_.buildingTypes_[building].housing = capacity; e = {}; return true;
+}
+bool CatalogBuilder::SetWorkers(BuildingTypeId building, std::uint64_t requirement, CatalogErrorInfo &e) {
+    if (building >= draft_.buildingTypes_.size() || !requirement || draft_.buildingTypes_[building].workers) {
+        CatError(e, CatalogError::InvalidAmount, "workers requires a positive unique requirement"); return false;
+    }
+    draft_.buildingTypes_[building].workers = requirement; e = {}; return true;
+}
+bool CatalogBuilder::SetFood(ResourceId resource, std::uint64_t amount, std::uint32_t interval, CatalogErrorInfo &e) {
+    if (resource >= draft_.resources_.size() || draft_.resources_[resource].utility || !amount || !interval ||
+        draft_.food_.resource != InvalidResourceId) {
+        CatError(e, CatalogError::InvalidAmount, "food requires one non-utility resource and positive rate"); return false;
+    }
+    draft_.food_ = {resource, amount, interval}; e = {}; return true;
 }
 bool CatalogBuilder::AddBuildingType(std::string_view n, std::uint32_t w, std::uint32_t d,
                                      BuildingTypeId *out, CatalogErrorInfo &e) {
@@ -1783,6 +1882,13 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
                 if (!b.SetTradePost(current, true, ce)) { ParseErr(e, ParseErrorCode::CatalogInvalid, line, ce.message); return false; }
                 continue;
             }
+            if ((w[0] == "housing" || w[0] == "workers") && w.size() == 2) {
+                std::uint64_t value{};
+                const bool ok = Unsigned(w[1], value) &&
+                    (w[0] == "housing" ? b.SetHousing(current, value, ce) : b.SetWorkers(current, value, ce));
+                if (!ok) { ParseErr(e, ParseErrorCode::CatalogInvalid, line, ce.message); return false; }
+                continue;
+            }
             if (w[0] == "trade" && w.size() == 6 && w[2] == "buy" && w[4] == "sell") {
                 std::uint64_t buy{}, sell{};
                 if (!Unsigned(w[3], buy) || !Unsigned(w[5], sell)) { ParseErr(e, ParseErrorCode::InvalidNumber, line, "bad trade price"); return false; }
@@ -1869,6 +1975,15 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
             rn.push_back(w[1]);
             continue;
         }
+        if (w[0] == "food" && w.size() == 5 && w[3] == "every") {
+            std::uint64_t amount{}; std::uint32_t interval{}; ResourceId id = InvalidResourceId;
+            for (std::size_t k = 0; k < rn.size(); ++k) if (rn[k] == w[1]) id = static_cast<ResourceId>(k);
+            if (id == InvalidResourceId || !Unsigned(w[2], amount) || !Unsigned(w[4], interval) ||
+                !b.SetFood(id, amount, interval, ce)) {
+                ParseErr(e, ParseErrorCode::CatalogInvalid, line, "food syntax is food <resource> <amount> every <ticks>"); return false;
+            }
+            continue;
+        }
         if (w[0] == "trade" && w.size() == 6 && w[2] == "buy" && w[4] == "sell") {
             std::uint64_t buy{}, sell{}; ResourceId id = InvalidResourceId;
             for (std::size_t k = 0; k < rn.size(); ++k) if (rn[k] == w[1]) { id = static_cast<ResourceId>(k); break; }
@@ -1917,8 +2032,13 @@ std::string WriteCatalogText(const Catalog &c) {
         o += std::string(r.utility ? "utility " : "resource ") + r.name + "\n";
     for (const auto &r : c.Resources()) if (r.tradeDeclared)
         o += "trade " + r.name + " buy " + Num(r.buyPrice) + " sell " + Num(r.sellPrice) + "\n";
+    if (c.Food().resource != InvalidResourceId)
+        o += "food " + c.Resource(c.Food().resource)->name + " " + Num(c.Food().amount) +
+             " every " + Num(c.Food().intervalTicks) + "\n";
     for (const auto &b : c.BuildingTypes()) {
         o += "building " + b.name + " " + Num(b.width) + " " + Num(b.depth) + "\n";
+        if (b.housing) o += "  housing " + Num(b.housing) + "\n";
+        if (b.workers) o += "  workers " + Num(b.workers) + "\n";
         for (auto s : b.storage)
             o += "  store " + c.Resource(s.resource)->name + " " + Num(s.capacity) + "\n";
         if (b.tradePost) o += "  tradepost\n";
@@ -2264,6 +2384,15 @@ WorldSnapshot World::Snapshot() const {
     o.tick = s.tick;
     o.revision = s.revision;
     o.treasury = s.treasury;
+    for (const auto &building : s.buildings)
+        o.population = SaturatingAdd(o.population, building.residents);
+    for (const auto &building : s.buildings) {
+        const auto *type = s.catalog->BuildingType(building.type);
+        if (type->workers) {
+            o.workersRequired = SaturatingAdd(o.workersRequired, type->workers);
+            o.workersAssigned = SaturatingAdd(o.workersAssigned, AssignedWorkers(s, building.id));
+        }
+    }
     o.stateHash = Hash(s);
     o.commandHistory = CommandHistory();
     for (const auto &b : s.buildings) {
@@ -2402,14 +2531,17 @@ std::string SaveWorld(const World &w) {
         [](const Pending &p) { return p.kind == Kind::TradeExport || p.kind == Kind::TradeImport; });
     const bool version4 = !s.utilityConnections.empty() || hasPendingUtility || !s.utilityCommands.empty() ||
                           hasUtilityFailure || hasUtilityRecipes;
+    const bool populationDeclared = s.catalog->Food().resource != InvalidResourceId ||
+        std::any_of(s.catalog->BuildingTypes().begin(), s.catalog->BuildingTypes().end(),
+                    [](const BuildingTypeDef &type) { return type.housing || type.workers; });
     const bool version5 = hasTrade;
     std::string o = std::string("OPENREPUBLIC_ECONOMY_WORLD ") +
-                    (version5 ? "5\n" : (version4 ? "4\n" : (s.firstRetainedCommand == 1 ? "2\n" : "3\n")));
+                    (populationDeclared ? "6\n" : (version5 ? "5\n" : (version4 ? "4\n" : (s.firstRetainedCommand == 1 ? "2\n" : "3\n"))));
     o += "GRID " + Num(s.width) + " " + Num(s.depth) + "\nTICK " + Num(s.tick) + "\nREVISION " +
          Num(s.revision) + "\nNEXT " + Num(s.nextBuilding) + " " + Num(s.nextRoad) + " " + Num(s.nextOrder) +
          " " + Num(s.nextVehicle) + " " + Num(s.nextCommand) + "\n";
-    if (version5) o += "TREASURY " + Num(s.treasury) + "\n";
-    if (version4 || version5 || s.firstRetainedCommand > 1) {
+    if (version5 || populationDeclared) o += "TREASURY " + Num(s.treasury) + "\n";
+    if (version4 || version5 || populationDeclared || s.firstRetainedCommand > 1) {
         // v3 records only the explicit retained-history boundary. v1/v2 bytes
         // remain unchanged while the entire command history is retained.
         o += "HISTORY " + Num(s.firstRetainedCommand) + "\n";
@@ -2427,6 +2559,7 @@ std::string SaveWorld(const World &w) {
         for (auto x : b.completed)
             o += " " + Num(x);
         o += "\n";
+        if (populationDeclared) o += "POP " + Num(b.id) + " " + Num(b.residents) + "\n";
         if (o.size() > MaxWorldSaveBytes)
             return {};
     }
@@ -2437,7 +2570,7 @@ std::string SaveWorld(const World &w) {
         if (o.size() > MaxWorldSaveBytes)
             return {};
     }
-    if (version4 || version5) {
+    if (version4 || version5 || populationDeclared) {
         o += "UTILITY_CONNECTIONS " + Num(s.utilityConnections.size()) + "\n";
         for (const auto &edge : s.utilityConnections) {
             o += "U " + Num(edge.resource) + " " + Num(edge.a) + " " + Num(edge.b) + "\n";
@@ -2476,7 +2609,7 @@ std::string SaveWorld(const World &w) {
              Num(p.building) + " " + std::to_string(p.a.x) + " " + std::to_string(p.a.z) + " " +
              std::to_string(p.b.x) + " " + std::to_string(p.b.z) + " " + Num(p.road) + " " + Num(p.enabled) +
              " " + Num(p.source) + " " + Num(p.destination) + " " + Num(p.resource) + " " +
-             Num(p.vehicleType) + " " + Num(p.order) + (version5 ? " " + Num(p.amount) + " " + Num(p.rateCap) : "") + "\n";
+             Num(p.vehicleType) + " " + Num(p.order) + ((version5 || populationDeclared) ? " " + Num(p.amount) + " " + Num(p.rateCap) : "") + "\n";
         if (o.size() > MaxWorldSaveBytes)
             return {};
     }
@@ -2503,7 +2636,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     WorldSaveInput in(text);
     std::string tag, version;
     if (!(in >> tag >> version) || tag != "OPENREPUBLIC_ECONOMY_WORLD" ||
-        (version != "1" && version != "2" && version != "3" && version != "4" && version != "5")) {
+        (version != "1" && version != "2" && version != "3" && version != "4" && version != "5" && version != "6")) {
         ParseErr(e, ParseErrorCode::InvalidHeader, 1, "invalid world header");
         return false;
     }
@@ -2531,10 +2664,10 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     s.nextOrder = no;
     s.nextVehicle = nv;
     s.nextCommand = nc;
-    if (version == "5" && (!(in >> tag >> s.treasury) || tag != "TREASURY")) {
+    if ((version == "5" || version == "6") && (!(in >> tag >> s.treasury) || tag != "TREASURY")) {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid treasury field"); return false;
     }
-    if (version == "3" || version == "4" || version == "5") {
+    if (version == "3" || version == "4" || version == "5" || version == "6") {
         if (!(in >> tag >> s.firstRetainedCommand) || tag != "HISTORY" ||
             !s.firstRetainedCommand || s.firstRetainedCommand > nc) {
             ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid command history boundary");
@@ -2590,13 +2723,17 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid completion");
                 return false;
             }
+        if (version == "6" && (!(in >> tag >> recordId >> b.residents) || tag != "POP" || recordId != b.id ||
+                                b.residents > t->housing)) {
+            ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid resident state"); return false;
+        }
         for (std::size_t i = 0; i < b.inventory.size(); ++i)
             if (b.inventory[i] > t->storage[i].capacity) {
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "inventory exceeds definition");
                 return false;
             }
         for (std::size_t i = 0; i < b.remaining.size(); ++i)
-            if (b.remaining[i] > t->recipes[i].intervalTicks ||
+            if ((version != "6" && b.remaining[i] > t->recipes[i].intervalTicks) ||
                 ((HasUtility(c, t->recipes[i].inputs) || HasUtility(c, t->recipes[i].outputs)) &&
                  b.remaining[i] != 0)) {
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "progress exceeds definition");
@@ -2634,7 +2771,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         }
         s.roads.push_back(r);
     }
-    if (version == "4" || version == "5") {
+    if (version == "4" || version == "5" || version == "6") {
         if (!(in >> tag >> count) || tag != "UTILITY_CONNECTIONS" || count > text.size()) {
             ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid utility connection count");
             return false;
@@ -2746,8 +2883,8 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         std::uint32_t kind{};
         if (!(in >> tag >> p.id >> kind >> p.type >> p.building >> p.a.x >> p.a.z >> p.b.x >> p.b.z >>
               p.road >> p.enabled >> p.source >> p.destination >> p.resource >> p.vehicleType >> p.order) ||
-            (version == "5" && !(in >> p.amount >> p.rateCap)) ||
-            tag != "Q" || kind < 1 || kind > (version == "1" ? 7u : (version == "4" ? 10u : (version == "5" ? 12u : 8u))) ||
+            ((version == "5" || version == "6") && !(in >> p.amount >> p.rateCap)) ||
+            tag != "Q" || kind < 1 || kind > (version == "1" ? 7u : (version == "4" ? 10u : ((version == "5" || version == "6") ? 12u : 8u))) ||
             !p.id || p.id >= nc ||
             (!s.pending.empty() && p.id <= s.pending.back().id)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending command");
@@ -2756,14 +2893,14 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         p.kind = static_cast<Kind>(kind);
         if (p.kind == Kind::TradeExport || p.kind == Kind::TradeImport) {
             const auto *tradeResource = c.Resource(p.resource);
-            if (version != "5" || !p.building || !p.amount || !p.rateCap || p.type || p.a != Cell{} ||
+            if ((version != "5" && version != "6") || !p.building || !p.amount || !p.rateCap || p.type || p.a != Cell{} ||
                 p.b != Cell{} || p.road || p.enabled || p.source || p.destination || p.vehicleType || p.order ||
                 !tradeResource || !tradeResource->tradeDeclared || tradeResource->utility) {
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending trade command"); return false;
             }
         }
         if (p.kind == Kind::ConnectUtility || p.kind == Kind::DisconnectUtility) {
-            if ((version != "4" && version != "5") || p.source > p.destination || p.type || p.building || p.a != Cell{} ||
+            if ((version != "4" && version != "5" && version != "6") || p.source > p.destination || p.type || p.building || p.a != Cell{} ||
                 p.b != Cell{} || p.road || p.enabled || p.vehicleType || p.order) {
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending utility command");
                 return false;
@@ -2784,7 +2921,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         std::uint32_t st{}, fail{};
         if (!(in >> tag >> r.commandId >> st >> fail >> r.building >> r.road >> r.order) || tag != "C" ||
             st < 1 || st > 3 || fail > static_cast<std::uint32_t>(version == "1" ? CommandFailure::ParseInvalid
-                                                              : (version == "5" ? CommandFailure::TradeRateExceeded
+                                                              : ((version == "5" || version == "6") ? CommandFailure::TradeRateExceeded
                                                                  : (version == "4" ? CommandFailure::ReferencedByUtilityConnection
                                                                                     : CommandFailure::CargoInTransit)))) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid command result");
@@ -2796,7 +2933,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         if (r.commandId != expectedResultId || r.commandId >= nc || r.building >= nb ||
             r.road >= nr || r.order >= no ||
             (r.state == CommandState::Accepted ?
-                 (fail != 0 || ((version == "4" || version == "5") && recordedUtilityCommands.count(r.commandId)
+                 (fail != 0 || ((version == "4" || version == "5" || version == "6") && recordedUtilityCommands.count(r.commandId)
                                     ? outputIds != 0
                                     : outputIds != 1))
                                                : (outputIds != 0 ||
@@ -2872,7 +3009,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     }
     for (auto &b : s.buildings) {
         RefreshStall(s, b);
-        if (version == "4" || version == "5")
+        if (version == "4" || version == "5" || version == "6")
             b.stall = utilityStalls.at(b.id);
     }
     target.impl_->state = std::move(s);

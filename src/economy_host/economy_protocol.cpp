@@ -781,7 +781,13 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                               {"building", item.building}, {"held", std::to_string(item.held)},
                               {"needed", std::to_string(item.needed)}});
     out = Json{{"errorCode", "none"}, {"tick", std::to_string(summary.tick)},
-               {"population", nullptr}, {"workers", nullptr}, {"stock", stock},
+               {"population", summary.populationEnabled
+                    ? Json(std::to_string(summary.population)) : Json(nullptr)},
+               {"workers", summary.workforceEnabled
+                    ? Json(std::to_string(summary.workersAssigned)) : Json(nullptr)},
+               {"workersRequired", summary.workforceEnabled
+                    ? Json(std::to_string(summary.workersRequired)) : Json(nullptr)},
+               {"stock", stock},
                {"unservedInputs", unserved}, {"vehicles", summary.vehicles},
                {"text", summary.text}};
   } else if (method == "utility_diagnostics") {

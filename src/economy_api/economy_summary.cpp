@@ -18,6 +18,15 @@ EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
     const economy::WorldSnapshot& snapshot) {
     EconomySummary result;
     result.tick = snapshot.tick;
+    result.population = snapshot.population;
+    result.workersAssigned = snapshot.workersAssigned;
+    result.workersRequired = snapshot.workersRequired;
+    result.populationEnabled = catalog.Food().resource != economy::InvalidResourceId;
+    for (const auto& type : catalog.BuildingTypes()) {
+        result.populationEnabled = result.populationEnabled || type.housing != 0;
+        result.populationEnabled = result.populationEnabled || type.workers != 0;
+        result.workforceEnabled = result.workforceEnabled || type.workers != 0;
+    }
     result.vehicles = snapshot.vehicles.size();
     std::map<economy::ResourceId, std::uint64_t> totals;
     for (const auto& building : snapshot.buildings)
@@ -67,9 +76,17 @@ EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
 
     std::ostringstream text;
     text << "Tick: " << result.tick << '\n'
-         << "Population: unavailable\n"
-         << "Workers: unavailable\n"
-         << "Stock:";
+         << "Population: ";
+    if (result.populationEnabled)
+        text << result.population;
+    else
+        text << "unavailable";
+    text << '\n' << "Workers: ";
+    if (result.workforceEnabled)
+        text << result.workersAssigned << "/" << result.workersRequired;
+    else
+        text << "unavailable";
+    text << '\n' << "Stock:";
     for (const auto& item : result.stock)
         text << '\n' << "  " << item.resource << ": " << item.amount;
     text << '\n' << "Unserved inputs (top 5):";

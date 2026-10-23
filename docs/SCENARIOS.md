@@ -20,6 +20,7 @@ contain game data.
 | `powered_chain_road_and_link_gap` | Generator, powered mine, and smelter on separate road fragments; only generator and mine are power-linked | The chain needs both a road connection and a power link to the smelter. |
 | `import_missing_input` | Grain export post and coal-import mill | Exports earn treasury funds, then imports coal for a stalled input recipe. |
 | `export_surplus_for_power` | Grain export post and coal-fueled generator | Grain surplus funds coal imports; final-tick power flow is scored. |
+| `understaffed_mine` | Five-capacity housing and a ten-worker mine | OpenRepublic-authored synthetic population supplies half the mine's staffing requirement. |
 
 The building coordinates are origins on the host grid. Each building's access
 cell is one cell north (`x`, `z - 1`); the fixtures place that cell on a road.
@@ -36,7 +37,7 @@ A scenario is one JSON object with these required fields:
 - `name` and `description`: human-readable fixture metadata.
 - `roads`: array of `{ "a": {"x": int, "z": int}, "b": {"x": int, "z": int} }` unit road segments.
 - `buildings`: array of `{ "type": string, "x": int, "z": int }`; built-in fixtures use `farm`, `mill`, `bakery`, or `market`.
-- Optional `catalog`: bounded synthetic catalog DSL text. Utility fixtures use this to define their own power generator and consumer recipes; it contains no game-derived data.
+- Optional `catalog`: bounded synthetic catalog DSL text. Utility fixtures use this to define their own power generator and consumer recipes; it contains no game-derived data. Population fixtures may declare `housing`, `workers`, and optional `food` rules as documented in [POPULATION.md](POPULATION.md).
 - Optional `utilityConnections`: array of `{ "resource": "power", "aBuilding": int, "bBuilding": int }`, where endpoints are zero-based indexes into the initial `buildings` array.
 - Trade catalogs may declare per-resource prices and trade-post storage. Trade commands run through the baseline controller; treasury appears in utility score breakdowns only when a catalog declares trade prices.
 - `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, or `{ "metric": "utility_multi_objective" }` for utility fixtures.

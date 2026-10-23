@@ -49,6 +49,11 @@ target_link_libraries(OpenRepublicEconomyTradeTests PRIVATE OpenRepublicEconomy)
 target_compile_features(OpenRepublicEconomyTradeTests PRIVATE cxx_std_17)
 add_test(NAME EconomyTrade COMMAND OpenRepublicEconomyTradeTests)
 
+add_executable(OpenRepublicEconomyPopulationTests population_tests.cpp)
+target_link_libraries(OpenRepublicEconomyPopulationTests PRIVATE OpenRepublicEconomy)
+target_compile_features(OpenRepublicEconomyPopulationTests PRIVATE cxx_std_17)
+add_test(NAME EconomyPopulation COMMAND OpenRepublicEconomyPopulationTests)
+
 
 add_executable(OpenRepublicEconomyBench economy_bench.cpp)
 target_link_libraries(OpenRepublicEconomyBench PRIVATE OpenRepublicEconomy OpenRepublicEconomyApi)

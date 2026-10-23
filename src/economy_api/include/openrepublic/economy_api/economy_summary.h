@@ -20,6 +20,11 @@ struct SummaryUnservedInput {
 };
 struct EconomySummary {
     std::uint64_t tick{};
+    std::uint64_t population{};
+    std::uint64_t workersAssigned{};
+    std::uint64_t workersRequired{};
+    bool populationEnabled{};
+    bool workforceEnabled{};
     std::vector<SummaryStock> stock;
     std::vector<SummaryUnservedInput> unservedInputs;
     std::size_t vehicles{};
@@ -27,7 +32,7 @@ struct EconomySummary {
 };
 
 /** Builds a deterministic presentation summary from one snapshot and its catalog.
- * Population and workers are unavailable in the current economy data model. */
+ * Population and workforce values are active only for catalogs that declare them. */
 EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
     const economy::WorldSnapshot& snapshot);
 

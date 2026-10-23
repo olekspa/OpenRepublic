@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "understaffed_mine",
+  "name": "Understaffed synthetic mine",
+  "description": "OpenRepublic-authored synthetic housing and mine declarations provide five residents for ten required workers, so the mine runs at half of its declared recipe rate.",
+  "catalog": "openrepublic-economy 1\nresource ore\nutility power\nbuilding housing 1 1\n  housing 5\nend\nbuilding mine 1 1\n  workers 10\n  store ore 100\n  recipe extract every 1 out ore:10\nend\n",
+  "roads": [],
+  "buildings": [
+    { "type": "housing", "x": 1, "z": 1 },
+    { "type": "mine", "x": 4, "z": 1 }
+  ],
+  "score": { "metric": "stored_non_raw_units" }
+}

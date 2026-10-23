@@ -55,6 +55,11 @@ int main() {
   ok &= Check(farmType["storage"][0]["capacity"].is_string() &&
                   farmType["recipes"][0]["outputs"][0]["amount"].is_string(),
               "catalog uint64 quantities use decimal strings");
+  const auto legacySummary = Response(observer, Request("legacy-summary", "summary"));
+  ok &= Check(legacySummary["ok"] && legacySummary["result"]["population"].is_null() &&
+                  legacySummary["result"]["workers"].is_null() &&
+                  legacySummary["result"]["workersRequired"].is_null(),
+              "catalogs without population declarations preserve unavailable summary fields");
 
   economy_host::Dispatcher controller(economy_host::Role::Controller, catalog);
   const auto controllerHello = Response(controller, Request("controller-hello", "hello"));
@@ -174,5 +179,32 @@ int main() {
   ok &= Check(appShutdown["ok"] && appShutdown["result"]["errorCode"] == "permission_denied" &&
                   !appController.ShutdownRequested(),
               "embedded controller cannot shut down the desktop app");
+
+  economy::CatalogBuilder populationBuilder;
+  economy::Catalog populationCatalog;
+  economy::CatalogErrorInfo populationError;
+  economy::BuildingTypeId housing{}, mine{};
+  const bool populationCatalogBuilt =
+      populationBuilder.AddBuildingType("housing", 1, 1, &housing, populationError) &&
+      populationBuilder.SetHousing(housing, 20, populationError) &&
+      populationBuilder.AddBuildingType("mine", 1, 1, &mine, populationError) &&
+      populationBuilder.SetWorkers(mine, 10, populationError) &&
+      populationBuilder.Build(populationCatalog, populationError);
+  ok &= Check(populationCatalogBuilt, "build opt-in population host catalog");
+  if (populationCatalogBuilt) {
+    economy::World populationWorld(populationCatalog, 8, 8);
+    populationWorld.PlaceBuilding(housing, {1, 1});
+    populationWorld.PlaceBuilding(mine, {4, 1});
+    const auto populationStep = populationWorld.Step();
+    ok &= Check(populationStep.accepted, "advance opt-in population host world");
+    economy_api::EconomyApi populationApi(populationWorld);
+    economy_host::Dispatcher populationHost(economy_host::Role::Observer, populationApi);
+    const auto populationSummary = Response(populationHost, Request("population-summary", "summary"));
+    ok &= Check(populationSummary["ok"] &&
+                    populationSummary["result"]["population"] == "20" &&
+                    populationSummary["result"]["workers"] == "10" &&
+                    populationSummary["result"]["workersRequired"] == "10",
+                "protocol v0 summary exposes population and worker totals as decimal strings");
+  }
   return ok ? 0 : 1;
 }
