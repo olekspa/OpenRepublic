@@ -40,3 +40,4 @@
 
 # Wicked Engine runtime-compiled shader cache
 /shaders/hlsl6/
+__pycache__/
