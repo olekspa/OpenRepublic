@@ -361,6 +361,17 @@ struct WorldSnapshot {
     std::vector<UtilityConnectionSnapshot> utilityConnections;
 };
 
+enum class SnapshotCollection : std::uint8_t { Buildings, Roads, Vehicles, Orders, UtilityConnections };
+struct WorldSnapshotPage {
+    std::uint64_t revision{};
+    std::size_t total{}, offset{}, count{};
+    std::vector<BuildingSnapshot> buildings;
+    std::vector<RoadSnapshot> roads;
+    std::vector<VehicleSnapshot> vehicles;
+    std::vector<HaulOrderSnapshot> orders;
+    std::vector<UtilityConnectionSnapshot> utilityConnections;
+};
+
 // Tick-boundary transitions required by the economy API event journal.
 struct TickEventSnapshot {
     struct Building { BuildingId id{}; StallRecord stall; };
@@ -426,6 +437,9 @@ public:
     StepResult Step(std::uint32_t ticks = 1);
     /** Returns ID-ordered values and an FNV-1a hash of canonical little-endian state fields. */
     WorldSnapshot Snapshot() const;
+    /** Copies one ID-ordered entity slice without hashing or materializing other collections. */
+    WorldSnapshotPage SnapshotPage(SnapshotCollection collection, std::size_t offset,
+                                   std::size_t limit) const;
     TickEventSnapshot CaptureTickEvents() const;
     /** Returns the current disabled, missing-input, output-full, or running explanation. */
     StallRecord Explain(BuildingId building) const;

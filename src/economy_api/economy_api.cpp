@@ -206,55 +206,59 @@ PageQuery EconomyApi::QueryWorld(std::uint64_t revision, const std::string& kind
     if (limit == 0 || limit > MaxEntityPageSize) {
         return {ErrorCode::InvalidPageLimit, {}};
     }
-    const auto s = world_->Snapshot();
-    if (s.revision != revision) {
+    if (world_->Revision() != revision)
         return {ErrorCode::StaleRevision, {}};
-    }
-    auto all = MakeWorld(*catalog_, s);
+    economy::SnapshotCollection collection;
+    if (kind == "buildings") collection = economy::SnapshotCollection::Buildings;
+    else if (kind == "roads") collection = economy::SnapshotCollection::Roads;
+    else if (kind == "vehicles") collection = economy::SnapshotCollection::Vehicles;
+    else if (kind == "orders") collection = economy::SnapshotCollection::Orders;
+    else if (kind == "utility_connections")
+        collection = economy::SnapshotCollection::UtilityConnections;
+    else
+        return {ErrorCode::InvalidArgument, {}};
+    const auto snapshot = world_->SnapshotPage(collection, offset, limit);
+    if (snapshot.revision != revision)
+        return {ErrorCode::StaleRevision, {}};
     EntityPage p;
-    p.revision = s.revision;
+    p.revision = snapshot.revision;
     p.offset = offset;
     p.kind = kind;
-    if (kind == "buildings") {
-        p.total = all.buildings.size();
-        if (offset > p.total) {
-            return {ErrorCode::InvalidArgument, {}};
-        }
-        const auto end = offset + std::min(limit, p.total - offset);
-        p.buildings.assign(all.buildings.begin() + offset, all.buildings.begin() + end);
-    } else if (kind == "roads") {
-        p.total = all.roads.size();
-        if (offset > p.total) {
-            return {ErrorCode::InvalidArgument, {}};
-        }
-        const auto end = offset + std::min(limit, p.total - offset);
-        p.roads.assign(all.roads.begin() + offset, all.roads.begin() + end);
-    } else if (kind == "vehicles") {
-        p.total = all.vehicles.size();
-        if (offset > p.total) {
-            return {ErrorCode::InvalidArgument, {}};
-        }
-        const auto end = offset + std::min(limit, p.total - offset);
-        p.vehicles.assign(all.vehicles.begin() + offset, all.vehicles.begin() + end);
-    } else if (kind == "orders") {
-        p.total = all.orders.size();
-        if (offset > p.total) {
-            return {ErrorCode::InvalidArgument, {}};
-        }
-        const auto end = offset + std::min(limit, p.total - offset);
-        p.orders.assign(all.orders.begin() + offset, all.orders.begin() + end);
-    } else if (kind == "utility_connections") {
-        p.total = all.utilityConnections.size();
-        if (offset > p.total) {
-            return {ErrorCode::InvalidArgument, {}};
-        }
-        const auto end = offset + std::min(limit, p.total - offset);
-        p.utilityConnections.assign(all.utilityConnections.begin() + offset,
-            all.utilityConnections.begin() + end);
-    } else {
+    p.total = snapshot.total;
+    if (offset > p.total)
         return {ErrorCode::InvalidArgument, {}};
+    if (kind == "buildings") {
+        p.buildings.reserve(snapshot.buildings.size());
+        for (const auto& value : snapshot.buildings)
+            p.buildings.push_back(MakeBuilding(*catalog_, value));
+    } else if (kind == "roads") {
+        p.roads.reserve(snapshot.roads.size());
+        for (const auto& road : snapshot.roads)
+            p.roads.push_back({road.id, road.a, road.b, road.enabled});
+    } else if (kind == "vehicles") {
+        p.vehicles.reserve(snapshot.vehicles.size());
+        for (const auto& vehicle : snapshot.vehicles) {
+            const auto* type = catalog_->VehicleType(vehicle.type);
+            p.vehicles.push_back({vehicle.id, vehicle.order, type ? type->name : "", vehicle.cell,
+                                  vehicle.cargo, vehicle.state});
+        }
+    } else if (kind == "orders") {
+        p.orders.reserve(snapshot.orders.size());
+        for (const auto& order : snapshot.orders) {
+            const auto* resource = catalog_->Resource(order.resource);
+            const auto* vehicleType = catalog_->VehicleType(order.vehicleType);
+            p.orders.push_back({order.id, order.source, order.destination,
+                resource ? resource->name : "", vehicleType ? vehicleType->name : "", order.vehicle,
+                order.state, order.failure, order.cargo, order.vehicleCell});
+        }
+    } else {
+        p.utilityConnections.reserve(snapshot.utilityConnections.size());
+        for (const auto& edge : snapshot.utilityConnections) {
+            const auto* resource = catalog_->Resource(edge.resource);
+            p.utilityConnections.push_back({resource ? resource->name : "", edge.a, edge.b});
+        }
     }
-    p.nextOffset = offset + std::min(limit, p.total - offset);
+    p.nextOffset = offset + snapshot.count;
     p.hasMore = p.nextOffset < p.total;
     return {ErrorCode::None, std::move(p)};
 }
