@@ -25,6 +25,18 @@ class ScriptedBackend:
         return result if isinstance(result, dict) else json.loads(result)
 
 
+def _find_codex():
+    """PATH first, then OPENREPUBLIC_CODEX, then the Windows desktop-app install location."""
+    import glob
+    import os
+    import shutil
+    found = shutil.which("codex") or os.environ.get("OPENREPUBLIC_CODEX")
+    if found:
+        return found
+    candidates = sorted(glob.glob(os.path.join(os.environ.get("LOCALAPPDATA", ""), "OpenAI", "Codex", "bin", "*", "codex.exe")))
+    return candidates[-1] if candidates else "codex"
+
+
 class CodexBackend:
     def __init__(self, model="gpt-5.6-luna"):
         self.model = model
@@ -32,7 +44,7 @@ class CodexBackend:
     def complete(self, prompt, timeout=120):
         # Codex CLI is deliberately run outside the repository with read-only sandboxing.
         with tempfile.TemporaryDirectory(prefix="openrepublic-codex-") as scratch:
-            cmd = ["codex", "exec", "-s", "read-only", "-m", self.model,
+            cmd = [_find_codex(), "exec", "-s", "read-only", "-m", self.model,
                    "--skip-git-repo-check", "--ephemeral", "-"]
             try:
                 result = subprocess.run(cmd, input=prompt, text=True, capture_output=True,
