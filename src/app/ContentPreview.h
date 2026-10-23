@@ -195,7 +195,8 @@ namespace openrepublic::preview
 		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
 		std::vector<RegionInstance>* outInstances = nullptr, ShowcaseEnvironmentInfo* environmentInfo = nullptr,
 		BuildingLodController* lodController = nullptr, bool dynamicLod = false,
-		float lodNearDistance = 250.0f, float lodFarDistance = 700.0f);
+		float lodNearDistance = 250.0f, float lodFarDistance = 700.0f,
+		bool vegetationWind = true, bool grassLayer = true);
 
 	bool CreateMapTerrainAroundPlacement(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request, const NmfPreviewFrame& frame,

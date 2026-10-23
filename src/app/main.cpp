@@ -37,7 +37,7 @@ namespace
 			L"--scene-probe", L"--glb-probe", L"--nmf-probe", L"--content-root", L"--economy-url",
 			L"--map-package", L"--map-building", L"--map-region", L"--synthetic-region-fixture",
 			L"--map-radius", L"--map-lod", L"--map-lod-distances", L"--showcase-capture", L"--showcase-look",
-			L"--showcase-camera", L"--scene-pipe-name", L"--showcase-sun", L"--building-type",
+			L"--showcase-camera", L"--showcase-wind", L"--showcase-grass", L"--scene-pipe-name", L"--showcase-sun", L"--building-type",
 			L"--building-lod", L"--nmf-texture-root", L"--nmf-unlit-preview",
 			L"--nmf-material-unlit-preview", L"--capture-preview", L"--capture-preview-zoom",
 			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform", L"--storage-profile", L"--utility-resource" };
@@ -247,6 +247,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	float mapShowcaseCameraElevationDegrees = 24.5f;
 	float mapShowcaseCameraDistanceScale = 1.5f;
 	bool mapShowcaseCameraArgumentSeen = false;
+	bool showcaseVegetationWind = true;
+	bool showcaseGrassLayer = true;
 	float mapShowcaseSunElevationDegrees = std::numeric_limits<float>::quiet_NaN();
 	std::wstring scenePipeName;
 	std::filesystem::path sceneScriptPath;
@@ -594,6 +596,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				mapShowcaseCameraYawDegrees = static_cast<float>(camera[0]);
 				mapShowcaseCameraElevationDegrees = static_cast<float>(camera[1]);
 				mapShowcaseCameraDistanceScale = static_cast<float>(camera[2]);
+			}
+			else if (std::wstring_view(arguments[i]) == L"--showcase-wind" || std::wstring_view(arguments[i]) == L"--showcase-grass")
+			{
+				const bool isWind = std::wstring_view(arguments[i]) == L"--showcase-wind";
+				if (i + 1 >= argumentCount || (std::wstring_view(arguments[i + 1]) != L"on" && std::wstring_view(arguments[i + 1]) != L"off"))
+				{
+					nmfCaptureArgumentError = isWind ? "--showcase-wind requires on or off" : "--showcase-grass requires on or off";
+					continue;
+				}
+				const bool enabled = std::wstring_view(arguments[++i]) == L"on";
+				if (isWind) showcaseVegetationWind = enabled;
+				else showcaseGrassLayer = enabled;
 			}
 			else if (std::wstring_view(arguments[i]) == L"--scene-pipe-name" && i + 1 < argumentCount)
 			{
@@ -1280,7 +1294,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	application.SetScenePipeName(scenePipeName);
 	application.SetSceneScriptPath(sceneScriptPath);
 	application.SetMapShowcaseCapture(std::move(mapShowcaseCapturePath), mapShowcaseEnhancedLook,
-		mapShowcaseCameraYawDegrees, mapShowcaseCameraElevationDegrees, mapShowcaseCameraDistanceScale);
+		mapShowcaseCameraYawDegrees, mapShowcaseCameraElevationDegrees, mapShowcaseCameraDistanceScale,
+		showcaseVegetationWind, showcaseGrassLayer);
 	application.SetTerrainProbePath(std::move(terrainProbePath));
 	application.SetTerrainProbeTransform(std::move(terrainProbeTransform), std::move(terrainProbeTransformError));
 

@@ -57,7 +57,8 @@ namespace openrepublic
 		void SetScenePipeName(std::wstring name);
 		void SetSceneScriptPath(std::filesystem::path path);
 		void SetMapShowcaseCapture(std::filesystem::path outputPath, bool enhancedLook,
-			float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale);
+			float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale,
+			bool vegetationWind = true, bool grassLayer = true);
 		void SetNmfUnlitPreview(bool enabled);
 		void SetNmfMaterialUnlitPreview(bool enabled);
 		void SetNmfCapturePaths(std::vector<std::filesystem::path> paths);
@@ -186,6 +187,8 @@ namespace openrepublic
 		BuildingLodController buildingLodController;
 		bool mapShowcaseCaptureMode = false;
 		bool mapShowcaseEnhancedLook = false;
+		bool showcaseVegetationWind = true;
+		bool showcaseGrassLayer = true;
 		std::filesystem::path mapShowcaseCapturePath;
 		float mapShowcaseCameraYawDegrees = 45.0f;
 		float mapShowcaseCameraElevationDegrees = 24.5f;

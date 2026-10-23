@@ -352,7 +352,7 @@ namespace openrepublic::preview
 		}
 
 		wi::ecs::Entity CreatePartEntity(wi::scene::Scene& scene, const char* name, PartMesh& part,
-			float roughness)
+			float roughness, bool vegetationWind)
 		{
 			const wi::ecs::Entity entity = scene.Entity_CreateMeshFromData(name, part.indices.size(),
 				part.indices.data(), part.positions.size(), part.positions.data());
@@ -363,11 +363,30 @@ namespace openrepublic::preview
 				return wi::ecs::INVALID_ENTITY;
 			}
 			mesh->vertex_colors = part.colors;
+			if (vegetationWind && !part.positions.empty())
+			{
+				float minY = part.positions.front().y;
+				float maxY = minY;
+				for (const XMFLOAT3& position : part.positions)
+				{
+					minY = std::min(minY, position.y);
+					maxY = std::max(maxY, position.y);
+				}
+				const float height = std::max(0.01f, maxY - minY);
+				mesh->vertex_windweights.reserve(part.positions.size());
+				for (const XMFLOAT3& position : part.positions)
+				{
+					const float aboveBase = std::clamp((position.y - minY) / height, 0.0f, 1.0f);
+					const float flexible = SmoothStep(0.18f, 0.92f, aboveBase);
+					mesh->vertex_windweights.push_back(static_cast<std::uint8_t>(std::lround(flexible * 255.0f)));
+				}
+			}
 			mesh->CreateRenderData();
 			material->SetUseVertexColors(true);
 			material->SetBaseColor(XMFLOAT4(1, 1, 1, 1));
 			material->SetRoughness(roughness);
 			material->SetReflectance(0.02f);
+			material->SetUseWind(!mesh->vertex_windweights.empty());
 			material->CreateRenderData(true);
 			if (wi::scene::ObjectComponent* own = scene.objects.GetComponent(entity))
 			{
@@ -575,6 +594,42 @@ namespace openrepublic::preview
 		return resource;
 	}
 
+	const wi::Resource& ShowcaseGrassBladeTexture()
+	{
+		static wi::Resource resource = []()
+		{
+			constexpr std::uint32_t size = 64;
+			std::vector<std::uint8_t> pixels(static_cast<std::size_t>(size) * size * 4, 0);
+			for (std::uint32_t y = 0; y < size; ++y)
+			{
+				const float v = static_cast<float>(y) / (size - 1);
+				for (std::uint32_t x = 0; x < size; ++x)
+				{
+					const float u = static_cast<float>(x) / (size - 1);
+					float coverage = 0.0f;
+					float shade = 0.0f;
+					for (int blade = 0; blade < 5; ++blade)
+					{
+						const float root = 0.12f + blade * 0.19f;
+						const float tip = root + (blade - 2) * 0.11f;
+						const float center = root + (tip - root) * v;
+						const float width = (0.03f + 0.05f * v) * (1.0f - 0.24f * std::fabs(blade - 2));
+						const float edge = std::fabs(u - center);
+						const float mask = 1.0f - SmoothStep(width * 0.72f, width, edge);
+						if (mask > coverage) { coverage = mask; shade = 0.42f + 0.10f * blade + 0.12f * v; }
+					}
+					const std::size_t i = (static_cast<std::size_t>(y) * size + x) * 4;
+					pixels[i + 0] = static_cast<std::uint8_t>(std::clamp(shade * 0.85f, 0.0f, 1.0f) * 255.0f);
+					pixels[i + 1] = static_cast<std::uint8_t>(std::clamp(shade, 0.0f, 1.0f) * 255.0f);
+					pixels[i + 2] = static_cast<std::uint8_t>(std::clamp(shade * 0.55f, 0.0f, 1.0f) * 255.0f);
+					pixels[i + 3] = static_cast<std::uint8_t>(coverage * 255.0f);
+				}
+			}
+			return MakeTexture(size, size, std::move(pixels));
+		}();
+		return resource;
+	}
+
 	const wi::Resource& ShowcaseAsphaltTexture()
 	{
 		// 5 m wide road: u across, v along (one repeat = 16 m). Edge lines and a dashed centre line.
@@ -669,7 +724,7 @@ namespace openrepublic::preview
 
 	bool BuildShowcaseWorld(wi::scene::Scene& scene, const MapPlacementRequest& request,
 		const ShowcaseTerrainData& terrain, double regionRadius, const std::vector<RegionInstance>& instances,
-		const RealTreeSet* realTrees, ShowcaseEnvironmentInfo& info, std::string& error)
+		const RealTreeSet* realTrees, ShowcaseEnvironmentInfo& info, std::string& error, bool vegetationWind)
 	{
 		ShowcaseStageTimer totalTimer("BuildShowcaseWorld total");
 		const TerrainTransform transform = MakeMapTerrainTransform(request.metadata);
@@ -824,17 +879,17 @@ namespace openrepublic::preview
 		PartMesh spruceLow = MakeConifer(2, 6, 17.0f, 3.0f, XMFLOAT3(0.035f, 0.10f, 0.045f), XMFLOAT3(0.10f, 0.22f, 0.09f), 13);
 		PartMesh broadLow = MakeBroadleaf(4.0f, 5.2f, 2, 4, 7, XMFLOAT3(0.045f, 0.11f, 0.03f), XMFLOAT3(0.14f, 0.26f, 0.07f), 15);
 
-		Species spruce{ CreatePartEntity(scene, "showcase spruce", spruceHigh, 0.92f), 0.8f, 1.45f };
-		Species pine{ CreatePartEntity(scene, "showcase pine", pineHigh, 0.92f), 0.8f, 1.3f };
-		Species oak{ CreatePartEntity(scene, "showcase oak", oakHigh, 0.9f), 0.8f, 1.3f };
-		Species birch{ CreatePartEntity(scene, "showcase birch", birchHigh, 0.9f), 0.85f, 1.3f };
-		Species poplar{ CreatePartEntity(scene, "showcase poplar", poplarHigh, 0.9f), 0.85f, 1.25f };
-		Species spruceFar{ CreatePartEntity(scene, "showcase spruce far", spruceLow, 0.95f), 0.9f, 1.6f };
+		Species spruce{ CreatePartEntity(scene, "showcase spruce", spruceHigh, 0.92f, vegetationWind), 0.8f, 1.45f };
+		Species pine{ CreatePartEntity(scene, "showcase pine", pineHigh, 0.92f, vegetationWind), 0.8f, 1.3f };
+		Species oak{ CreatePartEntity(scene, "showcase oak", oakHigh, 0.9f, vegetationWind), 0.8f, 1.3f };
+		Species birch{ CreatePartEntity(scene, "showcase birch", birchHigh, 0.9f, vegetationWind), 0.85f, 1.3f };
+		Species poplar{ CreatePartEntity(scene, "showcase poplar", poplarHigh, 0.9f, vegetationWind), 0.85f, 1.25f };
+		Species spruceFar{ CreatePartEntity(scene, "showcase spruce far", spruceLow, 0.95f, vegetationWind), 0.9f, 1.6f };
 		PartMesh shrubHigh;
 		AddBlob(shrubHigh, XMFLOAT3(0, 0.55f, 0), XMFLOAT3(1.0f, 0.7f, 1.0f), 4, 7, XMFLOAT3(0.05f, 0.10f, 0.03f), XMFLOAT3(0.18f, 0.28f, 0.07f), 31);
 		AddBlob(shrubHigh, XMFLOAT3(0.7f, 0.45f, 0.3f), XMFLOAT3(0.7f, 0.5f, 0.7f), 4, 7, XMFLOAT3(0.06f, 0.11f, 0.03f), XMFLOAT3(0.22f, 0.30f, 0.08f), 33);
-		Species shrub{ CreatePartEntity(scene, "showcase shrub", shrubHigh, 0.95f), 0.7f, 1.6f };
-		Species broadFar{ CreatePartEntity(scene, "showcase broadleaf far", broadLow, 0.95f), 0.9f, 1.4f };
+		Species shrub{ CreatePartEntity(scene, "showcase shrub", shrubHigh, 0.95f, vegetationWind), 0.7f, 1.6f };
+		Species broadFar{ CreatePartEntity(scene, "showcase broadleaf far", broadLow, 0.95f, vegetationWind), 0.9f, 1.4f };
 
 		struct RealPick
 		{

@@ -1353,7 +1353,8 @@ namespace openrepublic::preview
 		const std::filesystem::path& contentRoot, double radiusMeters, int modelLevel, bool enhancedLook,
 		XMFLOAT3& cameraTarget, float& cameraDistance, std::string& description, std::string& error,
 		std::vector<RegionInstance>* outInstances, ShowcaseEnvironmentInfo* environmentInfo,
-		BuildingLodController* lodController, bool dynamicLod, float lodNearDistance, float lodFarDistance)
+		BuildingLodController* lodController, bool dynamicLod, float lodNearDistance, float lodFarDistance,
+		bool vegetationWind, bool grassLayer)
 	{
 		ShowcasePreviewTimer totalTimer("CreateMapRegionPreview total");
 		using namespace openrepublic::content;
@@ -1504,6 +1505,41 @@ namespace openrepublic::preview
 		terrainMaterial->SetRoughness(enhancedLook ? 0.92f : 1.0f);
 		terrainMaterial->SetReflectance(enhancedLook ? 0.04f : 0.0f);
 		terrainMaterial->CreateRenderData(true);
+		if (enhancedLook && grassLayer)
+		{
+			const wi::ecs::Entity grassEntity = scene.Entity_CreateHair("OpenRepublic near grass");
+			wi::HairParticleSystem* grass = scene.hairs.GetComponent(grassEntity);
+			wi::scene::MaterialComponent* grassMaterial = scene.materials.GetComponent(grassEntity);
+			if (grass != nullptr && grassMaterial != nullptr)
+			{
+				grass->meshID = terrainEntity;
+				grass->strandCount = 24000;
+				grass->segmentCount = 1;
+				grass->billboardCount = 1;
+				grass->length = 1.3f;
+				grass->width = 0.22f;
+				grass->viewDistance = 450.0f;
+				grass->stiffness = 0.72f;
+				grass->randomness = 0.22f;
+				grass->vertex_lengths.resize(positions.size(), 0.0f);
+				for (std::size_t vertex = 0; vertex < positions.size(); ++vertex)
+				{
+					const double distance = std::hypot(positions[vertex].x, positions[vertex].z);
+					grass->vertex_lengths[vertex] = distance >= 35.0 && distance <= 290.0 ? 1.0f : 0.0f;
+				}
+				grass->CreateFromMesh(*terrainMesh);
+				grassMaterial->textures[wi::scene::MaterialComponent::BASECOLORMAP].resource = ShowcaseGrassBladeTexture();
+				grassMaterial->textures[wi::scene::MaterialComponent::BASECOLORMAP].uvset = 0;
+				grassMaterial->SetBaseColor(XMFLOAT4(0.72f, 0.84f, 0.58f, 1.0f));
+				grassMaterial->SetAlphaRef(0.08f);
+				grassMaterial->SetDoubleSided(true);
+				grassMaterial->SetRoughness(0.95f);
+				grassMaterial->CreateRenderData(true);
+				grass->CreateRenderData();
+				wilog("[OpenRepublic] Showcase grass: %u strands, %zu source triangles, town ring 35-290 m, view distance %.0f m",
+					grass->strandCount, grass->indices.size() / 3, grass->viewDistance);
+			}
+		}
 
 		// Roads are OpenRepublic preview geometry with an explicit comparison switch.
 		std::size_t roadEdges = 0;
@@ -1920,6 +1956,29 @@ namespace openrepublic::preview
 						wilog("[OpenRepublic] Showcase tree '%s' skipped: %s", stem, e.c_str());
 						return;
 					}
+					if (vegetationWind)
+					{
+						if (wi::scene::MeshComponent* treeMesh = scene.meshes.GetComponent(meshEntity);
+							treeMesh != nullptr && !treeMesh->vertex_positions.empty())
+						{
+							float minY = treeMesh->vertex_positions.front().y;
+							float maxY = minY;
+							for (const XMFLOAT3& position : treeMesh->vertex_positions)
+							{
+								minY = std::min(minY, position.y);
+								maxY = std::max(maxY, position.y);
+							}
+							const float height = std::max(0.01f, maxY - minY);
+							treeMesh->vertex_windweights.resize(treeMesh->vertex_positions.size());
+							for (std::size_t vertex = 0; vertex < treeMesh->vertex_positions.size(); ++vertex)
+							{
+								const float relative = std::clamp((treeMesh->vertex_positions[vertex].y - minY) / height, 0.0f, 1.0f);
+								treeMesh->vertex_windweights[vertex] = static_cast<std::uint8_t>(std::lround(
+									std::clamp((relative - 0.16f) / 0.78f, 0.0f, 1.0f) * 255.0f));
+							}
+							treeMesh->CreateRenderData();
+						}
+					}
 					wilog("[OpenRepublic] Showcase tree '%s': %s", stem, d.c_str());
 					if (wi::scene::ObjectComponent* own = scene.objects.GetComponent(meshEntity))
 					{
@@ -1960,6 +2019,7 @@ namespace openrepublic::preview
 									m->SetTextureStreamingDisabled(true);
 								}
 								m->SetAlphaRef(0.8f);
+								m->SetUseWind(vegetationWind);
 								if (leafTexture.IsValid())
 								{
 									// Stand-in for bounced sky light: faint self-illumination from the leaf texture.
@@ -2012,7 +2072,7 @@ namespace openrepublic::preview
 				const PlacedBuilding& placed = request.allPlacements[index];
 				localInstances.push_back({ wi::ecs::INVALID_ENTITY, placed.typeName, placed.X(), placed.Z(), index });
 			}
-			if (BuildShowcaseWorld(scene, request, showcaseTerrain, regionRadius, localInstances, &realTrees, info, environmentError))
+			if (BuildShowcaseWorld(scene, request, showcaseTerrain, regionRadius, localInstances, &realTrees, info, environmentError, vegetationWind))
 			{
 				environmentSummary = info.summary;
 				wilog("[OpenRepublic] %s", info.summary.c_str());
