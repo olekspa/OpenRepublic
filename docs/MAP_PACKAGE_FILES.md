@@ -38,3 +38,7 @@ Labels: **DECODED** = bounded reader exists in `src/content` with tests; **PARTI
 3. Terrain and resources: `mask.dds`, `resourcemap*.dds`, `grassmap.dds`.
 
 Each needs a build-matched writer or consumer trace before any field is named; the save writer routine (which writes these files in sequence) is already located and decompiled in the private Ghidra project.
+
+## One generic network format, eleven files (24 October 2026)
+
+**OBSERVED (one map package, build context 23935965; private Python port of the decoder kept outside Git):** the road layout (three u32 counts for nodes, segments and groups; node blocks; segment records; then group records) parses to **exact end of file** for all of `road.bin`, `road_secondary.bin`, `rail.bin`, `rail_secondary.bin`, `heating.bin`, `waterpipes.bin`, `pedestrianway.bin`, `conveyor.bin`, `pipe.bin`, `electro_low.bin` and `electro_high.bin` (and `cableway.bin` is the empty 12-byte header). Each group record is a u32 (meaning UNKNOWN) followed by a u32 count and that many u32 segment indices (the original reader resolves them against the segment list). So heating pipes, water pipes, pedestrian paths, conveyors, secondary roads and secondary rails share the road decoder's geometry. **VERIFIED (static review, FUN_14056ef50):** the group record shape matches the original reader. Per-network semantics (what "secondary" means; the group value) are UNKNOWN. `ExtractRoadNetwork` now decodes the groups when they fit and end the file exactly (`groups`, `groupsComplete`); older behaviour is unchanged when they do not.

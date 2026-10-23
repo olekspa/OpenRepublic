@@ -51,6 +51,14 @@ struct RoadSegment {
     std::vector<RoadPoint> polyline;
 };
 
+// A trailing group record: one u32 whose meaning is UNKNOWN (stored as-is by the
+// original reader) and a list of segment indices (out-of-range entries are
+// dropped by the original reader; here they are kept as read).
+struct RoadSegmentGroup {
+    std::uint32_t value = 0;
+    std::vector<std::uint32_t> segmentIndices;
+};
+
 struct RoadNetwork {
     std::vector<RoadNode> nodes;
     // Counts from the header.
@@ -64,6 +72,12 @@ struct RoadNetwork {
     std::string segmentGeometryDiagnostic;
     // Neighbor links whose reverse link is missing (0 in all 66 prior samples).
     std::size_t asymmetricLinks = 0;
+    // Trailing group records (count = groupCount). OBSERVED: in one package, eleven
+    // network files (roads, rails, heating, water pipes, pedestrian ways, conveyors,
+    // pipes, power lines) all end exactly after their groups. Populated only when
+    // every group fits in the remaining bytes and the file ends exactly after them.
+    std::vector<RoadSegmentGroup> groups;
+    bool groupsComplete = false;
 };
 
 constexpr std::size_t MaxRoadNodes = 1u << 20;

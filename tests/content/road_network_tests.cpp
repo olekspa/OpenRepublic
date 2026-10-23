@@ -123,6 +123,27 @@ void TestExtraction() {
           "polyline sampling uses equal arc-length spacing and includes endpoints");
 }
 
+void TestTrailingGroups() {
+    std::string bytes = MakeNetwork();
+    U32(bytes, 7);   // group value
+    U32(bytes, 2);   // member count
+    U32(bytes, 0);
+    U32(bytes, 1);
+    RoadNetwork network;
+    std::string error;
+    Check(ExtractRoadNetwork(bytes, network, &error), "network with a trailing group parses: " + error);
+    Check(network.groupsComplete && network.groups.size() == 1 && network.groups[0].value == 7 &&
+              network.groups[0].segmentIndices == std::vector<std::uint32_t>{0, 1},
+          "trailing group records are decoded to exact end of file");
+
+    RoadNetwork extra;
+    Check(ExtractRoadNetwork(bytes + std::string(4, '\0'), extra, &error) && !extra.groupsComplete && extra.groups.empty(),
+          "trailing bytes after the groups leave the groups undecoded");
+    RoadNetwork missing;
+    Check(ExtractRoadNetwork(MakeNetwork(), missing, &error) && !missing.groupsComplete,
+          "a missing group list is tolerated without being marked complete");
+}
+
 void TestNestedSegmentRecords() {
     std::string bytes;
     U32(bytes, 2);
@@ -233,6 +254,7 @@ void TestPartialUnsupportedConditionalTail() {
 
 int main() {
     TestExtraction();
+    TestTrailingGroups();
     TestNestedSegmentRecords();
     TestRejections();
     TestPartialUnsupportedConditionalTail();

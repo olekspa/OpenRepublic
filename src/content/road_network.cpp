@@ -253,6 +253,28 @@ bool ExtractRoadNetwork(std::string_view bytes, RoadNetwork& output, std::string
 
     if (!DecodeSegments(bytes, offset, candidate, error)) return false;
 
+    if (candidate.segmentGeometryComplete && candidate.groupCount <= kMaxSegmentCollectionCount) {
+        std::size_t cursor = offset;
+        std::vector<RoadSegmentGroup> groups;
+        bool fits = true;
+        for (std::uint32_t g = 0; g < candidate.groupCount && fits; ++g) {
+            if (cursor > bytes.size() || bytes.size() - cursor < 8) { fits = false; break; }
+            RoadSegmentGroup group;
+            group.value = ReadU32(bytes, cursor);
+            const std::uint32_t count = ReadU32(bytes, cursor + 4);
+            cursor += 8;
+            if (count > kMaxSegmentCollectionCount || count > (bytes.size() - cursor) / 4) { fits = false; break; }
+            group.segmentIndices.reserve(count);
+            for (std::uint32_t k = 0; k < count; ++k, cursor += 4)
+                group.segmentIndices.push_back(ReadU32(bytes, cursor));
+            groups.push_back(std::move(group));
+        }
+        if (fits && cursor == bytes.size()) {
+            candidate.groups = std::move(groups);
+            candidate.groupsComplete = true;
+        }
+    }
+
     output = std::move(candidate);
     if (error) error->clear();
     return true;
