@@ -289,3 +289,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~16:40 EDT** SCENARIOS merged: four synthetic scenarios (data/scenarios), tools/scenario_score.py deterministic scorer, docs/SCENARIOS.md. Build + CTest 72/72.
 
 - **2026-10-23 ~17:10 EDT** Worker SCEN-LLM started (scenario scoring for LLM republic/tournament harness, scripted backend only in tests).
+
+- **2026-10-23 ~17:40 EDT** SCEN-LLM merged: --scenario for llm_republic/republic_tournament scored by the scenario scorer (scripted backend in tests). CTest after reconfigure shown in commit.
