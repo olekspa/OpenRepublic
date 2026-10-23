@@ -503,3 +503,5 @@ Next: recover or repeat the missing private serializer trace, identify the exact
 - **VERIFIED (static import-loader review, build context 23935965):** header.bin slots +0x1a4/+0x1b0 are camera position/look-at float triplets; +0x1d8 == 1 gates the extended block; +0x1e0/+0x1dc count two lists of 0x80-byte text records. **OBSERVED:** the roads are loaded by one routine from road.bin and road_secondary.bin into two networks, and rail.bin/rail_secondary.bin likewise. **UNKNOWN:** the meaning of the secondary networks and all other header slots.
 
 - **VERIFIED (consumer arithmetic, build context 23935965):** header slots +0x198/+0x19c are the in-game day and year (hint checks compute elapsed days as year difference * 365 plus day difference). Day base and month layout UNKNOWN.
+
+- **VERIFIED (static review of the new-game setup routine, build context 23935965):** start year option 0..6 maps to 1960/1970/1980/1930/1940/1950/1920 (above 1000 is the year itself); start day-of-year depends on terrain type (3->129, 1->26, 2->51, other->53; tutorial_map7 -> 285). See docs/GAME_SETUP.md. Option variable names UNKNOWN.

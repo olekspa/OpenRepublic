@@ -116,12 +116,26 @@ void TestFixedBlockLayout() {
           "short input rejected without modifying output");
 }
 
+
+void TestStartYearOptions() {
+    int year = 0;
+    Check(StartYearFromOption(0, year) && year == 1960, "start option 0");
+    Check(StartYearFromOption(2, year) && year == 1980, "start option 2");
+    Check(StartYearFromOption(3, year) && year == 1930, "start option 3");
+    Check(StartYearFromOption(6, year) && year == 1920, "start option 6");
+    Check(StartYearFromOption(1975, year) && year == 1975, "explicit year option");
+    year = 5;
+    Check(!StartYearFromOption(7, year) && year == 5, "unknown option rejected without modifying output");
+    Check(!StartYearFromOption(-1, year) && !StartYearFromOption(1000, year), "out-of-range options rejected");
+}
+
 } // namespace
 
 int main() {
     TestObservedPreambleShape();
     TestMalformedPrefixesAreTransactional();
     TestFixedBlockLayout();
+    TestStartYearOptions();
     if (failures != 0) {
         std::cerr << failures << " map header prefix test(s) failed\n";
         return 1;

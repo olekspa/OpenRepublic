@@ -59,4 +59,10 @@ struct MapHeaderFixedBlock {
 bool ParseMapHeaderFixedBlock(std::string_view bytes, MapHeaderFixedBlock& output,
                               std::string* error = nullptr);
 
+// Start-year option mapping from the original's new-game setup (VERIFIED by static
+// review, build context 23935965): option 0..6 -> 1960, 1970, 1980, 1930, 1940, 1950,
+// 1920; an option above 1000 is used directly as the year. Other values: no evidence,
+// returns false. The start day-of-year depends on terrain type (see docs/GAME_SETUP.md).
+bool StartYearFromOption(int option, int& year);
+
 } // namespace openrepublic::content

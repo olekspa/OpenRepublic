@@ -114,4 +114,11 @@ bool ParseMapHeaderFixedBlock(std::string_view bytes, MapHeaderFixedBlock& outpu
     return true;
 }
 
+bool StartYearFromOption(int option, int& year) {
+    static constexpr int kYears[7] = {1960, 1970, 1980, 1930, 1940, 1950, 1920};
+    if (option >= 0 && option <= 6) { year = kYears[option]; return true; }
+    if (option > 1000) { year = option; return true; }
+    return false;
+}
+
 } // namespace openrepublic::content
