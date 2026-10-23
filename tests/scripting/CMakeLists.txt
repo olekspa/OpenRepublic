@@ -13,3 +13,10 @@ target_compile_definitions(OpenRepublicEconomyRulesTests PRIVATE
     OPENREPUBLIC_ECONOMY_RULES_PATH="${PROJECT_SOURCE_DIR}/data/rules/economy_rules.lua"
 )
 add_test(NAME OpenRepublicEconomyRulesTests COMMAND OpenRepublicEconomyRulesTests)
+
+add_executable(OpenRepublicSceneScriptTests scene_script_tests.cpp)
+target_link_libraries(OpenRepublicSceneScriptTests PRIVATE OpenRepublicScripting)
+target_compile_features(OpenRepublicSceneScriptTests PRIVATE cxx_std_17)
+target_compile_definitions(OpenRepublicSceneScriptTests PRIVATE
+    OPENREPUBLIC_DAY_CYCLE_PATH="${PROJECT_SOURCE_DIR}/data/scripts/day_cycle.lua")
+add_test(NAME OpenRepublicSceneScriptTests COMMAND OpenRepublicSceneScriptTests)
