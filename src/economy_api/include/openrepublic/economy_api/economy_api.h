@@ -285,7 +285,7 @@ private:
     Submission Submit(std::uint64_t revision, economy::CommandId command);
     bool Allowed(bool control) const noexcept;
     void Record(Event event);
-    void CaptureChanges(const economy::WorldSnapshot& before);
+    void CaptureChanges(const economy::TickEventSnapshot& before);
     std::unique_ptr<economy::Catalog> ownedCatalog_;
     std::unique_ptr<economy::World> ownedWorld_;
     const economy::Catalog* catalog_{};

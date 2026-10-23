@@ -1,5 +1,6 @@
 // Not a test: prints the cost of one tick with serial and threaded production on a large world.
 #include "openrepublic/economy/economy.h"
+#include "openrepublic/economy_api/economy_api.h"
 
 #include <chrono>
 #include <iostream>
@@ -20,10 +21,26 @@ int main() {
         for (int i = 0; i < 100; ++i)
             w.Step();
         const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-        std::cout << threads << " thread(s): " << buildings << " buildings, " << ms / 100 << " ms/tick\n";
+        std::cout << threads << " thread(s): " << buildings << " buildings, " << ms / 100
+                  << " ms/tick, hash " << w.Snapshot().stateHash << '\n';
+        if (threads == 1) {
+            openrepublic::economy_api::EconomyApi api(w, {true, true});
+            const auto apiStart = std::chrono::steady_clock::now();
+            for (int i = 0; i < 20; ++i)
+                api.Step();
+            const auto apiMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - apiStart).count();
+            const auto queryStart = std::chrono::steady_clock::now();
+            for (int i = 0; i < 5; ++i)
+                api.QueryWorld();
+            const auto queryMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - queryStart).count();
+            std::cout << "API 40000-building step: " << apiMs / 20 << " ms/tick; QueryWorld: "
+                      << queryMs / 5 << " ms/query, hash " << w.Snapshot().stateHash << '\n';
+        }
     }
     // Haul movement: one road row with farm/mill pairs and a truck per order.
-    for (const int pairs : {100, 400, 1500}) {
+    for (const int pairs : {100, 400, 1500, 5000}) {
         World w(catalog, 12500, 8);
         for (int x = 1; x < 4 * pairs * 2; ++x)
             w.BuildRoad({x, 1}, {x + 1, 1});
@@ -40,7 +57,8 @@ int main() {
         for (int i = 0; i < 200; ++i)
             w.Step();
         const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-        std::cout << pairs << " haul orders: " << ms / 200 << " ms/tick\n";
+        std::cout << pairs << " haul orders: " << ms / 200 << " ms/tick, hash "
+                  << w.Snapshot().stateHash << '\n';
     }
     return 0;
 }

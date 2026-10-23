@@ -513,15 +513,15 @@ void EconomyApi::Record(Event e) {
         events_.pop_front();
     }
 }
-void EconomyApi::CaptureChanges(const economy::WorldSnapshot& before) {
-    const auto afterSnapshot = world_->Snapshot();
-    const auto after = MakeWorld(*catalog_, afterSnapshot);
-    for (const auto& b : afterSnapshot.buildings) {
-        auto i = std::find_if(before.buildings.begin(), before.buildings.end(),
-            [&b](const auto& x) { return x.id == b.id; });
-        const bool newlyStalled = i == before.buildings.end() &&
+void EconomyApi::CaptureChanges(const economy::TickEventSnapshot& before) {
+    const auto after = world_->CaptureTickEvents();
+    for (const auto& b : after.buildings) {
+        auto i = std::lower_bound(before.buildings.begin(), before.buildings.end(), b.id,
+            [](const auto& x, economy::BuildingId id) { return x.id < id; });
+        const bool existed = i != before.buildings.end() && i->id == b.id;
+        const bool newlyStalled = !existed &&
             b.stall.reason != economy::StallReason::Running;
-        const bool changedStall = i != before.buildings.end() &&
+        const bool changedStall = existed &&
             (i->stall.reason != b.stall.reason || i->stall.resource != b.stall.resource ||
                 i->stall.recipeIndex != b.stall.recipeIndex);
         if (newlyStalled || changedStall) {
@@ -532,9 +532,9 @@ void EconomyApi::CaptureChanges(const economy::WorldSnapshot& before) {
         }
     }
     for (const auto& o : after.orders) {
-        auto i = std::find_if(before.orders.begin(), before.orders.end(),
-            [&o](const auto& x) { return x.id == o.id; });
-        if (i != before.orders.end() && i->cargo > 0 && o.cargo == 0) {
+        auto i = std::lower_bound(before.orders.begin(), before.orders.end(), o.id,
+            [](const auto& x, economy::OrderId id) { return x.id < id; });
+        if (i != before.orders.end() && i->id == o.id && i->cargo > 0 && o.cargo == 0) {
             Record({0, EventType::DeliveryCompleted, after.tick});
         }
     }
@@ -558,7 +558,7 @@ ErrorCode EconomyApi::Step(std::uint32_t ticks) {
         return ErrorCode::StepLimitExceeded;
     }
     for (std::uint32_t i = 0; i < ticks; ++i) {
-        auto before = world_->Snapshot();
+        auto before = world_->CaptureTickEvents();
         const auto result = world_->Step(1);
         if (!result.accepted) {
             return ErrorCode::InvalidArgument;
