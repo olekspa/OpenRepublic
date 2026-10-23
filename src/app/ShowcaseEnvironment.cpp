@@ -1,11 +1,13 @@
 #include "ShowcaseEnvironment.h"
 
 #include "openrepublic/content/terrain_dds.h"
+#include "wiJobSystem.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <chrono>
 #include <cstdlib>
 #include <limits>
 #include <memory>
@@ -20,6 +22,32 @@ namespace openrepublic::preview
 		constexpr double kFarHalfExtent = 7000.0;
 		constexpr std::uint32_t kFarSamples = 1435; // ~9.8 m spacing = the 2048 heightmap's own sample spacing
 		constexpr float kPi = 3.14159265358979f;
+
+		class ShowcaseStageTimer
+		{
+		public:
+			explicit ShowcaseStageTimer(const char* stage) : stage_(stage), start_(std::chrono::steady_clock::now()) {}
+			~ShowcaseStageTimer()
+			{
+				const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::steady_clock::now() - start_).count();
+				wilog("[OpenRepublic] Showcase timing: %s %lld ms", stage_, static_cast<long long>(elapsed));
+			}
+		private:
+			const char* stage_;
+			std::chrono::steady_clock::time_point start_;
+		};
+
+		template<typename Function>
+		void ForEachFarTerrainRow(Function&& function)
+		{
+			wi::jobsystem::context ctx;
+			wi::jobsystem::Dispatch(ctx, kFarSamples, 8, [&](wi::jobsystem::JobArgs args)
+			{
+				function(args.jobIndex);
+			});
+			wi::jobsystem::Wait(ctx);
+		}
 
 		std::uint32_t HashInts(int x, int z, std::uint32_t seed)
 		{
@@ -521,6 +549,7 @@ namespace openrepublic::preview
 	{
 		static wi::Resource resource = []()
 		{
+			ShowcaseStageTimer timer("procedural grass texture creation");
 			constexpr std::uint32_t kSize = 512;
 			std::vector<std::uint8_t> pixels(static_cast<std::size_t>(kSize) * kSize * 4);
 			for (std::uint32_t y = 0; y < kSize; ++y)
@@ -551,6 +580,7 @@ namespace openrepublic::preview
 		// 5 m wide road: u across, v along (one repeat = 16 m). Edge lines and a dashed centre line.
 		static wi::Resource resource = []()
 		{
+			ShowcaseStageTimer timer("procedural asphalt texture creation");
 			constexpr std::uint32_t kWidth = 128;
 			constexpr std::uint32_t kHeight = 512;
 			std::vector<std::uint8_t> pixels(static_cast<std::size_t>(kWidth) * kHeight * 4);
@@ -602,6 +632,7 @@ namespace openrepublic::preview
 	{
 		static wi::Resource resource = []()
 		{
+			ShowcaseStageTimer timer("procedural soft-circle texture creation");
 			constexpr std::uint32_t kSize = 64;
 			std::vector<std::uint8_t> pixels(static_cast<std::size_t>(kSize) * kSize * 4);
 			for (std::uint32_t y = 0; y < kSize; ++y)
@@ -640,6 +671,7 @@ namespace openrepublic::preview
 		const ShowcaseTerrainData& terrain, double regionRadius, const std::vector<RegionInstance>& instances,
 		const RealTreeSet* realTrees, ShowcaseEnvironmentInfo& info, std::string& error)
 	{
+		ShowcaseStageTimer totalTimer("BuildShowcaseWorld total");
 		const TerrainTransform transform = MakeMapTerrainTransform(request.metadata);
 		const PlacedBuilding& center = request.placement;
 		const TerrainPreviewGrid& grid = terrain.grid;
@@ -657,13 +689,16 @@ namespace openrepublic::preview
 			return grid.heights[static_cast<std::size_t>(z) * samples + x];
 		};
 		std::vector<float> boosted(static_cast<std::size_t>(samples) * samples);
-		for (std::uint32_t z = 0; z < samples; ++z)
+		{
+			ShowcaseStageTimer timer("far terrain height boost");
+			ForEachFarTerrainRow([&](std::uint32_t z)
 		{
 			for (std::uint32_t x = 0; x < samples; ++x)
 			{
 				boosted[static_cast<std::size_t>(z) * samples + x] = ShowcaseLandHeight(
 					terrain, grid.worldXCoordinates[x], grid.worldZCoordinates[z], heightAt(x, z));
 			}
+			});
 		}
 		const auto boostedAt = [&](std::uint32_t x, std::uint32_t z)
 		{
@@ -672,10 +707,13 @@ namespace openrepublic::preview
 		std::vector<XMFLOAT3> positions;
 		std::vector<XMFLOAT2> uvs;
 		std::vector<std::uint32_t> colors;
-		positions.reserve(static_cast<std::size_t>(samples) * samples);
-		uvs.reserve(positions.capacity());
-		colors.reserve(positions.capacity());
-		for (std::uint32_t z = 0; z < samples; ++z)
+		const std::size_t vertexCount = static_cast<std::size_t>(samples) * samples;
+		positions.resize(vertexCount);
+		uvs.resize(vertexCount);
+		colors.resize(vertexCount);
+		{
+			ShowcaseStageTimer timer("far terrain shading and vertices");
+			ForEachFarTerrainRow([&](std::uint32_t z)
 		{
 			for (std::uint32_t x = 0; x < samples; ++x)
 			{
@@ -691,19 +729,21 @@ namespace openrepublic::preview
 				const float slopeX = dx > 0.0 ? static_cast<float>((boostedAt(right, z) - boostedAt(left, z)) / dx) : 0.0f;
 				const float slopeZ = dz > 0.0 ? static_cast<float>((boostedAt(x, up) - boostedAt(x, down)) / dz) : 0.0f;
 				const float slope = std::sqrt(slopeX * slopeX + slopeZ * slopeZ);
-				colors.push_back(PackColor(ShadeShowcaseTerrain(terrain, wx, wz, height, slope)));
+				const std::size_t index = static_cast<std::size_t>(z) * samples + x;
+				colors[index] = PackColor(ShadeShowcaseTerrain(terrain, wx, wz, height, slope));
 				// Sink the coarse mesh under the detailed near mesh, fading in from its border.
 				const double inside = std::min({ wx - nearMinX, nearMaxX - wx, wz - nearMinZ, nearMaxZ - wz });
 				if (inside > 0.0)
 				{
 					height -= 2.5f * SmoothStep(0.0f, 70.0f, static_cast<float>(inside));
 				}
-				positions.emplace_back(static_cast<float>(wx - center.X()), height, static_cast<float>(wz - center.Z()));
+				positions[index] = XMFLOAT3(static_cast<float>(wx - center.X()), height, static_cast<float>(wz - center.Z()));
 				// A slow warp of the tile coordinates hides the straight-line repetition of the ground tile.
 				const float warpU = (Fbm(wx / 140.0, wz / 140.0, 2, 83) - 0.5f) * 2.2f;
 				const float warpV = (Fbm(wx / 140.0 + 40.0, wz / 140.0 - 17.0, 2, 89) - 0.5f) * 2.2f;
-				uvs.emplace_back(static_cast<float>(wx / 22.0) + warpU, static_cast<float>(wz / 22.0) + warpV);
+				uvs[index] = XMFLOAT2(static_cast<float>(wx / 22.0) + warpU, static_cast<float>(wz / 22.0) + warpV);
 			}
+			});
 		}
 		std::vector<std::uint32_t> indices;
 		indices.reserve(static_cast<std::size_t>(samples - 1) * (samples - 1) * 6);
@@ -730,7 +770,9 @@ namespace openrepublic::preview
 		// Height-field normals from central differences: the engine's averaged face normals alternate with
 		// the grid's diagonals and showed up as a checker pattern on steep slopes.
 		farMesh->vertex_normals.resize(positions.size());
-		for (std::uint32_t z = 0; z < samples; ++z)
+		{
+			ShowcaseStageTimer timer("far terrain normals");
+			ForEachFarTerrainRow([&](std::uint32_t z)
 		{
 			for (std::uint32_t x = 0; x < samples; ++x)
 			{
@@ -746,6 +788,7 @@ namespace openrepublic::preview
 				const float length = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
 				farMesh->vertex_normals[static_cast<std::size_t>(z) * samples + x] = XMFLOAT3(normal.x / length, normal.y / length, normal.z / length);
 			}
+			});
 		}
 		farMesh->vertex_colors = std::move(colors);
 		farMesh->vertex_uvset_0 = std::move(uvs);
