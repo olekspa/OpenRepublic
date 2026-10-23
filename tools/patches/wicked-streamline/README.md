@@ -40,3 +40,6 @@ Apply 0010-dlssg-runtime.patch, 0011-reflex-feature-function-lookup.patch, and 0
 OBSERVED (private runtime): patches 0001-0012 compiled in the private VS2022 Release client. On an RTX 5070 Ti / driver 616.56 with Streamline 2.14.16, slInit, DLSS SR evaluation, PCL markers, Reflex setup/sleep, and DLSS-G eOn options returned success. State reported roughly 60-61 presented FPS for requests of 1, 2, and 3 generated frames, close to base app FPS; generated output was not demonstrated. HAGS remains unknown and the run was windowed. See the integration plan for measurements and limits. No private SDK, runtime binaries, logs, or captures belong in this repository.
 
 Patch 0012 adds a startup-only DLSS-G requirement query and diagnostics for required tags, HAGS/VSync flags, and OS/driver versions. A private run recorded HAGS as required, VSync-off as not required, and required depth/motion/HUD-less/UI-alpha tags; runtime acceptance still did not show generated-frame output.
+## Helper script
+
+`tools/apply_streamline_patches.ps1 -WickedDir <private Wicked checkout> [-Through 12] [-CheckOnly]` applies the patches in order (default through 0008; checked on a clean clone of the pinned revision through 0012). Apply only to a private copy; no SDK or runtime files are handled.
