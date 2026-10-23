@@ -68,6 +68,11 @@ namespace openrepublic::preview
 	XMFLOAT3 ShadeShowcaseTerrain(const ShowcaseTerrainData& data, double worldX, double worldZ,
 		float height, float slope);
 
+	// Builds a low-cost OpenRepublic foam ribbon along the sampled terrain/water contour.
+	// This is presentation geometry and does not describe WRSR shoreline data.
+	bool BuildShowcaseShoreFoam(wi::scene::Scene& scene, const ShowcaseTerrainData& terrain,
+		const XMFLOAT3& worldOrigin, std::string& error);
+
 	// Sun elevation the baked terrain colours are tuned for; a high sun needs a lower tint gain
 	// (vertex colours cannot be re-shaded at runtime). NaN keeps the golden-hour tuning.
 	void SetShowcaseBakedSunElevation(float elevationDegrees);
