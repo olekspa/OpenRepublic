@@ -1175,6 +1175,11 @@ namespace openrepublic
 						weather.oceanParameters.surfaceDisplacementTolerance = 0.8f;
 						weather.oceanParameters.waterColor = XMFLOAT4(0.015f, 0.075f, 0.095f, 0.78f);
 						weather.oceanParameters.extinctionColor = XMFLOAT4(0.10f, 0.32f, 0.36f, 1.0f);
+							// OR_WATER_ORIGINAL=1: use the water colour the shared waterriver script declares
+							// ($COLOR 0.15 0.2167 0.10; shader constant WaterColor, VERIFIED by static trace in
+							// docs/MAP_WATER_DATA.md). Channel order/colour space are UNKNOWN: opt-in comparison aid, not parity.
+							if (const char* originalWater = std::getenv("OR_WATER_ORIGINAL"); originalWater && std::string_view(originalWater) == "1")
+								weather.oceanParameters.waterColor = XMFLOAT4(0.15f, 0.216667f, 0.10f, 0.78f);
 						}
 						if (const wi::scene::TransformComponent* sunTransform = previewWorld.transforms.GetComponent(sun))
 						{
