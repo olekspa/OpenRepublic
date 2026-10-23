@@ -17,7 +17,7 @@ guarantee.
 | 40,000 buildings, 4 production threads | 1.027 ms/tick | 0.232 ms/tick | `798402018939142678` | `798402018939142678` |
 | 40,000 buildings, 8 production threads | 1.097 ms/tick | 0.324 ms/tick | `798402018939142678` | `798402018939142678` |
 | 1,500 active haul orders | 5.918 ms/tick | 0.521 ms/tick | `11567758099352643217` | `11567758099352643217` |
-| 5,000 active haul orders | 6.389 ms/tick | 0.524 ms/tick | `444432331517164768` | `444432331517164768` |
+| 5,000 active haul orders | 6.389 ms/tick | 0.193 ms/tick | `444432331517164768` | `444432331517164768` |
 | API step, 40,000 buildings | 604.373 ms/tick | 1.955 ms/tick | `17407156440371658646` | `17407156440371658646` |
 | API `QueryWorld`, 40,000 buildings | 18.042 ms/query | 17.385 ms/query | n/a | n/a |
 
@@ -111,6 +111,31 @@ tested thread settings. The 1,500-order tick was about 11.4 times faster, and
 the API step about 309 times faster in this event-capture-heavy scenario. The
 full typed API query still takes about 17 ms because it materializes the entire
 world; bounded pages are measured separately above.
+
+## Haul-heavy follow-up profile
+
+**VERIFIED, 23 October 2026:** a Release benchmark run at 1/2/4/8 configured
+threads produced the same 5,000-order state hash (`444432331517164768`) at each
+setting. Re-measuring with serial haul advancement and the old 1,024-building
+production cutoff gave 0.191/0.288/0.360/0.504 ms/tick at 1/2/4/8 threads. The
+thread-count penalty is in the production phase: the 10,000-building haul
+scenario's buildings do little production work, while each tick still creates
+and joins worker threads. This makes parallel vehicle advancement an unsupported
+optimization for this workload; the experimental parallel haul path was not
+retained.
+
+The production parallelization cutoff is now 16,384 buildings. With that
+cutoff, the 5,000-order case measured 0.194/0.189/0.190/0.193 ms/tick at
+1/2/4/8 configured threads, with identical hashes. This removes per-tick
+production worker startup for the 10,000-building haul benchmark while retaining
+the parallel production path for the 40,000-building workload. The 40,000-building
+1/2/4/8 measurements were 0.338/0.258/0.227/0.315 ms/tick, respectively,
+with hash `798402018939142678` at each setting.
+
+These values are local synthetic benchmark measurements. They isolate the
+worker-count effect on this benchmark configuration; they do not identify
+vehicle movement as a WRSR bottleneck or establish any original-game performance
+behavior.
 
 ## Scope and limits
 
