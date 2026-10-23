@@ -13,6 +13,7 @@ add_library(OpenRepublicContent STATIC
     nmf_header.cpp
     nmf_preview_geometry.cpp
     linear_network.cpp
+    map_header.cpp
     road_network.cpp
     terrain_dds.cpp
     terrain_blend.cpp

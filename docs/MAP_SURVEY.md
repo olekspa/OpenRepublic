@@ -25,3 +25,12 @@ The script searches each supplied root recursively for folders containing `scrip
 - **Status and limitations:** Height transform has one-map validation; placement record scanning is inferred; tree decoding is partial; road node parsing is build-scoped. Threshold fractions and relief are sampled, and all below-zero area claims are hypotheses. No game launch, save modification, or graphics/hardware acceptance is part of this survey.
 
 The private report and candidate relief images are written to the configured private directory. No exact private paths, package names, or fingerprints are written by this script to this document.
+
+## Map header prefix follow-up (23 October 2026)
+
+- **OBSERVED (read-only local install inventory, build context 23935965):** 31 `header.bin` files were present in the inspected content tree. Twenty-nine had sibling `script.ini` and `heightmap.dds`; two did not. The header sizes varied from 1,376 to 37,856 bytes. This inventory is not a claim that all files are map packages or share one schema.
+- **OBSERVED:** each inspected file begins with a little-endian 32-bit value followed by a non-empty, NUL-terminated UTF-16LE string candidate. The leading values varied (121, 122, and 124) and the string lengths varied. These boundaries are byte-pattern observations only; no producer/consumer trace identifies the value or text as a version, title, map name, or other semantic field.
+- **VERIFIED (OpenRepublic source/tests only):** `ParseMapHeaderPrefix` reads that bounded prefix, rejects truncated/invalid UTF-16 and oversized inputs transactionally, and leaves remaining bytes opaque. The 64 KiB input and 256-code-unit string caps are OpenRepublic safety limits, not observed format maxima. Synthetic tests do not validate original-game compatibility.
+- **UNKNOWN:** world dimensions, water level/flags/extents, climate or season, start date, and any other fields in the opaque tail. Cross-file variation and terrain/script correlations did not establish field offsets or types for these values. Do not use this prefix reader to infer or populate them.
+
+The header reader deliberately exposes neutral candidate names for the prefix and does not parse the variable-size tail. No original files or payloads were copied into the repository.
