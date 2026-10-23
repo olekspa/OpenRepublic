@@ -421,7 +421,8 @@ namespace openrepublic
 	}
 
 	void OpenRepublicApplication::SetMapShowcaseCapture(std::filesystem::path outputPath, bool enhancedLook,
-		float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale)
+		float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale,
+		bool vegetationWind, bool grassLayer)
 	{
 		mapShowcaseCaptureMode = !outputPath.empty();
 		mapShowcaseCapturePath = std::move(outputPath);
@@ -429,6 +430,8 @@ namespace openrepublic
 		mapShowcaseCameraYawDegrees = cameraYawDegrees;
 		mapShowcaseCameraElevationDegrees = cameraElevationDegrees;
 		mapShowcaseCameraDistanceScale = cameraDistanceScale;
+		showcaseVegetationWind = vegetationWind;
+		showcaseGrassLayer = grassLayer;
 		if (enhancedLook && !graphicsSettings.has_value())
 		{
 			openrepublic::runtime::GraphicsSettings settings;
@@ -1017,7 +1020,8 @@ namespace openrepublic
 						mapRadiusMeters, mapRegionModelLevel, mapShowcaseEnhancedLook,
 						nmfPreviewCameraTarget, nmfPreviewCameraDistance,
 						description, error, &regionInstances, &showcaseEnvironment,
-						&buildingLodController, mapRegionDynamicLod, mapLodNearDistance, mapLodFarDistance);
+						&buildingLodController, mapRegionDynamicLod, mapLodNearDistance, mapLodFarDistance,
+						showcaseVegetationWind, showcaseGrassLayer);
 					geometryAuditSummary = "map region preview (per-model audits are in the records above)";
 				}
 				else
@@ -1152,6 +1156,10 @@ namespace openrepublic
 						weather.volumetricCloudParameters.cloudThickness = 2200.0f;
 						weather.volumetricCloudParameters.layerFirst.coverageAmount = 0.55f;
 						weather.volumetricCloudParameters.layerFirst.coverageMinimum = 0.16f;
+						weather.windDirection = XMFLOAT3(2.0f, 0.0f, 1.5f);
+						weather.windSpeed = showcaseVegetationWind ? 1.25f : 0.0f;
+						weather.windWaveSize = 0.75f;
+						weather.windRandomness = 0.65f;
 						weather.sunColor = previewSunColor;
 						if (showcaseEnvironment.hasWater)
 						{

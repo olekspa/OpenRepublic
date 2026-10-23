@@ -78,6 +78,7 @@ namespace openrepublic::preview
 
 	// Procedural detail textures (created once, shared).
 	const wi::Resource& ShowcaseGrassTexture();
+	const wi::Resource& ShowcaseGrassBladeTexture();
 	const wi::Resource& ShowcaseAsphaltTexture();
 	// Soft round alpha sprite for smoke puffs.
 	const wi::Resource& ShowcaseSoftCircleTexture();
@@ -92,5 +93,5 @@ namespace openrepublic::preview
 	bool BuildShowcaseWorld(wi::scene::Scene& scene,
 		const openrepublic::content::MapPlacementRequest& request, const ShowcaseTerrainData& terrain,
 		double regionRadius, const std::vector<RegionInstance>& instances, const RealTreeSet* realTrees,
-		ShowcaseEnvironmentInfo& info, std::string& error);
+		ShowcaseEnvironmentInfo& info, std::string& error, bool vegetationWind = true);
 }
