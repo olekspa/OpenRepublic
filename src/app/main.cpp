@@ -578,6 +578,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				{
 					mapShowcaseSunElevationDegrees = 17.0f;
 					mapShowcaseSunYawOffsetDegrees = 45.0f;
+					if (!mapShowcaseCameraArgumentSeen)
+					{
+						// Hero pose so the sun sits behind-left of the camera like the showcase captures.
+						mapShowcaseCameraYawDegrees = -110.0f;
+						mapShowcaseCameraElevationDegrees = 16.0f;
+					}
 				}
 			}
 			else if (std::wstring_view(arguments[i]) == L"--showcase-sun")

@@ -1532,10 +1532,24 @@ namespace openrepublic
 			if (mapRegionPreview && nmfPreviewLoaded)
 			{
 				// Metre-scale region: frame it from above and scale fly speed with its size.
+				if (mapShowcaseEnhancedLook)
+				{
+					// Modern look: start at the hero pose (yaw -110, 16 degrees up, 0.9 of the region distance).
+					constexpr float yaw = -110.0f * XM_PI / 180.0f;
+					constexpr float elevation = 16.0f * XM_PI / 180.0f;
+					const XMFLOAT3 direction(std::sin(yaw) * std::cos(elevation), std::sin(elevation), std::cos(yaw) * std::cos(elevation));
+					const float distance = nmfPreviewCameraDistance * 0.9f;
+					cameraTransform.Translate(XMFLOAT3(nmfPreviewCameraTarget.x + distance * direction.x,
+						nmfPreviewCameraTarget.y + distance * direction.y, nmfPreviewCameraTarget.z + distance * direction.z));
+					cameraTransform.RotateRollPitchYaw(XMFLOAT3(elevation, std::atan2(-direction.x, -direction.z), 0.0f));
+				}
+				else
+				{
 				cameraTransform.Translate(XMFLOAT3(nmfPreviewCameraTarget.x,
 					nmfPreviewCameraTarget.y + nmfPreviewCameraDistance * 0.55f,
 					nmfPreviewCameraTarget.z - nmfPreviewCameraDistance * 0.85f));
 				cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.6f, 0, 0));
+				}
 				cameraSpeedScale = std::max(1.0f, nmfPreviewCameraDistance / 15.0f);
 			}
 			else
