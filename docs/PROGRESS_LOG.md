@@ -265,3 +265,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~10:50 EDT** Worker ECON-SCALE started (profile and speed up the economy on large imported regions without changing hashes).
 
 - **2026-10-23 ~11:20 EDT** ECON-SCALE merged: cached enabled-road adjacency index and deterministic BFS visitation, binary-search vehicle lookup, compact per-tick event snapshot in the API (instead of two full world snapshots per tick). Worker-measured: 40,000-building tick ~1.1 -> 0.34 ms, 1,500 haul orders ~6.1 -> 0.52 ms/tick; every benchmark scenario hash identical before/after; after merging into main full client build and CTest 69/69 (includes the other stream's replay-hash scenarios). Not measured: a combined 20k-building + 200k-road-cell world or a real imported region. docs/ECONOMY_PERFORMANCE.md.
+
+- **2026-10-23 ~11:45 EDT** Worker VEG-WIND started (tree/shrub wind sway, hair-particle grass near the camera, measured cost); BUILDING-LOD and ECON-SCALE follow-ups running.
