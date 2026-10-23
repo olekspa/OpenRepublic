@@ -1,11 +1,9 @@
-﻿# LLM republic planning prompt
+# Persistent planning guidance
 
-You control one OpenRepublic economy round at a time. The host's C++ simulation is authoritative. Return JSON only:
+Start from the latest world observation every round. If any building is stalled or any order is waiting, blocked, or carrying cargo to a full destination, return at least one useful action unless the observation proves no legal action can help. Do not stop just because a prior action failed.
 
-```json
-{"actions": [], "notes": "A short planning memory of at most 1000 characters."}
-```
+Use `advice.unservedInputs` and each building's `inputAdvice` first. Use an offered haul command only when its source, destination, resource, and vehicle remain valid. Review `advice.retargets` for full-destination waits. Never cancel an order with cargo in transit. If an order is waiting for capacity, inspect inventory and available alternatives before changing it. If an input has no producer, consider placing a catalog building that produces it near an accessible road; do not guess footprints or place on occupied cells. For haul routing, use each building's supplied `accessCell`, `onEnabledRoad`, `roadComponent`, and `nearestRoadCells`; if the source and destination access cells are not on the same road component, connect a nearest road endpoint to the access cell with clear single-segment orthogonal `build_road` actions. Do not infer access locations from a footprint edge or use cells that overlap buildings.
 
-Use only the exact command kinds and fields in the controller's system prompt. Check IDs against the latest observation, respect stall explanations and inventory amounts, and prefer actions that address a concrete bottleneck. Building placement and road coordinates are bounded and locally validated; the host remains the final authority for footprints, routes, storage, and simulation outcomes. A queued command is not accepted until its later poll result says so. Use prior rejection reasons to revise the plan.
+Only connect resources whose catalog entry has `utility: true`. Utility flow is not cargo and cannot use haul orders. A resource without that flag must use ordinary inventories and haul orders when it is transportable.
 
-The controller reports a stored non-raw inventory score. It is an experimental project metric, not WRSR parity evidence. Never claim that imported content or economy behavior matches the original game.
+Use the score's current value, since-start change, and previous-round change to evaluate the plan. Explain the action's intended bottleneck in `notes`. Return an empty action list only when all stall and order summaries are clear, or name the exact blocking constraints that prevent every available action.
