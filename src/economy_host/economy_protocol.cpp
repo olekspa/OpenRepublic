@@ -642,7 +642,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
       return invalid(message);
     const Json roles = Json::array({"observer", "controller"}), control = Json::array({"controller"});
     Json methods = Json::array();
-    for (const char *name : {"hello", "capabilities", "catalog", "world", "utility_diagnostics", "explain", "advise", "rules_history", "poll", "events", "begin_checkpoint", "read_checkpoint"})
+    for (const char *name : {"hello", "capabilities", "catalog", "world", "summary", "utility_diagnostics", "explain", "advise", "rules_history", "poll", "events", "begin_checkpoint", "read_checkpoint"})
       methods.push_back(Json{{"name", name}, {"roles", roles}});
     for (const char *name : {"submit", "step", "compact_history"})
       methods.push_back(Json{{"name", name}, {"roles", control}});
@@ -753,6 +753,22 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                    {"entities", entities}};
       }
     }
+  } else if (method == "summary") {
+    if (!Fields(req, {}, message))
+      return invalid(message);
+    const auto summary = api_->Summary();
+    Json stock = Json::array();
+    for (const auto &item : summary.stock)
+      stock.push_back(Json{{"resource", item.resource}, {"amount", std::to_string(item.amount)}});
+    Json unserved = Json::array();
+    for (const auto &item : summary.unservedInputs)
+      unserved.push_back(Json{{"resource", item.resource}, {"buildingType", item.buildingType},
+                              {"building", item.building}, {"held", std::to_string(item.held)},
+                              {"needed", std::to_string(item.needed)}});
+    out = Json{{"errorCode", "none"}, {"tick", std::to_string(summary.tick)},
+               {"population", nullptr}, {"workers", nullptr}, {"stock", stock},
+               {"unservedInputs", unserved}, {"vehicles", summary.vehicles},
+               {"text", summary.text}};
   } else if (method == "utility_diagnostics") {
     if (!Fields(req, {"revision", "offset", "limit"}, message, {"buildingId"}))
       return invalid(message);

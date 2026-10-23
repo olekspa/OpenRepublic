@@ -16,6 +16,15 @@ persisted or hashed. See
 trusted-local JSONL adapter. The API and protocol versions are both `0` and are
 OpenRepublic interfaces; they make no compatibility claim about WRSR.
 
+The additive read-only `summary` method is available to observer and controller
+roles. It returns a deterministic text summary and JSON fields for tick, stock
+totals by non-utility catalog resource, the top five currently stalled missing
+recipe inputs, and vehicle count. Population and worker counts are `null` in
+JSON and marked `unavailable` in text because the current economy snapshot has
+no such fields. Missing inputs are reported as held inventory versus the
+recipe's per-cycle input amount; this is an OpenRepublic diagnostic, not a
+claim about original-game workforce or shortage semantics.
+
 The host reuses `third_party/WickedEngine/Editor/json.hpp`. CMake exposes the
 containing directory as the `OPENREPUBLIC_WICKED_JSON_INCLUDE_DIR` cache path.
 It defaults to this checkout's initialized Wicked Engine submodule. Set the cache

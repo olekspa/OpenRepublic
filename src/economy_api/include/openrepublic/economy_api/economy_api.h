@@ -1,6 +1,7 @@
 #pragma once
 
 #include "openrepublic/economy/economy.h"
+#include "openrepublic/economy_api/economy_summary.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -238,6 +239,8 @@ public:
         std::uint32_t keepRecent);
     /** Returns all world collections and the matching tick, revision, and state hash. */
     WorldQuery QueryWorld() const;
+    /** Builds a deterministic compact summary from one authoritative world snapshot. */
+    EconomySummary Summary() const;
     /** Returns one bounded collection page, rejecting stale revisions and unknown kinds. */
     PageQuery QueryWorld(std::uint64_t expectedRevision, const std::string& kind,
         std::size_t offset, std::size_t limit) const;

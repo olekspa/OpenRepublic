@@ -198,6 +198,11 @@ WorldQuery EconomyApi::QueryWorld() const {
     }
     return {ErrorCode::None, MakeWorld(*catalog_, world_->Snapshot())};
 }
+EconomySummary EconomyApi::Summary() const {
+    if (!permissions_.query)
+        return {};
+    return MakeEconomySummary(*catalog_, world_->Snapshot());
+}
 PageQuery EconomyApi::QueryWorld(std::uint64_t revision, const std::string& kind,
     std::size_t offset, std::size_t limit) const {
     if (!permissions_.query) {
