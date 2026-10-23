@@ -1,5 +1,7 @@
 # OpenRepublic project plan
 
+**Current handoff (23 October 2026):** see [HANDOFF_2026-10-23.md](HANDOFF_2026-10-23.md) for the consolidated status, evidence boundaries, build/run instructions, open risks, and next steps.
+
 **Latest - electrical declarations and import identities (22 October 2026):** desktop/headless imports retain exact native source identities independently of rendering. The content reader retains optional electrical coordinates with diagnostics; all 488 local definitions and 143 declarations pass. Both Release builds and CTest68/68 client,67/67 headless pass. Automatic topology still requires port/domain semantics. See the [receipt](DEVELOPMENT_REPORT_2026-10-22_ELECTRICAL_PORTS.md). Global goal remains incomplete.
 
 **Latest - exact placement identities (22 October 2026):** a strict sequential reader now validates observed formats 121/124 through exact EOF and exposes source building-table indices. All 44 supported packages in a 65-file inventory pass native decoding; legacy scans retain unknown identity. Full Release builds succeed with 68/68 client and 67/67 headless tests. This closes a prerequisite for joining utility references; port semantics and automatic imported topology remain open. See [exact-placement receipt](DEVELOPMENT_REPORT_2026-10-22_EXACT_PLACEMENTS.md). The global goal remains incomplete.
