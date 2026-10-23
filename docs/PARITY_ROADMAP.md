@@ -85,3 +85,16 @@ Historical bridge authentication and original-game input failures are recorded
 in the progress log; they are not assumed to describe the current tool session.
 Construction and road semantics still require evidence regardless of tool
 availability. Private analysis, inputs and raw traces remain outside Git.
+
+## Update, 24 October 2026 (evening)
+
+New evidence since the table above was written (all labels as in the ledger; build context 23935965, one map package unless noted):
+
+- **Map header:** the fixed 0x20c structure is VERIFIED from the writer and the loader (versions 121 to 124): camera position and look-at, game day and year, extended-block flag and the two record-list counts are named; `ParseMapHeaderFixedBlock` exposes them. New-game start rules (start-year options and terrain-dependent start day) are VERIFIED ([GAME_SETUP.md](GAME_SETUP.md)). Remaining slots are UNKNOWN.
+- **Networks:** one decoder layout covers eleven package files (roads, rails, heating, water pipes, pedestrian ways, conveyors, pipes, power lines and the road/rail "secondary" files), each ending exactly after its group records ([MAP_PACKAGE_FILES.md](MAP_PACKAGE_FILES.md)). Secondary roads look like building-local roads (INFERRED). Rendering of heating, water and pedestrian geometry is not built.
+- **Roads:** the segment loader mapping is VERIFIED (node indices, list counts, the +0x40/+0x44 selector pair); width, lanes, speed and the type-id table are still UNKNOWN.
+- **Building runtime state:** the per-building writer layout (0x548 block, 0x190 block, collections, native strides) is VERIFIED; slot meanings are UNKNOWN. Observed behaviour: a 0 to 1 float (+0x3e8) fractional almost only on `temp` records, an enum-like slot (+0x3e4) and a flag (+0x410) varying within a type.
+- **Economy data:** all building-definition directives are inventoried; construction costs are retained raw and the opt-in diagnostic reports them unsupported.
+- **Tooling:** Codex workers are blocked by the account's usage limit until about 4:38 PM local; evidence work continues inline with the private Ghidra project (a raised-payload decompile script lets the largest routines decompile).
+
+Suggested next steps, in order: (1) trace consumers of the building-object offsets to name the state slots (construction progress, enabled, workers, stock); (2) find the road-type table (width, speed, lanes) via the segment object's +0x120/+0x124 consumers; (3) render heating, water-pipe and pedestrian geometry from the shared network decoder; (4) name the remaining header settings from the new-game menu; (5) the original-game screenshot comparison once captures exist.
