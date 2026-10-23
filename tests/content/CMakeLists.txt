@@ -52,6 +52,11 @@ target_link_libraries(OpenRepublicNmfHeaderTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicNmfHeaderTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicNmfHeaderTests COMMAND OpenRepublicNmfHeaderTests)
 
+add_executable(OpenRepublicMapHeaderTests map_header_tests.cpp)
+target_link_libraries(OpenRepublicMapHeaderTests PRIVATE OpenRepublicContent)
+target_compile_features(OpenRepublicMapHeaderTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicMapHeaderTests COMMAND OpenRepublicMapHeaderTests)
+
 add_executable(OpenRepublicNmfGeometryTests
     nmf_geometry_tests.cpp
 )
