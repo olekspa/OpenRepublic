@@ -42,3 +42,28 @@ Defaults for every kind: +0x44 = 2500, +0x48 = 150, +0x38 = 4.8, +0x3c = 0.5; th
 ## Data cross-check: 12 m spacing (24 October 2026)
 
 **OBSERVED (one road.bin, private analysis):** for each primary road segment the distance to the nearest point of any segment that shares no node with it clusters sharply at 12.0 m (269 of about 800 segments with a neighbour within 20 m; neighbouring half-metre bins hold 14 to 38). That agrees with the kind-0 constant +0x34 = 12.0 above, so 12 m is plausibly a snapping or lane-group spacing unit of the original's town layout (**INFERRED**; a road width of 12 m is not implied because the peak is between separate segments). It does not support 6.0 (the kind-1 value) as a spacing.
+
+## File to network kind mapping (added; VERIFIED)
+
+**VERIFIED (static review of the package loader and the new-game setup routine, build context 23935965):** each package file is loaded into one network object, and each object is configured with a fixed network kind. The mapping is:
+
+| Package file | Network kind |
+|---|---:|
+| `road.bin` | 0 |
+| `rail.bin` | 1 |
+| `rail_secondary.bin` | 2 |
+| `road_secondary.bin` | 3 |
+| `pedestrianway.bin` | 4 |
+| `factoryconnection.bin` | 5 |
+| `conveyor.bin` | 6 |
+| `pipe.bin` | 7 |
+| `electro_high.bin` | 8 |
+| `electro_low.bin` | 9 |
+| `buoy.bin` | 11 (0xb) |
+| `cableway.bin` | 12 (0xc) |
+| airport network (file not seen in the loader excerpt) | 13 (0xd) |
+| `heating.bin` | 14 (0xe) |
+| `fence.bin` | 15 (0xf) |
+| `waterpipes.bin` | 16 (0x10) |
+
+With this mapping the constant table above reads per file. **INFERRED, not established** (plausibility only; no consumer trace): member +0x34 is the cross-section width in metres (main roads 12.0, rail 6.0, wires and pipes 2.0), and the pair +0x40/+0x48 are lower/upper speed limits in metres per second (main roads 17 and 25, rails 35 and 50, pedestrian paths 4.5 and 6, airport 35 and 35). The 12 m nearest-neighbour peak between unconnected road segments (see above) agrees with a 12 m main-road width. These readings are **not** used by OpenRepublic code; the road mesh keeps its own presentation width. The road-kind flag at +0x25c is set for the rail kinds (1 and 2), not for kind 0, so the earlier table row labelled "1 and 2: road networks" should read "rail networks" (material sets: rail gravel, rails, wires, tunnels).
