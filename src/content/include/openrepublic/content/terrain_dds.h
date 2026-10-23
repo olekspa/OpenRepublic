@@ -15,6 +15,15 @@ struct Heightmap {
     std::vector<float> samples;
 };
 
+// Raw row-major four-byte texels from a legacy, single-level RGBA8 DDS.
+// Channels are returned in the byte order declared by the standard RGBA masks;
+// this type assigns no terrain meaning or spatial transform.
+struct Rgba8Raster {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::vector<std::uint8_t> pixels;
+};
+
 // Bounded parser for legacy single-level 2D DDS with FourCC 114 (R32F).
 // Maximum accepted file size is 256 MiB and maximum sample count is 64M.
 // On failure, output remains unchanged and error receives a diagnostic when
@@ -23,6 +32,14 @@ bool LoadLegacyR32F(const std::vector<std::uint8_t>& bytes, Heightmap& output,
                     std::string* error = nullptr);
 bool LoadLegacyR32F(const std::filesystem::path& path, Heightmap& output,
                     std::string* error = nullptr);
+
+// Bounded parser for a single-level legacy 2D DDS with 32-bit RGBA masks.
+// Maximum accepted file size is 256 MiB and maximum texel count is 64M.
+// Unsupported formats/topologies and non-exact payloads fail transactionally.
+bool LoadLegacyRgba8(const std::vector<std::uint8_t>& bytes, Rgba8Raster& output,
+                     std::string* error = nullptr);
+bool LoadLegacyRgba8(const std::filesystem::path& path, Rgba8Raster& output,
+                     std::string* error = nullptr);
 
 struct TerrainMetadata {
     float gridSize = 0.0f;
