@@ -217,8 +217,8 @@ def score_record(scenario, world, catalog, controller_ticks):
         requested = sum(int(network["requested"]) for network in networks if network["resource"] == "power")
         consumed = sum(int(network["consumed"]) for network in networks if network["resource"] == "power")
         breakdown = {
-            "throughputMicroUnits": consumed,
-            "unmetDemandMicroUnits": max(0, requested - consumed),
+            "throughputUnits": consumed,
+            "unmetDemandUnits": max(0, requested - consumed),
             "costUnits": len(world["buildings"]) + len(world["roads"]) + len(world.get("utilityConnections", [])),
             "costDefinition": "final building + road + utility-link count",
         }

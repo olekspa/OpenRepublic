@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "powered_chain_road_and_link_gap",
+  "name": "Powered chain road and utility-link gaps",
+  "description": "OpenRepublic-authored synthetic generator-to-mine-to-smelter chain. The mine and smelter sit on disconnected road fragments and the smelter lacks a power link, so completing production needs both a road connection and a utility link.",
+  "catalog": "openrepublic-economy 1\nresource ore\nresource steel\nutility power\nbuilding generator 1 1\n  recipe generate every 1 out power:4\nend\nbuilding powered_mine 1 1\n  store ore 32\n  recipe extract every 1 in power:2 out ore:1\nend\nbuilding smelter 1 1\n  store ore 32\n  store steel 32\n  recipe smelt every 1 in ore:1 power:2 out steel:1\nend\nvehicle truck capacity 8 speed 4\n",
+  "roads": [
+    { "a": { "x": 1, "z": 2 }, "b": { "x": 2, "z": 2 } },
+    { "a": { "x": 5, "z": 2 }, "b": { "x": 6, "z": 2 } },
+    { "a": { "x": 9, "z": 2 }, "b": { "x": 10, "z": 2 } }
+  ],
+  "buildings": [
+    { "type": "generator", "x": 1, "z": 3 },
+    { "type": "powered_mine", "x": 5, "z": 3 },
+    { "type": "smelter", "x": 9, "z": 3 }
+  ],
+  "utilityConnections": [
+    { "resource": "power", "aBuilding": 0, "bBuilding": 1 }
+  ],
+  "score": { "metric": "utility_multi_objective" }
+}
