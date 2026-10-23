@@ -1,4 +1,4 @@
-# Synthetic economy scenarios
+﻿# Synthetic economy scenarios
 
 These fixtures exercise the OpenRepublic economy host and the rule-based
 controller in `tools/republic_autopilot.py`. They are OpenRepublic-authored
@@ -73,3 +73,20 @@ or proprietary game material.
 **UNKNOWN:** whether these layouts, rule-based behavior, resource quantities,
 score values, or any resulting hash match WRSR. No WRSR parity or compatibility
 claim is made.
+
+## LLM controllers and tournament baseline
+
+The same fixtures can seed `tools/llm_republic.py` and the tournament harness.
+Use the exact scenario ID (the shipped filename stem) or an existing JSON path.
+Pass `--scenario <id|path>` to `llm_republic.py`; setup consumes one tick, then
+controller runs for `rounds × ticks` ticks and emits a final `scenarioScore`
+record with the same integer `stored_non_raw_units` metric as this scorer.
+
+For a tournament comparison, add `--scenario <id|path>` to
+`republic_tournament.py`. Each manifest controller runs on a fresh fixture host,
+and a separate rule-based autopilot baseline is added to the same table. All
+rows use `scoreMicroUnits` as the exact value and `scoreUnits` for display.
+World `host_args` are disallowed in scenario mode so region/checkpoint inputs
+cannot silently alter the fixture. Reported final ticks can differ because the
+autopilot may advance extra ticks while attempting placements. Local tests use
+the scripted backend only; network and installed CLI backends are not invoked.

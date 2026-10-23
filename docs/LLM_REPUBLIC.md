@@ -57,3 +57,17 @@ All runs used the N22 region with radius 450, Codex `gpt-5.6-luna`, eight rounds
 | Rule-based autopilot | 4017 | 730.375239 | 0.0 | baseline |
 
 Both improved runs acted in all eight rounds. Run A had three rejected commands (one unavailable placement access cell and two duplicate haul orders); run B had three duplicate haul-order rejections. This small two-run sample suggests the controller can outperform the baseline on this specific world and metric, but model variance and the five-tick difference from autopilot mean it is not a broad performance or WRSR parity claim. Region imports and economy behavior remain experimental OpenRepublic evidence.
+
+## Scenario mode
+
+Pass `--scenario <id|path>` to seed a shipped scenario by exact ID/filename stem
+or an explicit existing JSON path. The setup consumes one tick, followed by the
+requested `rounds × ticks` controller ticks. A final `scenarioScore` JSON record
+uses the same deterministic integer `stored_non_raw_units` metric as
+`tools/scenario_score.py`.
+
+Add `--scenario <id|path>` to `republic_tournament.py` for scenario comparisons.
+Each manifest controller receives a fresh fixture host and the table includes a
+separate rule-based autopilot baseline. Scenario rows share the fixture score
+metric; actual final ticks are shown because autopilot placement attempts may
+advance extra ticks. Manifest world `host_args` are rejected in this mode.

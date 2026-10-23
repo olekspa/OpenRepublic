@@ -111,6 +111,20 @@ def load_scenario(path):
     return scenario
 
 
+def resolve_scenario(name_or_path):
+    """Resolve an explicit JSON path or an exact shipped scenario ID/stem."""
+    candidate = pathlib.Path(name_or_path)
+    if candidate.is_file():
+        return load_scenario(candidate)
+    if candidate.parent != pathlib.Path(".") or candidate.suffix:
+        raise ScenarioError(f"scenario path does not exist: {name_or_path}")
+    matches = [path for path in SCENARIO_DIR.glob("*.json")
+               if path.stem == name_or_path]
+    if not matches:
+        raise ScenarioError(f"unknown scenario name or path: {name_or_path}")
+    return load_scenario(matches[0])
+
+
 def _seed(host, scenario):
     """Queue fixture roads/buildings and apply them together at the next tick."""
     commands = [
@@ -136,6 +150,33 @@ def _seed(host, scenario):
             raise RuntimeError(f"scenario setup command {handle} was rejected")
 
 
+def seed_scenario(host, scenario):
+    """Apply the common fixture setup to an already-running fresh host."""
+    _seed(host, scenario)
+
+
+def score_record(scenario, world, catalog, controller_ticks):
+    """Build the shared deterministic scenario metric receipt for a final world."""
+    raw = autopilot.raw_resources(catalog)
+    score_micro_units = sum(int(item["amount"])
+                            for building in world["buildings"]
+                            for item in building["inventory"] if item["resource"] not in raw)
+    scenario_hash = hashlib.sha256(json.dumps(
+        scenario, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+    stable = {
+        "schemaVersion": 1, "scenarioId": scenario["id"], "scenarioHash": scenario_hash,
+        "metric": scenario["score"]["metric"], "controllerTicks": controller_ticks,
+        "setupTicks": 1 if scenario["roads"] or scenario["buildings"] else 0,
+        "tick": int(world["tick"]), "stateHash": str(world["stateHash"]),
+        "scoreMicroUnits": score_micro_units, "scoreUnits": score_micro_units / 1_000_000,
+        "buildings": len(world["buildings"]), "roads": len(world["roads"]),
+        "orders": len(world["orders"]), "vehicles": len(world["vehicles"]),
+    }
+    digest = hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":"),
+                                       ensure_ascii=False).encode("utf-8")).hexdigest()
+    return {**stable, "scoreHash": digest}
+
+
 def run_scenario(host_exe, scenario, ticks, host_args=()):
     """Run setup and one autopilot round; return a canonical, hashable score record."""
     if isinstance(ticks, bool) or not isinstance(ticks, int) or not 1 <= ticks <= MAX_TICKS:
@@ -148,31 +189,13 @@ def run_scenario(host_exe, scenario, ticks, host_args=()):
         with contextlib.redirect_stdout(io.StringIO()):
             result = autopilot.run_round(host, catalog, ticks, set(), round_number=1)
         world = result["world"]
-        raw = autopilot.raw_resources(catalog)
-        score_micro_units = sum(int(item["amount"])
-                                for building in world["buildings"]
-                                for item in building["inventory"] if item["resource"] not in raw)
-        scenario_hash = hashlib.sha256(json.dumps(
-            scenario, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
-        stable = {
-            "schemaVersion": 1,
-            "scenarioId": scenario["id"],
-            "scenarioHash": scenario_hash,
-            "metric": scenario["score"]["metric"],
-            "controllerTicks": ticks,
-            "setupTicks": 1 if scenario["roads"] or scenario["buildings"] else 0,
-            "tick": int(world["tick"]),
-            "stateHash": str(world["stateHash"]),
-            "scoreMicroUnits": score_micro_units,
-            "scoreUnits": score_micro_units / 1_000_000,
-            "buildings": len(world["buildings"]),
-            "roads": len(world["roads"]),
-            "orders": len(world["orders"]),
-            "vehicles": len(world["vehicles"]),
+        stable = score_record(scenario, world, catalog, ticks)
+        stable = {key: value for key, value in stable.items() if key != "scoreHash"}
+        stable.update({
             "autopilot": {key: result[key] for key in (
                 "placements_accepted", "retargets_queued", "accepted_retargets", "rejected_retargets",
                 "creates_queued", "accepted_creates", "rejected_creates")},
-        }
+        })
         digest = hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":"),
                                            ensure_ascii=False).encode("utf-8")).hexdigest()
         return {**stable, "scoreHash": digest}
