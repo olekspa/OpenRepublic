@@ -34,3 +34,8 @@ The private report and candidate relief images are written to the configured pri
 - **UNKNOWN:** world dimensions, water level/flags/extents, climate or season, start date, and any other fields in the opaque tail. Cross-file variation and terrain/script correlations did not establish field offsets or types for these values. Do not use this prefix reader to infer or populate them.
 
 The header reader deliberately exposes neutral candidate names for the prefix and does not parse the variable-size tail. No original files or payloads were copied into the repository.
+
+## Map header consumer trace (23 October 2026)
+
+- **VERIFIED (static control-flow review; build 23935965 context):** the map-selection/browser routine tries `headerE.bin`, then falls back to `header.bin`. It reads 0x20c bytes and copies UTF-16 code units beginning at byte offset +4 up to a NUL terminator for a displayed text value. This path does not interpret the leading four bytes.
+- **UNKNOWN:** the browser path does not establish a complete package-header schema. It exposes no fields after that copied text; water level/flags, world size, and climate remain opaque. A separate runtime consumer or writer trace is required before adding tail fields.

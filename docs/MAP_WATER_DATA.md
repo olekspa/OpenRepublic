@@ -72,3 +72,9 @@ The same shared directory contains files named `detailbump.dds`, `foam.dds`, `fo
 ### Header prefix update (23 October 2026)
 
 The bounded OpenRepublic header-prefix reader preserves the leading 32-bit value and UTF-16LE string candidate without assigning either a game meaning. The inspected headers vary in total size and the remaining bytes are uninterpreted. **UNKNOWN:** water height, sea/lake flags, and water extents are not decoded by this reader. See [MAP_SURVEY.md](MAP_SURVEY.md) for the inventory and limits.
+
+## Static water configuration-to-shader trace (23 October 2026)
+
+**VERIFIED (static control-flow review; build 23935965 context):** `C3D_WATER::InitializeFromFolder` recognizes `$COLOR` and reads three `%f` values into the water object's color fields, `$AMPLITUDE` into its amplitude field, and `$HEIGHT` into its height field. In `C3D_WATER::RenderWater`, the color triplet is sent to the shader constant `WaterColor` with a fourth component of `1.0`; the height field is sent as `Height`; and the amplitude field is sent as `Amplitude`. This directly links these three script declarations to named shader constants in the analyzed build.
+
+This static trace does not establish the color space/channel interpretation, world-space height convention, whether another map value overrides the shared configuration, how gameplay water queries use height, or whether other builds behave identically. The remaining script parameters and texture bindings are not mapped here. The prior statement that exact runtime constant binding was UNKNOWN is narrowed for these three inputs only; broader water behavior and map-specific level remain UNKNOWN.
