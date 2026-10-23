@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "powered_chain_link_gap",
+  "name": "Powered chain utility-link gap",
+  "description": "OpenRepublic-authored synthetic generator-to-mine-to-smelter chain. Roads connect all buildings, but only the generator and mine have a power link; the baseline has no utility-link command.",
+  "catalog": "openrepublic-economy 1\nresource ore\nresource steel\nutility power\nbuilding generator 1 1\n  recipe generate every 1 out power:4\nend\nbuilding powered_mine 1 1\n  store ore 32\n  recipe extract every 1 in power:2 out ore:1\nend\nbuilding smelter 1 1\n  store ore 32\n  store steel 32\n  recipe smelt every 1 in ore:1 power:2 out steel:1\nend\nvehicle truck capacity 8 speed 4\n",
+  "roads": [
+    { "a": { "x": 1, "z": 2 }, "b": { "x": 2, "z": 2 } },
+    { "a": { "x": 2, "z": 2 }, "b": { "x": 3, "z": 2 } },
+    { "a": { "x": 3, "z": 2 }, "b": { "x": 4, "z": 2 } },
+    { "a": { "x": 4, "z": 2 }, "b": { "x": 5, "z": 2 } },
+    { "a": { "x": 5, "z": 2 }, "b": { "x": 6, "z": 2 } },
+    { "a": { "x": 6, "z": 2 }, "b": { "x": 7, "z": 2 } },
+    { "a": { "x": 7, "z": 2 }, "b": { "x": 8, "z": 2 } },
+    { "a": { "x": 8, "z": 2 }, "b": { "x": 9, "z": 2 } }
+  ],
+  "buildings": [
+    { "type": "generator", "x": 1, "z": 3 },
+    { "type": "powered_mine", "x": 5, "z": 3 },
+    { "type": "smelter", "x": 9, "z": 3 }
+  ],
+  "utilityConnections": [
+    { "resource": "power", "aBuilding": 0, "bBuilding": 1 }
+  ],
+  "score": { "metric": "utility_multi_objective" }
+}

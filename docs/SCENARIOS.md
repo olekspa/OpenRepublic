@@ -16,6 +16,8 @@ contain game data.
 | `power_deficit` | One generator linked through two powered mines | Demand exceeds finite connected power supply. |
 | `unconnected_consumer` | Generator and powered mine with no utility link | The consumer cannot use supply in the generator's separate component. |
 | `overbuilt_generator` | High output generator linked to one powered mine | Generator supply exceeds demand; unused supply is discarded. |
+| `powered_chain_link_gap` | Generator, powered mine, and smelter on connected roads; only generator and mine are power-linked | The baseline cannot add the power link needed by the smelter. |
+| `powered_chain_road_and_link_gap` | Generator, powered mine, and smelter on separate road fragments; only generator and mine are power-linked | The chain needs both a road connection and a power link to the smelter. |
 
 The building coordinates are origins on the host grid. Each building's access
 cell is one cell north (`x`, `z - 1`); the fixtures place that cell on a road.
@@ -68,10 +70,12 @@ the original game.
 ## Metric and evidence boundary
 
 `stored_non_raw_units` is the final stored inventory total for resources the
-host's synthetic catalog classifies as non-raw, reported in whole units. For
-utility scenarios, `throughputMicroUnits` is power consumed during the final
-tick, `unmetDemandMicroUnits` is eligible power demand minus consumption, and
-`costUnits` is final buildings + roads + utility links. Cost is an explicit
+host's synthetic catalog classifies as non-raw, reported in whole units, with
+the exact value retained in `scoreMicroUnits`. For utility scenarios,
+`throughputUnits` is power consumed during the final tick and
+`unmetDemandUnits` is eligible power demand minus consumption. These are catalog
+units as reported by the live host; they are not micro-scaled. `costUnits` is
+final buildings + roads + utility links. Cost is an explicit
 infrastructure-count proxy; the current economy has no construction-price
 model. Utility diagnostics measure this independent model's per-tick flows and
 do not establish physical wattage, original-game topology, or parity. Neither
@@ -86,6 +90,38 @@ or proprietary game material.
 **UNKNOWN:** whether these layouts, rule-based behavior, resource quantities,
 score values, or any resulting hash match WRSR. No WRSR parity or compatibility
 claim is made.
+
+## Baseline scores across the fixture suite
+
+The following **OBSERVED** results came from the rule-based baseline autopilot
+in this checkout, using the headless Release host and 16 requested autopilot
+ticks per scenario. The output score is the inventory total in whole units, or
+`throughputUnits / unmetDemandUnits` with the infrastructure-count proxy for
+utility scenarios. Inventory totals can be fractional because the exact host
+inventory is stored in micro-units. Final ticks vary when the autopilot advances
+extra ticks while attempting orders or placements.
+
+| Scenario | Metric | Baseline score | Final tick |
+| --- | --- | ---: | ---: |
+| `flour_oversupply` | Stored non-raw units | 0.000006 (6 micro-units) | 17 |
+| `full_chain` | Stored non-raw units | 0.000004 (4 micro-units) | 17 |
+| `grain_shortage` | Stored non-raw units | 0.000009 (9 micro-units) | 20 |
+| `road_gap` | Stored non-raw units | 0 (0 micro-units) | 17 |
+| `power_deficit` | Throughput / unmet; cost | 2 / 2; cost 5 | 18 |
+| `unconnected_consumer` | Throughput / unmet; cost | 0 / 2; cost 2 | 17 |
+| `overbuilt_generator` | Throughput / unmet; cost | 2 / 0; cost 3 | 18 |
+| `powered_chain_link_gap` | Throughput / unmet; cost | 2 / 2; cost 12 | 18 |
+| `powered_chain_road_and_link_gap` | Throughput / unmet; cost | 2 / 0; cost 7 | 18 |
+
+The last two scenarios leave their initial utility-link configuration unchanged;
+the road-and-link fixture also retains its three disconnected road segments.
+The autopilot creates one ore-hauling order in each. In the connected-road
+fixture, eligible smelter demand remains unmet because the autopilot does not
+add a power link. In the road-and-link fixture, the ore remains unreachable
+across disconnected roads, so the smelter has no eligible power demand yet.
+These utility scores report last-tick power flow rather than full chain output.
+The fixtures show infrastructure gaps that the current autopilot does not
+repair, not general controller competence.
 
 ## LLM controllers and tournament baseline
 

@@ -96,13 +96,13 @@ class ScenarioLoaderTests(unittest.TestCase):
         scenario = scenario_score.resolve_scenario("power_deficit")
         world = {"tick": 4, "stateHash": "state", "buildings": [{"inventory": []}] * 3,
                  "roads": [], "orders": [], "vehicles": [], "utilityConnections": [{}, {}],
-                 "utilityDiagnostics": {"networks": [{"resource": "power", "requested": "4000000",
-                                                          "consumed": "2000000"}]}}
+                 "utilityDiagnostics": {"networks": [{"resource": "power", "requested": "4",
+                                                          "consumed": "2"}]}}
         first = scenario_score.score_record(scenario, world, {"buildingTypes": []}, 3)
         second = scenario_score.score_record(scenario, world, {"buildingTypes": []}, 3)
         self.assertEqual(first, second)
-        self.assertEqual(first["scoreBreakdown"]["throughputMicroUnits"], 2_000_000)
-        self.assertEqual(first["scoreBreakdown"]["unmetDemandMicroUnits"], 2_000_000)
+        self.assertEqual(first["scoreBreakdown"]["throughputUnits"], 2)
+        self.assertEqual(first["scoreBreakdown"]["unmetDemandUnits"], 2)
         self.assertEqual(first["scoreBreakdown"]["costUnits"], 5)
         self.assertEqual(first["scoreHash"], second["scoreHash"])
 
@@ -140,8 +140,8 @@ class ScenarioHostIntegrationTests(unittest.TestCase):
         for name, (throughput, unmet) in expected.items():
             with self.subTest(scenario=name):
                 result = scenario_score.run_scenario(HOST_EXE, scenario_score.resolve_scenario(name), 16)
-                self.assertEqual(result["scoreBreakdown"]["throughputMicroUnits"], throughput)
-                self.assertEqual(result["scoreBreakdown"]["unmetDemandMicroUnits"], unmet)
+                self.assertEqual(result["scoreBreakdown"]["throughputUnits"], throughput)
+                self.assertEqual(result["scoreBreakdown"]["unmetDemandUnits"], unmet)
                 self.assertEqual(len(result["scoreHash"]), 64)
 
 
