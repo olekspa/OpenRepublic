@@ -59,7 +59,22 @@ def self_test():
     assert validate_action({"kind":"build_road","ax":0,"az":0,"bx":2,"bz":0},w,c)
     assert validate_action({"kind":"create_haul_order","source":1,"destination":99,"resource":"wood","vehicleType":"truck"},w,c)
     from llm_backends import ScriptedBackend
-    assert ScriptedBackend(['{"actions":[],"notes":"ok"}']).complete("x")["notes"]=="ok"
+    from types import SimpleNamespace
+    class FakeHost:
+        def __init__(self):
+            self.tick=0; self.submitted=0; self.polled=0
+            self.world_data={"revision":"1","tick":"0","buildings":[{"id":1,"type":"Farm","inventory":[],"stallReason":"running"}],"roads":[],"orders":[],"vehicles":[]}
+        def call(self,m,**kw):
+            if m=="catalog": return {"errorCode":"none","resources":[{"name":"grain"}],"buildingTypes":[{"name":"Farm","recipes":[]}],"vehicleTypes":[]}
+            if m=="world": self.world_data["tick"]=str(self.tick); return {"errorCode":"none","world":self.world_data}
+            if m=="advise": return {"errorCode":"none","unservedInputs":[]}
+            if m=="submit": self.submitted+=1; return {"errorCode":"none","state":"queued","handle":"1"}
+            if m=="step": self.tick+=kw["ticks"]; return {"errorCode":"none"}
+            if m=="poll": self.polled+=1; return {"state":"accepted","failure":"none"}
+            raise AssertionError(m)
+    fake=FakeHost(); scripted=ScriptedBackend([{"actions":[{"kind":"set_building_enabled","buildingId":1,"enabled":False}],"notes":"ok"}])
+    run(fake,scripted,SimpleNamespace(rounds=1,ticks=2,transcript=None,action_cap=24,fallback_advise=False))
+    assert fake.submitted==1 and fake.polled==1 and fake.tick==2
     print("llm_republic self-test passed")
 
 def observe(w,c,adv,last,score):
