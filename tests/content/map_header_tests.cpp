@@ -93,12 +93,15 @@ void TestFixedBlockLayout() {
     WriteU32LE(bytes, 0x1d8, 1);
     WriteU32LE(bytes, 0x1e0, 7);
     WriteU32LE(bytes, 0x1dc, 9);
+    WriteU32LE(bytes, 0x198, 123);
+    WriteU32LE(bytes, 0x19c, 1985);
     MapHeaderFixedBlock block;
     std::string error;
     Check(ParseMapHeaderFixedBlock(bytes, block, &error), "fixed block parses for version 124");
     Check(block.version == 124 && block.words[0] == 0x11111111u && block.words[32] == 0xabcdef01u,
           "fixed block first and last words");
     Check(block.cameraPosition[0] == 1.0f && block.cameraLookAt[2] == 2.0f, "camera vectors read as floats");
+    Check(block.gameDay == 123 && block.gameYear == 1985, "game date slots");
     Check(block.extendedBlockFlag == 1 && block.firstRecordListCount == 7 && block.secondRecordListCount == 9,
           "extended flag and record list counts");
     Check(block.flagBytes[0] == 1 && block.flagBytes[1] == 2 && block.flagBytes[2] == 3, "fixed block flag bytes");

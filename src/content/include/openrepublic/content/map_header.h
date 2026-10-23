@@ -47,6 +47,12 @@ struct MapHeaderFixedBlock {
     std::uint32_t extendedBlockFlag = 0;
     std::uint32_t firstRecordListCount = 0;   // +0x1e0
     std::uint32_t secondRecordListCount = 0;  // +0x1dc
+    // VERIFIED by consumer arithmetic in the original's hint/achievement checks (elapsed
+    // days = (yearNow - yearThen) * 365 + dayNow - dayThen, with the loader storing +0x19c
+    // as the year and +0x198 as the day): the current in-game date. Whether the day is
+    // zero-based or 1-based, and the calendar's month layout, are UNKNOWN.
+    std::int32_t gameDay = 0;   // +0x198
+    std::int32_t gameYear = 0;  // +0x19c
 };
 
 // Requires version 124 and at least 0x20c bytes; everything else fails unchanged.

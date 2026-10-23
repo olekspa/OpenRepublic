@@ -107,6 +107,8 @@ bool ParseMapHeaderFixedBlock(std::string_view bytes, MapHeaderFixedBlock& outpu
     candidate.extendedBlockFlag = readU32(0x1d8);
     candidate.firstRecordListCount = readU32(0x1e0);
     candidate.secondRecordListCount = readU32(0x1dc);
+    candidate.gameDay = static_cast<std::int32_t>(readU32(0x198));
+    candidate.gameYear = static_cast<std::int32_t>(readU32(0x19c));
     output = candidate;
     if (error) error->clear();
     return true;
