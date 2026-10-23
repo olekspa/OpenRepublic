@@ -291,3 +291,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~17:10 EDT** Worker SCEN-LLM started (scenario scoring for LLM republic/tournament harness, scripted backend only in tests).
 
 - **2026-10-23 ~17:40 EDT** SCEN-LLM merged: --scenario for llm_republic/republic_tournament scored by the scenario scorer (scripted backend in tests). CTest after reconfigure shown in commit.
+
+- **2026-10-23 ~18:10 EDT** Worker SCEN-2 started (power/utility scenarios and multi-objective scoring). Correction: SCEN-LLM merge verified with CTest 73/73 after reconfigure.
