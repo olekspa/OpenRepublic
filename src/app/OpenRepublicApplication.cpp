@@ -1165,12 +1165,16 @@ namespace openrepublic
 						{
 							weather.SetOceanEnabled(true);
 							weather.oceanParameters.waterHeight = showcaseEnvironment.waterLevel;
-							weather.oceanParameters.wave_amplitude = 2.0f;
-							weather.oceanParameters.wind_speed = 60.0f;
-							weather.oceanParameters.patch_length = 140.0f;
-							weather.oceanParameters.choppy_scale = 0.8f;
-							weather.oceanParameters.waterColor = XMFLOAT4(0.02f, 0.10f, 0.12f, 0.85f);
-							weather.oceanParameters.extinctionColor = XMFLOAT4(0.10f, 0.55f, 0.65f, 1.0f);
+						// Calm, deep teal presentation water: keep vertical displacement well below
+						// the terrain shore tolerance so the plane cannot wash over nearby buildings.
+						weather.oceanParameters.wave_amplitude = 0.65f;
+						weather.oceanParameters.wind_speed = 28.0f;
+						weather.oceanParameters.patch_length = 220.0f;
+						weather.oceanParameters.choppy_scale = 0.3f;
+						weather.oceanParameters.surfaceDetail = 4;
+						weather.oceanParameters.surfaceDisplacementTolerance = 0.8f;
+						weather.oceanParameters.waterColor = XMFLOAT4(0.015f, 0.075f, 0.095f, 0.78f);
+						weather.oceanParameters.extinctionColor = XMFLOAT4(0.10f, 0.32f, 0.36f, 1.0f);
 						}
 						if (const wi::scene::TransformComponent* sunTransform = previewWorld.transforms.GetComponent(sun))
 						{

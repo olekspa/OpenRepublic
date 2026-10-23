@@ -532,6 +532,31 @@ namespace openrepublic::preview
 		return ShowcaseTerrainSunGain(g_bakedSunElevation);
 	}
 
+	namespace
+	{
+		const wi::Resource& ShowcaseShoreFoamTexture()
+		{
+			static wi::Resource resource = []()
+			{
+				constexpr std::uint32_t width = 128, height = 32;
+				std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4, 255);
+				for (std::uint32_t y = 0; y < height; ++y)
+				{
+					const float edge = std::min(static_cast<float>(y), static_cast<float>(height - 1 - y)) / 8.0f;
+					for (std::uint32_t x = 0; x < width; ++x)
+					{
+						const float noise = 0.58f + 0.42f * Hash01(static_cast<int>(x / 3), static_cast<int>(y / 2), 177);
+						const float streak = 0.72f + 0.28f * (0.5f + 0.5f * std::sin(float(x) * 0.24f + float(y) * 0.31f));
+						const std::size_t i = (static_cast<std::size_t>(y) * width + x) * 4;
+						pixels[i + 3] = static_cast<std::uint8_t>(std::clamp(edge, 0.0f, 1.0f) * noise * streak * 255.0f);
+					}
+				}
+				return MakeTexture(width, height, std::move(pixels));
+			}();
+			return resource;
+		}
+	}
+
 	XMFLOAT3 ShadeShowcaseTerrain(const ShowcaseTerrainData& data, double worldX, double worldZ,
 		float height, float slope)
 	{
@@ -556,12 +581,107 @@ namespace openrepublic::preview
 		color = Mix(color, snow, SmoothStep(0.80f, 0.95f, elevation) * (1.0f - SmoothStep(0.5f, 0.9f, slope)));
 		if (data.hasWater)
 		{
-			color = Mix(color, sand, 1.0f - SmoothStep(data.waterLevel + 0.3f, data.waterLevel + 2.6f, height));
+			// A narrow wet margin follows the slope: vertical banks get a tighter band,
+			// while gentle beaches retain a wider, softly blended sand transition.
+			const float shoreWidth = std::clamp(2.7f / (0.35f + slope * 2.0f), 0.8f, 3.2f);
+			const float wet = 1.0f - SmoothStep(data.waterLevel + 0.04f, data.waterLevel + shoreWidth, height);
+			const XMFLOAT3 wetSand(0.19f, 0.16f, 0.105f);
+			color = Mix(color, sand, wet * 0.48f);
+			color = Mix(color, wetSand, wet * (1.0f - SmoothStep(data.waterLevel - 0.25f,
+				data.waterLevel + 0.55f, height)) * 0.82f);
 		}
 		// The real WRSR ground tile is much darker on average than the procedural one.
 		const float sunGain = ShowcaseTerrainSunGain(g_bakedSunElevation);
 		const float detail = sunGain * (0.97f + fine * 0.04f) * (RealGroundAlbedoValid() ? 3.2f - 0.9f * rockMask : 1.45f);
 		return XMFLOAT3(color.x * detail, color.y * detail, color.z * detail);
+	}
+
+	bool BuildShowcaseShoreFoam(wi::scene::Scene& scene, const ShowcaseTerrainData& terrain,
+		const XMFLOAT3& worldOrigin, std::string& error)
+	{
+		if (!terrain.hasWater || terrain.grid.width < 2 || terrain.grid.height < 2)
+		{
+			return true;
+		}
+		const TerrainPreviewGrid& grid = terrain.grid;
+		std::vector<XMFLOAT3> positions;
+		std::vector<XMFLOAT2> uvs;
+		std::vector<std::uint32_t> indices;
+		constexpr std::size_t kMaxSegments = 18000;
+		positions.reserve(kMaxSegments * 4);
+		uvs.reserve(kMaxSegments * 4);
+		indices.reserve(kMaxSegments * 6);
+		const auto heightAt = [&](std::uint32_t x, std::uint32_t z)
+		{
+			return grid.heights[static_cast<std::size_t>(z) * grid.width + x];
+		};
+		struct Point { double x, z; };
+		for (std::uint32_t z = 0; z + 1 < grid.height && indices.size() / 6 < kMaxSegments; ++z)
+		{
+			for (std::uint32_t x = 0; x + 1 < grid.width && indices.size() / 6 < kMaxSegments; ++x)
+			{
+				const float h[4] = { heightAt(x, z), heightAt(x + 1, z), heightAt(x + 1, z + 1), heightAt(x, z + 1) };
+				const Point p[4] = { {grid.worldXCoordinates[x], grid.worldZCoordinates[z]},
+					{grid.worldXCoordinates[x + 1], grid.worldZCoordinates[z]},
+					{grid.worldXCoordinates[x + 1], grid.worldZCoordinates[z + 1]},
+					{grid.worldXCoordinates[x], grid.worldZCoordinates[z + 1]} };
+				Point crossings[4];
+				int count = 0;
+				for (int edge = 0; edge < 4; ++edge)
+				{
+					const int next = (edge + 1) & 3;
+					const float a = h[edge] - terrain.waterLevel;
+					const float b = h[next] - terrain.waterLevel;
+					if ((a < 0.0f && b >= 0.0f) || (a >= 0.0f && b < 0.0f))
+					{
+						const double t = std::clamp(static_cast<double>(a / (a - b)), 0.0, 1.0);
+						crossings[count++] = { p[edge].x + (p[next].x - p[edge].x) * t,
+							p[edge].z + (p[next].z - p[edge].z) * t };
+					}
+				}
+				if (count < 2) continue;
+				// Marching-squares saddle cells can produce four intersections; connect
+				// consecutive pairs deterministically and cap total geometry below 18k quads.
+				for (int pair = 0; pair + 1 < count && indices.size() / 6 < kMaxSegments; pair += 2)
+				{
+					const Point a = crossings[pair], b = crossings[pair + 1];
+					const double dx = b.x - a.x, dz = b.z - a.z;
+					const double length = std::hypot(dx, dz);
+					if (length < 0.01) continue;
+					const double nx = -dz / length * 0.85, nz = dx / length * 0.85;
+					const float y = terrain.waterLevel + 0.12f;
+					const std::uint32_t base = static_cast<std::uint32_t>(positions.size());
+					positions.insert(positions.end(), { XMFLOAT3(float(a.x - worldOrigin.x - nx), y, float(a.z - worldOrigin.z - nz)),
+						XMFLOAT3(float(a.x - worldOrigin.x + nx), y, float(a.z - worldOrigin.z + nz)),
+						XMFLOAT3(float(b.x - worldOrigin.x - nx), y, float(b.z - worldOrigin.z - nz)),
+						XMFLOAT3(float(b.x - worldOrigin.x + nx), y, float(b.z - worldOrigin.z + nz)) });
+					const float repeat = static_cast<float>(length / 5.0);
+					uvs.insert(uvs.end(), { XMFLOAT2(0, 0), XMFLOAT2(1, 0), XMFLOAT2(0, repeat), XMFLOAT2(1, repeat) });
+					indices.insert(indices.end(), { base, base + 2, base + 1, base + 1, base + 2, base + 3 });
+				}
+			}
+		}
+		if (indices.empty()) return true;
+		const wi::ecs::Entity entity = scene.Entity_CreateMeshFromData("OpenRepublic showcase shoreline foam",
+			indices.size(), indices.data(), positions.size(), positions.data());
+		wi::scene::MeshComponent* mesh = scene.meshes.GetComponent(entity);
+		wi::scene::MaterialComponent* material = scene.materials.GetComponent(entity);
+		if (mesh == nullptr || material == nullptr)
+		{
+			error = "Wicked Engine did not create shoreline foam components";
+			return false;
+		}
+		mesh->vertex_uvset_0 = std::move(uvs);
+		mesh->vertex_normals.assign(positions.size(), XMFLOAT3(0, 1, 0));
+		mesh->CreateRenderData();
+		material->userBlendMode = wi::enums::BLENDMODE_ALPHA;
+		material->SetBaseColor(XMFLOAT4(0.82f, 0.91f, 0.88f, 0.42f));
+		material->SetRoughness(0.9f);
+		material->textures[wi::scene::MaterialComponent::BASECOLORMAP].resource = ShowcaseShoreFoamTexture();
+		material->textures[wi::scene::MaterialComponent::BASECOLORMAP].uvset = 0;
+		material->CreateRenderData(true);
+		if (wi::scene::ObjectComponent* object = scene.objects.GetComponent(entity)) object->SetCastShadow(false);
+		return true;
 	}
 
 	const wi::Resource& ShowcaseGrassTexture()
@@ -858,6 +978,11 @@ namespace openrepublic::preview
 		{
 			object->SetCastShadow(false);
 		}
+		if (!BuildShowcaseShoreFoam(scene, terrain, XMFLOAT3(static_cast<float>(center.X()), 0.0f,
+			static_cast<float>(center.Z())), error))
+		{
+			return false;
+		}
 
 		// ---- Trees (procedural OpenRepublic assets, not WRSR vegetation).
 		struct Species
@@ -1098,7 +1223,7 @@ namespace openrepublic::preview
 			const int hx = static_cast<int>(std::floor(candidate.x * 0.37));
 			const int hz = static_cast<int>(std::floor(candidate.z * 0.37));
 			const double h = heightNear(candidate.x, candidate.z);
-			if (terrain.hasWater && h < terrain.waterLevel + 1.2)
+			if (terrain.hasWater && h < terrain.waterLevel + 0.25)
 			{
 				continue;
 			}
