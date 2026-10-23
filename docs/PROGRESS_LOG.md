@@ -295,3 +295,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-23 ~18:10 EDT** Worker SCEN-2 started (power/utility scenarios and multi-objective scoring). Correction: SCEN-LLM merge verified with CTest 73/73 after reconfigure.
 
 - **2026-10-23 ~18:50 EDT** SCEN-2 merged (power_deficit, unconnected_consumer, overbuilt_generator + multi-objective breakdown). The worker's live-host test expected micro-scaled utility values (2,000,000) but the host reports last-tick utility amounts in catalog units (power:2 -> 2); I corrected the test expectations to 2/2, 0/2, 2/0. The *MicroUnits field names for utility scores are therefore misnomers (OBSERVED unit = catalog units); rename left for a follow-up. CTest 73/73.
+
+- **2026-10-23 ~19:20 EDT** Worker SCEN-3 started (rename utility score fields to *Units, add harder scenarios, baseline score table).
