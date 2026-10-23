@@ -74,4 +74,33 @@ bool ParseMapHeaderPrefix(std::string_view bytes, MapHeaderPrefix& output,
     return true;
 }
 
+
+bool ParseMapHeaderFixedBlock(std::string_view bytes, MapHeaderFixedBlock& output,
+                              std::string* error) {
+    constexpr std::size_t kFixedSize = 0x20c;
+    constexpr std::size_t kWordsOffset = 0x184;
+    if (bytes.size() > kMaximumInputBytes)
+        return Fail(error, "map header fixed block input exceeds the 64 KiB limit");
+    if (bytes.size() < kFixedSize)
+        return Fail(error, "map header fixed block requires at least 0x20c bytes");
+    const auto* data = reinterpret_cast<const unsigned char*>(bytes.data());
+    auto readU32 = [&](std::size_t offset) {
+        return static_cast<std::uint32_t>(data[offset]) |
+            (static_cast<std::uint32_t>(data[offset + 1]) << 8) |
+            (static_cast<std::uint32_t>(data[offset + 2]) << 16) |
+            (static_cast<std::uint32_t>(data[offset + 3]) << 24);
+    };
+    MapHeaderFixedBlock candidate;
+    candidate.version = readU32(0);
+    if (candidate.version != 124)
+        return Fail(error, "map header fixed block layout is only evidenced for version 124");
+    for (std::size_t i = 0; i < MapHeaderFixedBlock::kWordCount; ++i)
+        candidate.words[i] = readU32(kWordsOffset + i * 4);
+    for (std::size_t i = 0; i < candidate.flagBytes.size(); ++i)
+        candidate.flagBytes[i] = data[0x208 + i];
+    output = candidate;
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace openrepublic::content

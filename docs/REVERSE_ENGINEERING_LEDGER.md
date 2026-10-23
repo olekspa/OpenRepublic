@@ -495,3 +495,7 @@ Next: recover or repeat the missing private serializer trace, identify the exact
 - **UNKNOWN:** per-type width, lane count, speed, and surface; semantic names for connection values; and the meanings of opaque segment-header values.
 - **UNKNOWN:** serializer-backed `buildings_game.bin` runtime-state fields for construction progress, workers, storage, or enabled state. Existing sequential framing applies to placement records only. No state reader was added.
 - The task pass identified no newly verified semantic fields suitable for implementation. Keep runtime-state fields and road properties UNKNOWN until a trusted consumer/writer and matching cross-checks establish them. Private analysis details remain in the designated private research scratch area.
+
+## Map header writer layout - 24 October 2026
+
+- **VERIFIED (static writer review, build context 23935965):** header.bin starts with a 0x20c-byte structure: u32 version (writer value 124), UTF-16LE text at +0x004, 33 32-bit numeric slots at +0x184..+0x207, flag bytes at +0x208..+0x20a. A 0x54-byte block and 0x80-byte and 8-byte record lists follow. Slot meanings, block contents and other versions are **UNKNOWN**. See docs/MAP_SURVEY.md; reader: ParseMapHeaderFixedBlock (raw slots, version 124 only).

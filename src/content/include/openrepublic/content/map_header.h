@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -20,5 +22,24 @@ struct MapHeaderPrefix {
 // intentionally uninterpreted. Output is unchanged on failure.
 bool ParseMapHeaderPrefix(std::string_view bytes, MapHeaderPrefix& output,
                           std::string* error = nullptr);
+
+
+// Fixed numeric block of the 0x20c-byte header prefix. VERIFIED layout for header
+// version 124 by static review of the original writer (build context 23935965):
+// u32 version at +0x000, UTF-16LE text at +0x004 (capacity 0x180 bytes), then 33
+// little-endian 32-bit words at +0x184..+0x207 (floats, ints and bool-as-u32 mixed;
+// only the types listed in docs/MAP_SURVEY.md are known), then flag bytes at
+// +0x208, +0x209, +0x20a (+0x20b is padding). Word meanings are UNKNOWN and every
+// word is returned raw. Other header versions are not covered by this evidence.
+struct MapHeaderFixedBlock {
+    static constexpr std::size_t kWordCount = 33;
+    std::uint32_t version = 0;
+    std::array<std::uint32_t, kWordCount> words{};  // words[i] is at +0x184 + 4*i
+    std::array<std::uint8_t, 3> flagBytes{};        // +0x208, +0x209, +0x20a
+};
+
+// Requires version 124 and at least 0x20c bytes; everything else fails unchanged.
+bool ParseMapHeaderFixedBlock(std::string_view bytes, MapHeaderFixedBlock& output,
+                              std::string* error = nullptr);
 
 } // namespace openrepublic::content

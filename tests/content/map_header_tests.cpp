@@ -80,11 +80,37 @@ void TestMalformedPrefixesAreTransactional() {
     ExpectFailure(std::string(64 * 1024 + 1, '\0'), "oversized input");
 }
 
+
+void TestFixedBlockLayout() {
+    std::string bytes(0x20c, '\0');
+    WriteU32LE(bytes, 0, 124);
+    WriteU16LE(bytes, 4, 'a');
+    WriteU32LE(bytes, 0x184, 0x11111111u);
+    WriteU32LE(bytes, 0x184 + 32 * 4, 0xabcdef01u);  // last word, ends at +0x207
+    bytes[0x208] = 1; bytes[0x209] = 2; bytes[0x20a] = 3;
+    MapHeaderFixedBlock block;
+    std::string error;
+    Check(ParseMapHeaderFixedBlock(bytes, block, &error), "fixed block parses for version 124");
+    Check(block.version == 124 && block.words[0] == 0x11111111u && block.words[32] == 0xabcdef01u,
+          "fixed block first and last words");
+    Check(block.flagBytes[0] == 1 && block.flagBytes[1] == 2 && block.flagBytes[2] == 3, "fixed block flag bytes");
+
+    MapHeaderFixedBlock untouched;
+    untouched.version = 77;
+    auto wrongVersion = bytes;
+    WriteU32LE(wrongVersion, 0, 121);
+    Check(!ParseMapHeaderFixedBlock(wrongVersion, untouched, &error) && untouched.version == 77,
+          "other versions rejected without modifying output");
+    Check(!ParseMapHeaderFixedBlock(bytes.substr(0, 0x20b), untouched, &error) && untouched.version == 77,
+          "short input rejected without modifying output");
+}
+
 } // namespace
 
 int main() {
     TestObservedPreambleShape();
     TestMalformedPrefixesAreTransactional();
+    TestFixedBlockLayout();
     if (failures != 0) {
         std::cerr << failures << " map header prefix test(s) failed\n";
         return 1;
