@@ -42,5 +42,26 @@ int main() {
           "summary text is deterministic and labels unavailable population/workers");
     const auto again = economy_api::MakeEconomySummary(catalog, world.Snapshot());
     Check(again.text == summary.text, "repeated snapshot summary is byte stable");
+
+    economy::CatalogBuilder populationBuilder;
+    economy::Catalog populationCatalog;
+    economy::BuildingTypeId home{}, workplace{};
+    Check(populationBuilder.AddBuildingType("home", 1, 1, &home, error) &&
+          populationBuilder.SetHousing(home, 20, error) &&
+          populationBuilder.AddBuildingType("workplace", 1, 1, &workplace, error) &&
+          populationBuilder.SetWorkers(workplace, 10, error) &&
+          populationBuilder.Build(populationCatalog, error),
+          "build opt-in population summary catalog");
+    auto populationSnapshot = world.Snapshot();
+    populationSnapshot.population = 14;
+    populationSnapshot.workersAssigned = 6;
+    populationSnapshot.workersRequired = 10;
+    const auto populationSummary = economy_api::MakeEconomySummary(populationCatalog, populationSnapshot);
+    Check(populationSummary.populationEnabled && populationSummary.workforceEnabled &&
+          populationSummary.population == 14 && populationSummary.workersAssigned == 6 &&
+          populationSummary.workersRequired == 10,
+          "summary copies population and workforce totals from the snapshot");
+    Check(populationSummary.text.find("Population: 14\nWorkers: 6/10") != std::string::npos,
+          "opt-in summary text reports residents and assigned/required workers");
     std::cout << "Economy summary contracts passed\n";
 }

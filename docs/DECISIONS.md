@@ -221,3 +221,20 @@ v2/v3 bytes, exact checkpoint catalogs and fail-closed older readers. Compatibil
 utility declarations are explicit opt-in names, never a consumption bypass or automatic
 original topology claim. Lua tuning preserves kinds. See [utility contracts](UTILITY_NETWORKS.md)
 and [verification](DEVELOPMENT_REPORT_2026-10-22_UTILITIES.md).
+
+## D-015: Population and workforce are opt-in synthetic economy rules
+
+**Date:** 23 October 2026. **Status:** accepted for the independent native economy.
+
+Catalogs may declare housing capacity and worker requirements per building type,
+plus an optional per-resident food consumption interval. Keep catalogs without
+these declarations on the existing simulation/hash path. Residents fill housing
+under the authored housing/food rules; available residents are assigned to
+worker-requiring buildings in deterministic building order, and their recipes
+scale with staffed fraction. Expose totals through the typed API summary and
+protocol v0 using decimal strings for uint64 values while preserving the legacy
+summary fields for catalogs without the model.
+
+These declarations and formulas are OpenRepublic synthetic behavior only.
+WRSR parity for population, migration, food consumption, worker assignment, and
+production scaling is UNKNOWN. See [synthetic population and workforce](POPULATION.md).
