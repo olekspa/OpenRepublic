@@ -373,3 +373,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-24 ~15:50 EDT** Merged luna/construction after the parallel Codex stream committed (conflict only in docs/BUILDING_DIRECTIVES.md; kept their wording and added the diagnostic sentence). Full build + CTest 80/80. Merge was done without touching their commits.
 
 - **2026-10-24 ~16:20 EDT** GHIDRA-ROAD-2 merged (04f8ab2): independently confirms my segment-header mapping and adds a full offset table (file offset/type to native member offset) with the correction that FUN_14042cc70 is the save path and FUN_140430fc0 the load path; the segment +0x40/+0x44 values are s32 selectors the geometry helper branches on (use VERIFIED, class/speed/lane meaning UNKNOWN). The bounded road reader now exposes three verified structural fields and keeps the raw header. Ledger conflict (both sides appended sections) resolved by keeping both. Full build + CTest 80/80.
+
+- **2026-10-24 ~16:30 EDT** Worker BUILDING-STATE started (serializer of per-building runtime state in buildings(_game).bin and workers.bin layout; the largest unread parity data).
