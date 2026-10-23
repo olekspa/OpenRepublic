@@ -40,3 +40,6 @@ if (!script.Tick(dt, sceneControl)) { /* report script.LastError() */ }
 The app remains responsible for applying `CurrentLook()` at its chosen frame boundary. `SceneScript` itself does not touch rendered objects, launch a game, or mutate economy state.
 
 Examples: [day_cycle.lua](../data/scripts/day_cycle.lua) and [orbit_camera.lua](../data/scripts/orbit_camera.lua).
+
+## App integration (2026-10-23, VERIFIED by a live run)
+`OpenRepublic.exe ... --modern --scene-script data/scripts/day_cycle.lua` loads the script in the sandbox (log: "Scene script loaded") and calls `on_frame(dt)` every frame; look/camera changes go through the same `SceneControlState` as the pipe, so `--scene-pipe-name` and `--scene-script` can be combined. A script error stops the script (logged) without affecting the app. Checked: the example day-cycle script loaded and ran for 50 s with no stop message; the sun motion itself was not inspected frame by frame.

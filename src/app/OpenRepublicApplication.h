@@ -18,6 +18,9 @@
 #include "../economy_host/economy_protocol.h"
 #include "LocalEconomyPipeEndpoint.h"
 #include "openrepublic/scene_control.h"
+#ifdef OPENREPUBLIC_WITH_LUA_RULES
+#include "openrepublic/scripting/scene_script.h"
+#endif
 
 #include <filesystem>
 #include <cstdint>
@@ -50,6 +53,7 @@ namespace openrepublic
 		void SetEconomyCheckpoint(openrepublic::economy::RestoredCheckpoint checkpoint, bool freshWorld = false);
 		void SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees);
 		void SetScenePipeName(std::wstring name);
+		void SetSceneScriptPath(std::filesystem::path path);
 		void SetMapShowcaseCapture(std::filesystem::path outputPath, bool enhancedLook,
 			float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale);
 		void SetNmfUnlitPreview(bool enabled);
@@ -196,7 +200,11 @@ namespace openrepublic
 		bool sceneCameraKnown = false;
 		wi::ecs::Entity regionTruckMesh = wi::ecs::INVALID_ENTITY;
 		std::vector<std::array<double, 3>> regionTruckPose;
-		void UpdateSceneControl();
+		std::filesystem::path sceneScriptPath;
+#ifdef OPENREPUBLIC_WITH_LUA_RULES
+		std::unique_ptr<openrepublic::scripting::SceneScript> sceneScript;
+#endif
+		void UpdateSceneControl(float dt);
 		void ApplySceneLook(const openrepublic::scenectl::SceneLook& look);
 		float cameraSpeedScale = 1.0f;
 		std::string economyHost;

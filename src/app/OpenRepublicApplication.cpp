@@ -457,6 +457,11 @@ namespace openrepublic
 		regionCatalogImportOptions = std::move(options);
 	}
 
+	void OpenRepublicApplication::SetSceneScriptPath(std::filesystem::path path)
+	{
+		sceneScriptPath = std::move(path);
+	}
+
 	void OpenRepublicApplication::SetScenePipeName(std::wstring name)
 	{
 		scenePipeName = std::move(name);
@@ -531,13 +536,13 @@ namespace openrepublic
 		renderPath->camera->UpdateCamera();
 	}
 
-	void OpenRepublicApplication::UpdateSceneControl()
+	void OpenRepublicApplication::UpdateSceneControl(float dt)
 	{
-		if (scenePipeName.empty() || !mapRegionPreview || !sceneCameraKnown || renderPath == nullptr)
+		if ((scenePipeName.empty() && sceneScriptPath.empty()) || !mapRegionPreview || !sceneCameraKnown || renderPath == nullptr)
 		{
 			return;
 		}
-		if (!sceneEndpoint)
+		if (!sceneControl)
 		{
 			openrepublic::scenectl::SceneLook initial;
 			if (std::isfinite(mapShowcaseSunElevationDegrees))
@@ -550,18 +555,57 @@ namespace openrepublic
 			initial.camera.distanceFactor = 1.0;
 			initial.exposure = renderPath->getExposure();
 			sceneControl = std::make_unique<openrepublic::scenectl::SceneControlState>(initial);
-			sceneEndpoint = std::make_unique<openrepublic::economy_host::LocalEconomyPipeEndpoint>(scenePipeName);
-			std::string endpointError;
-			if (!sceneEndpoint->Start(endpointError))
+			if (!scenePipeName.empty())
 			{
-				wilog("[OpenRepublic] Scene control endpoint failed: %s", endpointError.c_str());
-				sceneEndpoint.reset();
-				scenePipeName.clear();
-				return;
+				sceneEndpoint = std::make_unique<openrepublic::economy_host::LocalEconomyPipeEndpoint>(scenePipeName);
+				std::string endpointError;
+				if (!sceneEndpoint->Start(endpointError))
+				{
+					wilog("[OpenRepublic] Scene control endpoint failed: %s", endpointError.c_str());
+					sceneEndpoint.reset();
+					scenePipeName.clear();
+				}
+				else
+				{
+					wilog("[OpenRepublic] Scene control endpoint listening (JSONL protocol v%u).", static_cast<unsigned>(openrepublic::scenectl::ProtocolVersion));
+				}
 			}
-			wilog("[OpenRepublic] Scene control endpoint listening (JSONL protocol v%u).", static_cast<unsigned>(openrepublic::scenectl::ProtocolVersion));
+#ifdef OPENREPUBLIC_WITH_LUA_RULES
+			if (!sceneScriptPath.empty())
+			{
+				sceneScript = std::make_unique<openrepublic::scripting::SceneScript>();
+				std::string scriptError;
+				if (sceneScript->LoadFile(sceneScriptPath.string(), &scriptError))
+				{
+					wilog("[OpenRepublic] Scene script loaded: %s", sceneScriptPath.string().c_str());
+				}
+				else
+				{
+					wilog("[OpenRepublic] Scene script rejected: %s", scriptError.c_str());
+					sceneScript.reset();
+				}
+			}
+#endif
 		}
-		for (int handled = 0; handled < 8; ++handled)
+#ifdef OPENREPUBLIC_WITH_LUA_RULES
+		if (sceneScript)
+		{
+			if (!sceneScript->Tick(static_cast<double>(dt), *sceneControl))
+			{
+				wilog("[OpenRepublic] Scene script stopped: %s", sceneScript->LastError().c_str());
+				sceneScript.reset();
+			}
+			else
+			{
+				const std::string logs = sceneScript->TakeLogs();
+				if (!logs.empty())
+				{
+					wilog("[OpenRepublic] Scene script: %s", logs.c_str());
+				}
+			}
+		}
+#endif
+		for (int handled = 0; handled < 8 && sceneEndpoint; ++handled)
 		{
 			openrepublic::economy_host::LocalEconomyPipeEndpoint::Request request;
 			if (!sceneEndpoint->TryPop(request))
@@ -1677,7 +1721,7 @@ namespace openrepublic
 		{
 			return;
 		}
-		UpdateSceneControl();
+		UpdateSceneControl(dt);
 		if (mapShowcaseEnhancedLook && mapRegionPreview)
 		{
 			// Frame-time telemetry for the modern look (logged every ~5 s of wall time).

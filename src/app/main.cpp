@@ -245,6 +245,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool mapShowcaseCameraArgumentSeen = false;
 	float mapShowcaseSunElevationDegrees = std::numeric_limits<float>::quiet_NaN();
 	std::wstring scenePipeName;
+	std::filesystem::path sceneScriptPath;
 	float mapShowcaseSunYawOffsetDegrees = 0.0f;
 	double nmfCaptureZoom = 1.0;
 	bool nmfCaptureZoomArgumentSeen = false;
@@ -563,6 +564,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 					scenePipeName.clear();
 					nmfCaptureArgumentError = "--scene-pipe-name requires 1-64 ASCII letters, digits, '.', '_' or '-'";
 				}
+			}
+			else if (std::wstring_view(arguments[i]) == L"--scene-script" && i + 1 < argumentCount)
+			{
+				sceneScriptPath = arguments[++i];
 			}
 			else if (std::wstring_view(arguments[i]) == L"--modern")
 			{
@@ -1218,6 +1223,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	application.SetNmfCapturePaths(std::move(nmfCapturePaths));
 	application.SetMapShowcaseSun(mapShowcaseSunElevationDegrees, mapShowcaseSunYawOffsetDegrees);
 	application.SetScenePipeName(scenePipeName);
+	application.SetSceneScriptPath(sceneScriptPath);
 	application.SetMapShowcaseCapture(std::move(mapShowcaseCapturePath), mapShowcaseEnhancedLook,
 		mapShowcaseCameraYawDegrees, mapShowcaseCameraElevationDegrees, mapShowcaseCameraDistanceScale);
 	application.SetTerrainProbePath(std::move(terrainProbePath));
