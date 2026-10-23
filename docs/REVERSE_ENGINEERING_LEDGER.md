@@ -581,6 +581,11 @@ Evidence labels below apply to static analysis of the installed SOVIET64 build c
 - **UNKNOWN:** road width and offsets, lane count, one-way behavior, speed, surface, construction cost, road-type/connection definition source, and meanings of other copied values/flags. No formula or semantic table is added.
 - The bounded reader now exposes only the verified point count, nested record count, and supported `+0x84` flag in addition to existing endpoints, node connection values, polyline, and the verbatim raw header. Synthetic tests cover those named fields. These names describe structural serialization behavior, not road-type semantics.
 
+## Building save-state serializer trace - 23 October 2026
+
+**VERIFIED (static save/load control-flow review, build context 23935965):** save routine `FUN_14042cc70` writes `buildings.bin` by setting the path and calling `C3D_BUILDING::Export`; later it writes `buildings_game.bin` as a 32-bit element count followed by one `FUN_1401edc40` call per element. The corresponding loader reads `buildings_game.bin` as a count and constructs one fixed-size object per element through `FUN_14025bab0` (allocation size 0x1420) before loading workers. These are separate streams and object types. The placement writer/loader trace does not establish a `buildings.bin` record relationship or runtime-state fields.
+
+**UNKNOWN:** the `C3D_BUILDING::Export` record layout and its per-building in-memory mappings; construction progress, enabled state, workers, inventory, production progress, and ownership offsets/types/units; and any identity join from `buildings.bin` to `buildings_game.bin`. No runtime-state reader or field accessor was added. Continue only after the Export/Import serialization contract and field consumers are traced; keep unverified bytes opaque.
 ### Building state boundary
 
 - **VERIFIED:** the current `buildings_game.bin` sequential reader is a placement reader for supported observed formats only. It does not establish `buildings.bin` framing or per-building runtime state.
