@@ -222,6 +222,12 @@ def score_record(scenario, world, catalog, controller_ticks):
             "costUnits": len(world["buildings"]) + len(world["roads"]) + len(world.get("utilityConnections", [])),
             "costDefinition": "final building + road + utility-link count",
         }
+        if any(isinstance(resource, dict) and resource.get("tradeDeclared") is True
+               for resource in catalog.get("resources", [])):
+            breakdown["treasury"] = int(world.get("treasury", 0))
+    if (breakdown is None and any(isinstance(resource, dict) and resource.get("tradeDeclared") is True
+                                  for resource in catalog.get("resources", []))):
+        breakdown = {"treasury": int(world.get("treasury", 0))}
     scenario_hash = hashlib.sha256(json.dumps(
         scenario, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
     stable = {
@@ -236,8 +242,9 @@ def score_record(scenario, world, catalog, controller_ticks):
     }
     if breakdown is not None:
         stable["scoreBreakdown"] = breakdown
-        stable.pop("scoreMicroUnits")
-        stable.pop("scoreUnits")
+        if scenario["score"]["metric"] == "utility_multi_objective":
+            stable.pop("scoreMicroUnits")
+            stable.pop("scoreUnits")
     digest = hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":"),
                                        ensure_ascii=False).encode("utf-8")).hexdigest()
     return {**stable, "scoreHash": digest}

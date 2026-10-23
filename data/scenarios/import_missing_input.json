@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "import_missing_input",
+  "name": "Import coal for stalled production",
+  "description": "Synthetic grain exports earn treasury funds so a trade post can import the coal input required by a second trade post's production recipe.",
+  "catalog": "openrepublic-economy 1\nresource grain\ntrade grain buy 2 sell 3\nresource coal\ntrade coal buy 4 sell 1\nresource flour\nutility power\nbuilding grain_export_post 1 1\n  store grain 64\n  recipe harvest every 1 out grain:2\n  tradepost\nend\nbuilding coal_import_mill 1 1\n  store coal 64\n  store flour 64\n  recipe mill every 1 in coal:1 out flour:1\n  tradepost\nend\n",
+  "roads": [],
+  "buildings": [
+    { "type": "grain_export_post", "x": 1, "z": 2 },
+    { "type": "coal_import_mill", "x": 4, "z": 2 }
+  ],
+  "score": { "metric": "utility_multi_objective" }
+}

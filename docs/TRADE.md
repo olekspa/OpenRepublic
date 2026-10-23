@@ -55,10 +55,17 @@ compatibility.
 
 [`data/scenarios/grain_export_for_power.json`](../data/scenarios/grain_export_for_power.json)
 defines an OpenRepublic synthetic grain-producing trade post with priced grain
-and coal storage. Use the host to place the building, step once to generate grain,
-submit a grain export at the current revision, and step once to inspect the world
-treasury and command result. The fixture is a setup description; scenario-score
-tooling does not yet automate trade commands.
+and coal storage. `republic_autopilot.py` now exports trade-post inventory above
+a 10-unit reserve and imports a priced recipe input when the treasury and free
+storage capacity cover the request. The controller limits each exchange to 100
+units per command and polls the queued result. It can export stock produced
+during a round, then use the resulting treasury for a later import pass.
+
+`import_missing_input` and `export_surplus_for_power` exercise these controller
+paths in custom synthetic catalogs. Trade scenarios include final treasury in
+their score breakdown; scenarios without a trade declaration do not. This is a
+scenario accounting field, not a general profit or original-game currency
+metric.
 
 **VERIFIED** describes only this OpenRepublic implementation and its tests.
 **UNKNOWN**: original-game trade rules, prices, station constraints, starting

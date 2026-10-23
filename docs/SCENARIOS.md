@@ -18,6 +18,8 @@ contain game data.
 | `overbuilt_generator` | High output generator linked to one powered mine | Generator supply exceeds demand; unused supply is discarded. |
 | `powered_chain_link_gap` | Generator, powered mine, and smelter on connected roads; only generator and mine are power-linked | The baseline cannot add the power link needed by the smelter. |
 | `powered_chain_road_and_link_gap` | Generator, powered mine, and smelter on separate road fragments; only generator and mine are power-linked | The chain needs both a road connection and a power link to the smelter. |
+| `import_missing_input` | Grain export post and coal-import mill | Exports earn treasury funds, then imports coal for a stalled input recipe. |
+| `export_surplus_for_power` | Grain export post and coal-fueled generator | Grain surplus funds coal imports; final-tick power flow is scored. |
 
 The building coordinates are origins on the host grid. Each building's access
 cell is one cell north (`x`, `z - 1`); the fixtures place that cell on a road.
@@ -36,6 +38,7 @@ A scenario is one JSON object with these required fields:
 - `buildings`: array of `{ "type": string, "x": int, "z": int }`; built-in fixtures use `farm`, `mill`, `bakery`, or `market`.
 - Optional `catalog`: bounded synthetic catalog DSL text. Utility fixtures use this to define their own power generator and consumer recipes; it contains no game-derived data.
 - Optional `utilityConnections`: array of `{ "resource": "power", "aBuilding": int, "bBuilding": int }`, where endpoints are zero-based indexes into the initial `buildings` array.
+- Trade catalogs may declare per-resource prices and trade-post storage. Trade commands run through the baseline controller; treasury appears in utility score breakdowns only when a catalog declares trade prices.
 - `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, or `{ "metric": "utility_multi_objective" }` for utility fixtures.
 
 The loader and scorer are expected to reject malformed or unsupported scenario
@@ -59,6 +62,8 @@ may advance additional one-tick steps. The output `tick` is the actual final
 simulation tick. Inventory scenarios emit score JSON with `scoreMicroUnits` and
 `scoreUnits`. Utility scenarios emit `scoreBreakdown` with measured power
 throughput, unmet eligible demand, and an infrastructure-count cost proxy.
+Any scenario whose catalog declares trade prices adds final `treasury` to
+`scoreBreakdown`; non-trade scenarios do not get a treasury field.
 `scenarioHash` hashes normalized scenario
 JSON; `stateHash` identifies the final host state; `scoreHash` hashes the
 canonical score record. These hashes
@@ -112,6 +117,8 @@ extra ticks while attempting orders or placements.
 | `overbuilt_generator` | Throughput / unmet; cost | 2 / 0; cost 3 | 18 |
 | `powered_chain_link_gap` | Throughput / unmet; cost | 2 / 2; cost 12 | 18 |
 | `powered_chain_road_and_link_gap` | Throughput / unmet; cost | 2 / 0; cost 7 | 18 |
+| `import_missing_input` | Throughput / unmet; cost; treasury | Not measured (headless host unavailable) | — |
+| `export_surplus_for_power` | Throughput / unmet; cost; treasury | Not measured (headless host unavailable) | — |
 
 The last two scenarios leave their initial utility-link configuration unchanged;
 the road-and-link fixture also retains its three disconnected road segments.
@@ -129,7 +136,8 @@ The inventory fixtures can seed `tools/llm_republic.py` and the tournament harne
 Use the exact scenario ID (the shipped filename stem) or an existing JSON path.
 Pass `--scenario <id|path>` to `llm_republic.py`; setup consumes one tick, then
 controller runs for `rounds × ticks` ticks and emits a final `scenarioScore`
-record with the same integer `stored_non_raw_units` metric as this scorer.
+record using the scenario's declared score format. Trade scenarios include
+treasury in the breakdown only when the synthetic catalog declares prices.
 
 The utility fixtures currently use `scenario_score.py`'s direct synthetic-catalog
 runner; LLM/tournament controller hosting is not wired for custom catalogs yet.

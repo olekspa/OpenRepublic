@@ -138,6 +138,28 @@ class AutopilotTests(unittest.TestCase):
         self.assertLess(methods.index("submit"), methods.index("create_haul_orders") if "create_haul_orders" in methods else methods.index("step"))
         self.assertEqual(len([1 for method, params in host.calls if method == "step" and params["ticks"] == 1]), 1)
 
+    def test_trade_plan_exports_above_reserve_and_imports_only_with_funds(self):
+        catalog = {
+            "resources": [
+                {"name": "grain", "tradeDeclared": True, "buyPrice": "5", "sellPrice": "3"},
+                {"name": "coal", "tradeDeclared": True, "buyPrice": "5", "sellPrice": "1"},
+            ],
+            "buildingTypes": [{"name": "trade_post", "tradePost": True,
+                "storage": [{"resource": "grain", "capacity": "100"},
+                            {"resource": "coal", "capacity": "20"}],
+                "recipes": [{"inputs": [{"resource": "coal"}], "outputs": [{"resource": "power"}]}]}],
+        }
+        snapshot = world()
+        snapshot["treasury"] = "20"
+        snapshot["buildings"] = [{"id": 4, "type": "trade_post",
+            "inventory": [{"resource": "grain", "amount": "25"},
+                          {"resource": "coal", "amount": "0"}]}]
+        actions = autopilot._trade_actions(snapshot, catalog)
+        self.assertEqual(actions, [
+            ("trade_export", {"buildingId": 4, "resource": "grain", "amount": 15, "rateCap": 15}),
+            ("trade_import", {"buildingId": 4, "resource": "coal", "amount": 4, "rateCap": 4}),
+        ])
+
     def test_host_call_uses_monotonic_ids_session_binding_and_protocol_errors(self):
         client = autopilot.Host.__new__(autopilot.Host)
         client.proc = FakeProcess([
