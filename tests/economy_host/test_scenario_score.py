@@ -79,6 +79,33 @@ class ScenarioLoaderTests(unittest.TestCase):
             with self.assertRaisesRegex(scenario_score.ScenarioError, "adjacent"):
                 scenario_score.load_scenario(path)
 
+    def test_utility_fixtures_declare_valid_catalog_and_index_links(self):
+        for name in ("power_deficit", "unconnected_consumer", "overbuilt_generator"):
+            scenario = scenario_score.resolve_scenario(name)
+            self.assertEqual(scenario["score"]["metric"], "utility_multi_objective")
+            self.assertIn("utility power", scenario["catalog"])
+        invalid = scenario_score.resolve_scenario("overbuilt_generator")
+        invalid["utilityConnections"] = [{"resource": "power", "aBuilding": 0, "bBuilding": 0}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "bad.json"
+            path.write_text(json.dumps(invalid), encoding="utf-8")
+            with self.assertRaisesRegex(scenario_score.ScenarioError, "endpoints must differ"):
+                scenario_score.load_scenario(path)
+
+    def test_utility_score_breakdown_and_hash_are_canonical(self):
+        scenario = scenario_score.resolve_scenario("power_deficit")
+        world = {"tick": 4, "stateHash": "state", "buildings": [{"inventory": []}] * 3,
+                 "roads": [], "orders": [], "vehicles": [], "utilityConnections": [{}, {}],
+                 "utilityDiagnostics": {"networks": [{"resource": "power", "requested": "4000000",
+                                                          "consumed": "2000000"}]}}
+        first = scenario_score.score_record(scenario, world, {"buildingTypes": []}, 3)
+        second = scenario_score.score_record(scenario, world, {"buildingTypes": []}, 3)
+        self.assertEqual(first, second)
+        self.assertEqual(first["scoreBreakdown"]["throughputMicroUnits"], 2_000_000)
+        self.assertEqual(first["scoreBreakdown"]["unmetDemandMicroUnits"], 2_000_000)
+        self.assertEqual(first["scoreBreakdown"]["costUnits"], 5)
+        self.assertEqual(first["scoreHash"], second["scoreHash"])
+
 
 class ScenarioHostIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
@@ -101,6 +128,20 @@ class ScenarioHostIntegrationTests(unittest.TestCase):
         self.assertEqual(first["scoreHash"], repeated["scoreHash"])
         self.assertEqual(first["stateHash"], repeated["stateHash"])
         self.assertEqual(first["tick"], 17)
+
+    @unittest.skipUnless(HOST_EXE, "host executable argument is required")
+    def test_power_objectives_report_measured_deficit_isolation_and_surplus(self):
+        expected = {
+            "power_deficit": (2_000_000, 2_000_000),
+            "unconnected_consumer": (0, 2_000_000),
+            "overbuilt_generator": (2_000_000, 0),
+        }
+        for name, (throughput, unmet) in expected.items():
+            with self.subTest(scenario=name):
+                result = scenario_score.run_scenario(HOST_EXE, scenario_score.resolve_scenario(name), 16)
+                self.assertEqual(result["scoreBreakdown"]["throughputMicroUnits"], throughput)
+                self.assertEqual(result["scoreBreakdown"]["unmetDemandMicroUnits"], unmet)
+                self.assertEqual(len(result["scoreHash"]), 64)
 
 
 if __name__ == "__main__":

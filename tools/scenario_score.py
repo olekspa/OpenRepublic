@@ -18,6 +18,7 @@ import json
 import pathlib
 import re
 import sys
+import tempfile
 
 
 MAX_TICKS = 100_000
@@ -72,7 +73,8 @@ def load_scenario(path):
     except (json.JSONDecodeError, UnicodeError) as error:
         raise ScenarioError(f"invalid scenario JSON: {error}") from error
 
-    _object(scenario, "scenario", ("schemaVersion", "id", "name", "description", "roads", "buildings", "score"))
+    _object(scenario, "scenario", ("schemaVersion", "id", "name", "description", "roads", "buildings", "score"),
+            ("catalog", "utilityConnections"))
     _integer(scenario["schemaVersion"], "schemaVersion", 1, 1)
     if not isinstance(scenario["id"], str) or not re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*", scenario["id"]):
         raise ScenarioError("id must be a lowercase underscore-separated identifier")
@@ -98,16 +100,44 @@ def load_scenario(path):
         if abs(a["x"] - b["x"]) + abs(a["z"] - b["z"]) != 1:
             raise ScenarioError(f"roads[{index}] must be one orthogonally adjacent road edge")
 
+    building_types = {"farm", "mill", "bakery", "market"}
+    if "catalog" in scenario:
+        if not isinstance(scenario["catalog"], str) or not scenario["catalog"].strip() or len(scenario["catalog"]) > 16_384:
+            raise ScenarioError("catalog must be non-empty text of at most 16384 characters")
+        building_types = set(re.findall(r"(?m)^building\s+([a-z][a-z0-9_]*)\s+", scenario["catalog"]))
+        if not building_types or not re.search(r"(?m)^utility\s+power\s*$", scenario["catalog"]):
+            raise ScenarioError("catalog must declare utility power and at least one building")
     for index, building in enumerate(scenario["buildings"]):
         _object(building, f"buildings[{index}]", ("type", "x", "z"))
-        if building["type"] not in ("farm", "mill", "bakery", "market"):
-            raise ScenarioError(f"buildings[{index}].type is not in the built-in synthetic catalog")
+        if building["type"] not in building_types:
+            raise ScenarioError(f"buildings[{index}].type is not in the scenario catalog")
         _integer(building["x"], f"buildings[{index}].x", 0, 100_000)
         _integer(building["z"], f"buildings[{index}].z", 1, 100_000)
 
+    connections = scenario.get("utilityConnections", [])
+    if not isinstance(connections, list) or len(connections) > MAX_SETUP_COMMANDS:
+        raise ScenarioError("utilityConnections must be an array of at most 512 links")
+    seen_connections = set()
+    for index, link in enumerate(connections):
+        _object(link, f"utilityConnections[{index}]", ("resource", "aBuilding", "bBuilding"))
+        if link["resource"] != "power":
+            raise ScenarioError(f"utilityConnections[{index}].resource must be power")
+        a = _integer(link["aBuilding"], f"utilityConnections[{index}].aBuilding", 0, len(scenario["buildings"]) - 1)
+        b = _integer(link["bBuilding"], f"utilityConnections[{index}].bBuilding", 0, len(scenario["buildings"]) - 1)
+        if a == b:
+            raise ScenarioError(f"utilityConnections[{index}] endpoints must differ")
+        edge = (link["resource"], min(a, b), max(a, b))
+        if edge in seen_connections:
+            raise ScenarioError(f"utilityConnections[{index}] duplicates an earlier link")
+        seen_connections.add(edge)
+    if len(scenario["roads"]) + len(scenario["buildings"]) + len(connections) > MAX_SETUP_COMMANDS:
+        raise ScenarioError(f"setup may contain at most {MAX_SETUP_COMMANDS} commands")
     _object(scenario["score"], "score", ("metric",))
-    if scenario["score"]["metric"] != "stored_non_raw_units":
-        raise ScenarioError("score.metric must be stored_non_raw_units")
+    metric = scenario["score"]["metric"]
+    if metric not in ("stored_non_raw_units", "utility_multi_objective"):
+        raise ScenarioError("score.metric must be stored_non_raw_units or utility_multi_objective")
+    if metric == "utility_multi_objective" and "catalog" not in scenario:
+        raise ScenarioError("utility_multi_objective scenarios must include a synthetic catalog")
     return scenario
 
 
@@ -148,6 +178,23 @@ def _seed(host, scenario):
         state = autopilot._poll_terminal(host, handle)
         if state != "accepted":
             raise RuntimeError(f"scenario setup command {handle} was rejected")
+    links = scenario.get("utilityConnections", [])
+    if links:
+        world = autopilot._world(host)
+        ids = [int(building["id"]) for building in world["buildings"][-len(scenario["buildings"]):]]
+        revision = world["revision"]
+        link_handles = []
+        for link in links:
+            result = host.call("submit", revision=revision, command={
+                "kind": "connect_utility", "resource": link["resource"],
+                "a": ids[link["aBuilding"]], "b": ids[link["bBuilding"]]})
+            if result.get("errorCode") != "none" or result.get("state") != "queued" or not result.get("handle"):
+                raise RuntimeError(f"scenario utility link was not queued: {result}")
+            link_handles.append(result["handle"])
+        autopilot._step(host, 1)
+        for handle in link_handles:
+            if autopilot._poll_terminal(host, handle) != "accepted":
+                raise RuntimeError(f"scenario utility link {handle} was rejected")
 
 
 def seed_scenario(host, scenario):
@@ -161,17 +208,36 @@ def score_record(scenario, world, catalog, controller_ticks):
     score_micro_units = sum(int(item["amount"])
                             for building in world["buildings"]
                             for item in building["inventory"] if item["resource"] not in raw)
+    breakdown = None
+    if scenario["score"]["metric"] == "utility_multi_objective":
+        diagnostics = world.get("utilityDiagnostics")
+        if diagnostics is None:
+            raise RuntimeError("utility diagnostics are required for utility_multi_objective scoring")
+        networks = diagnostics.get("networks", [])
+        requested = sum(int(network["requested"]) for network in networks if network["resource"] == "power")
+        consumed = sum(int(network["consumed"]) for network in networks if network["resource"] == "power")
+        breakdown = {
+            "throughputMicroUnits": consumed,
+            "unmetDemandMicroUnits": max(0, requested - consumed),
+            "costUnits": len(world["buildings"]) + len(world["roads"]) + len(world.get("utilityConnections", [])),
+            "costDefinition": "final building + road + utility-link count",
+        }
     scenario_hash = hashlib.sha256(json.dumps(
         scenario, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
     stable = {
         "schemaVersion": 1, "scenarioId": scenario["id"], "scenarioHash": scenario_hash,
         "metric": scenario["score"]["metric"], "controllerTicks": controller_ticks,
-        "setupTicks": 1 if scenario["roads"] or scenario["buildings"] else 0,
+        "setupTicks": (1 if scenario["roads"] or scenario["buildings"] else 0) +
+                      (1 if scenario.get("utilityConnections") else 0),
         "tick": int(world["tick"]), "stateHash": str(world["stateHash"]),
         "scoreMicroUnits": score_micro_units, "scoreUnits": score_micro_units / 1_000_000,
         "buildings": len(world["buildings"]), "roads": len(world["roads"]),
         "orders": len(world["orders"]), "vehicles": len(world["vehicles"]),
     }
+    if breakdown is not None:
+        stable["scoreBreakdown"] = breakdown
+        stable.pop("scoreMicroUnits")
+        stable.pop("scoreUnits")
     digest = hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":"),
                                        ensure_ascii=False).encode("utf-8")).hexdigest()
     return {**stable, "scoreHash": digest}
@@ -181,14 +247,33 @@ def run_scenario(host_exe, scenario, ticks, host_args=()):
     """Run setup and one autopilot round; return a canonical, hashable score record."""
     if isinstance(ticks, bool) or not isinstance(ticks, int) or not 1 <= ticks <= MAX_TICKS:
         raise ValueError(f"ticks must be from 1 through {MAX_TICKS}")
-    host = autopilot.Host(host_exe, list(host_args))
+    temporary = tempfile.TemporaryDirectory(prefix="openrepublic-scenario-") if "catalog" in scenario else None
+    args = list(host_args)
+    if temporary:
+        catalog_path = pathlib.Path(temporary.name) / "scenario.catalog"
+        catalog_path.write_text(scenario["catalog"], encoding="utf-8")
+        args.extend(("--catalog", str(catalog_path)))
+    host = None
     try:
+        host = autopilot.Host(host_exe, args)
         catalog = host.call("catalog")
         autopilot._check_error(catalog, "catalog")
         _seed(host, scenario)
         with contextlib.redirect_stdout(io.StringIO()):
             result = autopilot.run_round(host, catalog, ticks, set(), round_number=1)
         world = result["world"]
+        if scenario["score"]["metric"] == "utility_multi_objective":
+            diagnostics = host.call("utility_diagnostics", revision=world["revision"], offset=0, limit=128)
+            autopilot._check_error(diagnostics, "utility_diagnostics")
+            if not diagnostics.get("available"):
+                raise RuntimeError("utility diagnostics are unavailable for the final scenario tick")
+            networks = list(diagnostics.get("networks", []))
+            while len(networks) < int(diagnostics.get("total", len(networks))):
+                page = host.call("utility_diagnostics", revision=world["revision"],
+                                 offset=len(networks), limit=128)
+                autopilot._check_error(page, "utility_diagnostics")
+                networks.extend(page.get("networks", []))
+            world["utilityDiagnostics"] = {"available": True, "networks": networks}
         stable = score_record(scenario, world, catalog, ticks)
         stable = {key: value for key, value in stable.items() if key != "scoreHash"}
         stable.update({
@@ -200,12 +285,15 @@ def run_scenario(host_exe, scenario, ticks, host_args=()):
                                            ensure_ascii=False).encode("utf-8")).hexdigest()
         return {**stable, "scoreHash": digest}
     finally:
-        try:
-            host.close()
-        finally:
-            for stream in (host.proc.stdin, host.proc.stdout):
-                if stream is not None and not stream.closed:
-                    stream.close()
+        if host is not None:
+            try:
+                host.close()
+            finally:
+                for stream in (host.proc.stdin, host.proc.stdout):
+                    if stream is not None and not stream.closed:
+                        stream.close()
+        if temporary:
+            temporary.cleanup()
 
 
 def tick_count(value):

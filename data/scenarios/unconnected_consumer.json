@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "unconnected_consumer",
+  "name": "Unconnected power consumer",
+  "description": "A generator has excess supply, but the consumer is isolated because no utility link was authored.",
+  "catalog": "openrepublic-economy 1\nresource ore\nutility power\nbuilding generator 1 1\n  recipe generate every 1 out power:4\nend\nbuilding powered_mine 1 1\n  store ore 32\n  recipe extract every 1 in power:2 out ore:1\nend\n",
+  "roads": [],
+  "buildings": [
+    { "type": "generator", "x": 1, "z": 1 },
+    { "type": "powered_mine", "x": 4, "z": 1 }
+  ],
+  "score": { "metric": "utility_multi_objective" }
+}
