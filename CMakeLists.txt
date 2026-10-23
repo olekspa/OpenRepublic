@@ -100,6 +100,7 @@ if(OPENREPUBLIC_BUILD_TESTS)
     add_subdirectory(tests/procgeo)
     add_subdirectory(tests/runtime)
     add_subdirectory(tests/compat)
+    add_subdirectory(tests/app_geometry)
     add_subdirectory(tests/economy_api)
 
     if(OPENREPUBLIC_SCENECTL_AVAILABLE)

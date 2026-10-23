@@ -1,4 +1,5 @@
 #include "ContentPreview.h"
+#include "RoadMesh.h"
 #include "RoadPaths.h"
 #include "ShowcaseProps.h"
 #include "openrepublic/content/mtl_dependencies.h"
@@ -19,6 +20,7 @@
 #include <cmath>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <cwctype>
 #include <exception>
 #include <fstream>
@@ -1503,10 +1505,92 @@ namespace openrepublic::preview
 		terrainMaterial->SetReflectance(enhancedLook ? 0.04f : 0.0f);
 		terrainMaterial->CreateRenderData(true);
 
-		// Roads: straight ribbons between linked junctions, draped on the terrain. Segment
-		// polylines are not decoded, so curved roads appear as chords.
+		// Roads are OpenRepublic preview geometry with an explicit comparison switch.
 		std::size_t roadEdges = 0;
-		if (request.hasRoads)
+		const char* oldRoadSetting = std::getenv("OR_OLD_ROADS");
+		const bool useOldRoads = oldRoadSetting != nullptr && std::string_view(oldRoadSetting) == "1";
+		if (request.hasRoads && !useOldRoads)
+		{
+			RoadMeshOptions options;
+			options.maximumDistance = regionRadius * 1.1;
+			options.centerX = center.X();
+			options.centerZ = center.Z();
+			const char* sidewalksSetting = std::getenv("OR_ROAD_SIDEWALKS");
+			options.buildSidewalks = sidewalksSetting != nullptr && std::string_view(sidewalksSetting) == "1";
+			const RoadPathIndex roadPaths(request.roads);
+			const auto heightAt = [&](double wx, double wz)
+			{
+				double h = 0.0;
+				const double cx = std::min(std::max(wx, transform.originX), transform.originX + transform.sizeX);
+				const double cz = std::min(std::max(wz, transform.originZ), transform.originZ + transform.sizeZ);
+				SampleTerrainHeight(request.heightmap, transform, cx, cz, h, nullptr);
+				return h;
+			};
+			RoadMeshBuffers meshes;
+			if (BuildRoadMesh(request.roads, roadPaths, heightAt, options, meshes))
+			{
+				roadEdges = meshes.edgeCount;
+				const auto addRoadMesh = [&](const RoadMeshBuffer& source, const char* name, int materialKind)
+				{
+					if (source.indices.empty()) return;
+					std::vector<XMFLOAT3> positions;
+					std::vector<XMFLOAT2> uvs;
+					std::vector<std::uint32_t> colors;
+					positions.reserve(source.vertices.size());
+					uvs.reserve(source.vertices.size());
+					colors.reserve(source.vertices.size());
+					for (const auto& vertex : source.vertices)
+					{
+						positions.emplace_back(static_cast<float>(vertex.x - center.X()), static_cast<float>(vertex.y),
+							static_cast<float>(vertex.z - center.Z()));
+						uvs.emplace_back(vertex.u, vertex.v);
+						colors.push_back(wi::Color::fromFloat4(XMFLOAT4(vertex.r, vertex.g, vertex.b, vertex.a)).rgba);
+					}
+					const wi::ecs::Entity entity = scene.Entity_CreateMeshFromData(name, source.indices.size(),
+						source.indices.data(), positions.size(), positions.data());
+					auto* mesh = scene.meshes.GetComponent(entity);
+					auto* material = scene.materials.GetComponent(entity);
+					if (mesh == nullptr || material == nullptr) return;
+					mesh->vertex_uvset_0 = std::move(uvs);
+					mesh->vertex_colors = std::move(colors);
+					mesh->CreateRenderData();
+					material->SetUseVertexColors(materialKind >= 1);
+					if (materialKind == 0 && enhancedLook)
+					{
+						material->SetBaseColor(XMFLOAT4(1, 1, 1, 1));
+						material->textures[wi::scene::MaterialComponent::BASECOLORMAP].resource = ShowcaseAsphaltTexture();
+						material->textures[wi::scene::MaterialComponent::BASECOLORMAP].uvset = 0;
+						material->SetRoughness(0.55f);
+						material->SetReflectance(0.28f);
+					}
+					else if (materialKind == 0)
+					{
+						material->SetBaseColor(XMFLOAT4(0.16f, 0.17f, 0.19f, 1));
+					}
+					else if (materialKind == 1)
+					{
+						material->SetBaseColor(enhancedLook
+							? XMFLOAT4(0.20f, 0.21f, 0.22f, 1) : XMFLOAT4(0.16f, 0.17f, 0.19f, 1));
+					}
+					else if (materialKind == 2)
+					{
+						material->SetBaseColor(XMFLOAT4(0.55f, 0.50f, 0.40f, 1));
+					}
+					else
+					{
+						material->SetBaseColor(XMFLOAT4(0.78f, 0.77f, 0.71f, 1));
+					}
+					material->SetRoughness(materialKind == 3 ? 0.85f : 0.95f);
+					material->SetDoubleSided(true);
+					material->CreateRenderData(true);
+				};
+				addRoadMesh(meshes.pavement, "OpenRepublic map road pavement", 0);
+				addRoadMesh(meshes.junctions, "OpenRepublic map road junctions", 1);
+				addRoadMesh(meshes.shoulders, "OpenRepublic map road shoulders", 2);
+				addRoadMesh(meshes.sidewalks, "OpenRepublic map road sidewalks", 3);
+			}
+		}
+		if (request.hasRoads && useOldRoads)
 		{
 			constexpr float kRoadHalfWidth = 2.5f;
 			constexpr float kRoadLift = 0.25f;
@@ -1547,7 +1631,7 @@ namespace openrepublic::preview
 					{
 						continue;
 					}
-					// Decoded curve when the package's segment geometry covers this edge, else the chord.
+			// Comparison path: prior fixed-spacing, independent edge ribbons.
 					const std::vector<RoadSample> samples = RoadPathIndex::Resample(
 						roadPaths.Path(static_cast<std::uint32_t>(i), j), kRoadStep);
 					if (samples.size() < 2)

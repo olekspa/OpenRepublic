@@ -1,6 +1,7 @@
 add_executable(OpenRepublic WIN32
     main.cpp
     ContentPreview.cpp
+    RoadMesh.cpp
     BuildingLodController.cpp
     EconomyOverlay.cpp
     NativeEconomyScene.cpp
