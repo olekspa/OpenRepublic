@@ -17,6 +17,8 @@ import sys
 
 MAX_TICKS = 100_000
 MAX_RETAINED_COMMAND_RESULTS = 4096
+TRADE_RATE_CAP = 100
+TRADE_STOCK_FLOOR = 10
 
 
 class Host:
@@ -270,6 +272,63 @@ def _queue_creates(host, commands, stats):
     return handles
 
 
+def _trade_post_types(catalog):
+    return {b["name"] for b in catalog.get("buildingTypes", []) if b.get("tradePost") is True}
+
+
+def _trade_actions(world, catalog, direction=None):
+    """Return bounded export/import requests for declared prices and eligible posts."""
+    prices = {r["name"]: r for r in catalog.get("resources", [])
+              if isinstance(r, dict) and r.get("tradeDeclared") is True}
+    posts = _trade_post_types(catalog)
+    if not prices or not posts or "treasury" not in world:
+        return []
+    treasury = int(world["treasury"])
+    types = {b["name"]: b for b in catalog.get("buildingTypes", [])}
+    actions = []
+    for building in world.get("buildings", []):
+        if building.get("type") not in posts:
+            continue
+        definition = types.get(building["type"], {})
+        slots = {s["resource"]: s for s in definition.get("storage", [])}
+        inventory = {i["resource"]: int(i["amount"]) for i in building.get("inventory", [])}
+        # Export only stock beyond a 10-unit reserve. Import only an actually
+        # missing recipe input, and only when the current treasury covers it.
+        for resource, price in prices.items():
+            stock = inventory.get(resource, 0)
+            sell = int(price.get("sellPrice", 0))
+            surplus = max(0, stock - TRADE_STOCK_FLOOR)
+            if direction in (None, "export") and sell > 0 and surplus:
+                amount = min(surplus, TRADE_RATE_CAP)
+                actions.append(("trade_export", {"buildingId": int(building["id"]),
+                    "resource": resource, "amount": amount, "rateCap": amount}))
+        if direction == "export":
+            continue
+        needed = {i["resource"] for recipe in definition.get("recipes", [])
+                  for i in recipe.get("inputs", []) if inventory.get(i["resource"], 0) == 0}
+        for resource in sorted(needed & prices.keys()):
+            buy = int(prices[resource].get("buyPrice", 0))
+            slot = slots.get(resource, {})
+            capacity = int(slot.get("capacity", 0))
+            free = max(0, capacity - inventory.get(resource, 0))
+            amount = min(free, TRADE_RATE_CAP, treasury // buy) if buy > 0 else 0
+            if amount:
+                actions.append(("trade_import", {"buildingId": int(building["id"]),
+                    "resource": resource, "amount": amount, "rateCap": amount}))
+                treasury -= amount * buy
+    return actions
+
+
+def _queue_trades(host, world, catalog, direction=None):
+    handles = []
+    for method, params in _trade_actions(world, catalog, direction):
+        wire_params = {**params, "amount": str(params["amount"]), "rateCap": str(params["rateCap"])}
+        result = host.call(method, revision=world["revision"], **wire_params)
+        if result.get("errorCode") == "none" and result.get("state") == "queued" and result.get("handle"):
+            handles.append(result["handle"])
+    return handles
+
+
 def run_round(host, catalog, ticks, placed, round_number=1, count_generated=False,
               retain_command_results=1024):
     """Run one bounded controller round; exposed for deterministic fake-host tests."""
@@ -303,6 +362,7 @@ def run_round(host, catalog, ticks, placed, round_number=1, count_generated=Fals
     # Retargets are queued before creates and use the adviser revision. Exclude any
     # same-tick create that would duplicate the new source/destination/resource tuple.
     create_handles = _queue_creates(host, _create_commands(plan, blocked_pairs), stats)
+    trade_handles = _queue_trades(host, _world(host), catalog)
     _step(host, ticks)
     for handle in retarget_handles:
         if _poll_terminal(host, handle) == "accepted":
@@ -314,6 +374,23 @@ def run_round(host, catalog, ticks, placed, round_number=1, count_generated=Fals
             stats["accepted_creates"] += 1
         else:
             stats["rejected_creates"] += 1
+    for handle in trade_handles:
+        _poll_terminal(host, handle)
+    stats["trade_queued"] = len(trade_handles)
+    # Production may create exportable stock during the requested ticks. Apply
+    # exports before planning imports so proceeds can fund them in this round.
+    post_trade_handles = _queue_trades(host, _world(host), catalog, "export")
+    if post_trade_handles:
+        _step(host, 1)
+        for handle in post_trade_handles:
+            _poll_terminal(host, handle)
+    stats["trade_queued"] += len(post_trade_handles)
+    import_handles = _queue_trades(host, _world(host), catalog, "import")
+    if import_handles:
+        _step(host, 1)
+        for handle in import_handles:
+            _poll_terminal(host, handle)
+    stats["trade_queued"] += len(import_handles)
 
     world, removed = _compact_history(host, _world(host), retain_command_results)
     stats["command_results_removed"] = removed

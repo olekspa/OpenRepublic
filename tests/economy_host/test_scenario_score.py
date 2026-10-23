@@ -104,7 +104,18 @@ class ScenarioLoaderTests(unittest.TestCase):
         self.assertEqual(first["scoreBreakdown"]["throughputUnits"], 2)
         self.assertEqual(first["scoreBreakdown"]["unmetDemandUnits"], 2)
         self.assertEqual(first["scoreBreakdown"]["costUnits"], 5)
+        self.assertNotIn("treasury", first["scoreBreakdown"])
         self.assertEqual(first["scoreHash"], second["scoreHash"])
+
+    def test_treasury_is_reported_only_for_trade_declaring_scenarios(self):
+        scenario = scenario_score.resolve_scenario("grain_export_for_power")
+        world = {"tick": 4, "stateHash": "state", "treasury": "17", "buildings": [],
+                 "roads": [], "orders": [], "vehicles": [], "utilityConnections": [],
+                 "utilityDiagnostics": {"networks": []}}
+        record = scenario_score.score_record(scenario, world,
+            {"resources": [{"name": "coal", "tradeDeclared": True}], "buildingTypes": []}, 3)
+        self.assertEqual(record["scoreBreakdown"]["treasury"], 17)
+        self.assertIn("scoreUnits", record)
 
 
 class ScenarioHostIntegrationTests(unittest.TestCase):

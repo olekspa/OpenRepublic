@@ -6,4 +6,13 @@ Use `advice.unservedInputs` and each building's `inputAdvice` first. Use an offe
 
 Only connect resources whose catalog entry has `utility: true`. Utility flow is not cargo and cannot use haul orders. A resource without that flag must use ordinary inventories and haul orders when it is transportable.
 
+Trade is available only where the catalog marks a resource `tradeDeclared: true`
+and a building type is a trade post. The observation includes current treasury,
+buy/sell prices, and the catalog storage/recipe information. Use
+`trade_export` or `trade_import` with exact fields `buildingId`, `resource`,
+`amount`, and `rateCap`. Export only stock above a reserve; import only a missing
+recipe input when free capacity and treasury cover `buyPrice * amount`. Trade
+commands go through their dedicated host methods and are validated locally
+before submission. These rules describe the synthetic OpenRepublic model only.
+
 Use the score's current value, since-start change, and previous-round change to evaluate the plan. Explain the action's intended bottleneck in `notes`. Return an empty action list only when all stall and order summaries are clear, or name the exact blocking constraints that prevent every available action.
