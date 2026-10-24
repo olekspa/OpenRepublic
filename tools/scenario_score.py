@@ -256,8 +256,15 @@ def score_record(scenario, world, catalog, controller_ticks, summary=None):
         if diagnostics is None:
             raise RuntimeError("utility diagnostics are required for utility_multi_objective scoring")
         networks = diagnostics.get("networks", [])
-        requested = sum(int(network["requested"]) for network in networks)
-        consumed = sum(int(network["consumed"]) for network in networks)
+        # Keep the headline scalar tied to one resource so unlike synthetic
+        # utility units are not combined. Preserve power as the established
+        # primary resource for existing fixtures; otherwise select the first
+        # resource reported by the host. The receipt carries every resource.
+        primary_resource = "power" if any(n["resource"] == "power" for n in networks) else (
+            networks[0]["resource"] if networks else None)
+        primary = [n for n in networks if n["resource"] == primary_resource]
+        requested = sum(int(network["requested"]) for network in primary)
+        consumed = sum(int(network["consumed"]) for network in primary)
         breakdown = {
             "throughputUnits": consumed,
             "unmetDemandUnits": max(0, requested - consumed),
@@ -265,6 +272,7 @@ def score_record(scenario, world, catalog, controller_ticks, summary=None):
                               "requested": n["requested"], "consumed": n["consumed"],
                               "unmet": str(max(0, int(n["requested"]) - int(n["consumed"]))) }
                              for n in networks],
+            "primaryUtility": primary_resource,
             "costUnits": len(world["buildings"]) + len(world["roads"]) + len(world.get("utilityConnections", [])),
             "costDefinition": "final building + road + utility-link count",
         }
