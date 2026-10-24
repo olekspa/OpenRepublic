@@ -24,7 +24,7 @@ Labels: **DECODED** = bounded reader exists in `src/content` with tests; **PARTI
 | `crossroads.bin`, `semaphores.bin`, `lines.bin` | 716 B, 111 KB, 3 KB | NONE | Junction/signal/line data (INFERRED from names). |
 | `factoryconnection.bin` | 45 KB | NONE | Likely building connection data (INFERRED). |
 | `vehicles.bin` | 1.6 MB | NONE | Vehicle instances. |
-| `workers.bin` | 36 MB | NONE | Citizen/worker state (INFERRED); the largest unread runtime-state file. |
+| `workers.bin` | 36 MB | PARTIAL (current writer/reader framing traced) | Counted variable-length worker records; bounded raw-record framing only; no named semantic fields. See ledger. |
 | `messages.bin`, `events.bin`, `runningScripts.bin`, `research.bin`, `stats.ini`, `namepoints.bin`, `movies.bin`, `toolco.bin`, `pollution.bin`, `trees_game.bin`, `christmas.bin`, `windows.bin` | various | NONE | Game-state, UI and statistics files. `stats.ini` is a text aggregate. |
 | `trees.bin` | 16 MB | DECODED (species + XYZ) | |
 | `airplane.bin`, `buoy.bin`, `cableway.bin`, `fence.bin` | 4 to 12 B | NONE | Near-empty in this sample (probably counts only). |
@@ -54,7 +54,7 @@ Each needs a build-matched writer or consumer trace before any field is named; t
 
 ## workers.bin follow-up (24 October 2026)
 
-**OBSERVED (16 local packages, private scan only):** each file starts with a u32 matching a plausible worker count; the sampled count range is 13,619 to 30,354. A candidate 1,832-byte stride is not consistent across all counted items, despite near-1,832-byte average size per item. Record framing, variable parts and exact framed EOF remain **UNKNOWN**; see the workers.bin entry in [the reverse-engineering ledger](REVERSE_ENGINEERING_LEDGER.md). No worker fields or building references are decoded.
+**VERIFIED (static writer/reader trace, build context 23935965):** `workers.bin` starts with a u32 count followed by that many variable-length records. Each current-writer record has a 0x718-byte block plus 16 bytes; a nonzero gate byte at record +0x700 adds 9 bytes, and a nonzero flag at +0x70c adds 128 bytes. The corresponding reader adds a game-internal-version gate (> 0x71) around the 16-byte and 9-byte tails, so older internal versions are not covered by the current-writer expression. **OBSERVED (16 local packages, private scan only):** leading u32 values range 13,619 to 30,354; a fixed 1,832-byte stride is inconsistent across files. **UNKNOWN:** whether those packages match this executable/internal version, exact-EOF validation against a matched package, and worker field semantics. The reader resolves multiple fields as indices into the loaded building table and one into the vehicle table, but home/workplace meanings remain UNKNOWN. See the workers.bin entry in [the reverse-engineering ledger](REVERSE_ENGINEERING_LEDGER.md).
 
 ## What "road_secondary" is (24 October 2026)
 
