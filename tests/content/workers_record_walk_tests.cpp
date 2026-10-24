@@ -5,7 +5,9 @@
 #include <vector>
 
 using openrepublic::content::detail::WalkWorkerRecordOffsets;
+using openrepublic::content::detail::ReadWorkerRecordTailFlags;
 using openrepublic::content::detail::WorkerRecordSpan;
+using openrepublic::content::detail::WorkerRecordTailFlags;
 
 namespace {
 
@@ -54,6 +56,24 @@ void TestEmptyAndVariableRecords() {
     }
 }
 
+void TestNamedTailFlags() {
+    std::string record(0x718, '\0');
+    WorkerRecordTailFlags flags{true, true};
+    std::string error;
+    Check(ReadWorkerRecordTailFlags(record, flags, &error), "read clear tail gates");
+    Check(!flags.hasNineByteTail && !flags.has128ByteTail, "clear tail gates are false");
+
+    record[0x700] = '\x01';
+    record[0x70c] = '\xff';
+    Check(ReadWorkerRecordTailFlags(record, flags, &error), "read set tail gates");
+    Check(flags.hasNineByteTail && flags.has128ByteTail, "nonzero tail gates are true");
+
+    record.resize(0x70c);
+    flags = {true, false};
+    Check(!ReadWorkerRecordTailFlags(record, flags, &error), "truncated gate block rejected");
+    Check(flags.hasNineByteTail && !flags.has128ByteTail, "tail flags unchanged on failure");
+}
+
 void TestFailClosedAndTransactional() {
     std::vector<WorkerRecordSpan> spans{{12, 34}};
     std::string error;
@@ -80,6 +100,7 @@ void TestFailClosedAndTransactional() {
 
 int main() {
     TestEmptyAndVariableRecords();
+    TestNamedTailFlags();
     TestFailClosedAndTransactional();
     return failures == 0 ? 0 : 1;
 }
