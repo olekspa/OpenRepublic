@@ -81,7 +81,7 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME OpenRepublicScenarioScore
         COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/test_scenario_score.py"
             "$<TARGET_FILE:OpenRepublicEconomyHost>")
-    set_tests_properties(OpenRepublicScenarioScore PROPERTIES TIMEOUT 30)
+    set_tests_properties(OpenRepublicScenarioScore PROPERTIES TIMEOUT 120)
     add_test(NAME OpenRepublicScenarioTournament
         COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/test_scenario_tournament.py"
             "$<TARGET_FILE:OpenRepublicEconomyHost>")

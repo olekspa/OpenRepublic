@@ -132,7 +132,8 @@ class ScenarioLoaderTests(unittest.TestCase):
         self.assertEqual(scenario["score"]["metric"], "rail_vs_road")
         self.assertEqual(scenario["score"]["amount"], 1000)
         self.assertIn("station", scenario["catalog"])
-        self.assertIn("vehicle train capacity 1000 speed 4", scenario["catalog"])
+        self.assertIn("vehicle truck capacity 50 speed 1", scenario["catalog"])
+        self.assertIn("vehicle train capacity 100 speed 3", scenario["catalog"])
 
     def test_rail_fixture_rejects_non_adjacent_rail_edge(self):
         scenario = scenario_score.resolve_scenario("rail_vs_road")
@@ -187,6 +188,34 @@ class ScenarioLoaderTests(unittest.TestCase):
 
 
 class ScenarioHostIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(HOST_EXE, "host executable argument is required")
+    def test_every_shipped_scenario_runs_and_repeats_its_score_hash(self):
+        for path in sorted(scenario_score.SCENARIO_DIR.glob("*.json")):
+            with self.subTest(scenario=path.stem):
+                scenario = scenario_score.load_scenario(path)
+                scripted = len(scenario.get("controllerScript", []))
+                ticks = max(8, scripted)
+                first = scenario_score.run_scenario(
+                    HOST_EXE, scenario, ticks, exact_ticks=True)
+                repeated = scenario_score.run_scenario(
+                    HOST_EXE, scenario, ticks, exact_ticks=True)
+                self.assertEqual(first["scenarioId"], scenario["id"])
+                self.assertEqual(len(first["scoreHash"]), 64)
+                self.assertEqual(first["scoreHash"], repeated["scoreHash"])
+
+    @unittest.skipUnless(HOST_EXE, "host executable argument is required")
+    def test_brewery_water_fixture_reports_consumption_and_unmet_demand(self):
+        scenario = scenario_score.resolve_scenario("water_for_brewery")
+        result = scenario_score.run_scenario(HOST_EXE, scenario, 400, exact_ticks=True)
+        breakdown = result["scoreBreakdown"]
+        self.assertGreater(breakdown["throughputUnits"], 0)
+        self.assertGreater(breakdown["unmetDemandUnits"], 0)
+        water = next(flow for flow in breakdown["utilityFlows"] if flow["resource"] == "water")
+        self.assertEqual(water["generated"], "4")
+        self.assertEqual(water["requested"], "6")
+        self.assertEqual(water["consumed"], "3")
+        self.assertEqual(water["unmet"], "3")
+
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
     def test_coal_to_heat_script_uses_two_owned_trucks_and_scores_heat(self):
         scenario = scenario_score.resolve_scenario("coal_to_heat")
