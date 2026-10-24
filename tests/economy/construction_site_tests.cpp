@@ -10,6 +10,11 @@ int main() {
     if (world.Snapshot().buildings.size()!=1 || world.Snapshot().buildings[0].constructionSite) return 2;
     const auto siteCommand=world.PlaceConstructionSite(0,{6,2}); if (!siteCommand) return 3; world.Step();
     auto snapshot=world.Snapshot(); if (snapshot.buildings.size()!=2 || !snapshot.buildings[1].constructionSite || snapshot.buildings[1].constructionProgress!=0.0) return 4;
+    if (snapshot.buildings[1].constructionMaterials.size()!=2 ||
+        snapshot.buildings[1].constructionMaterials[0].required!=2 ||
+        snapshot.buildings[1].constructionMaterials[0].held!=0 ||
+        snapshot.buildings[1].constructionMaterials[1].required!=3 ||
+        snapshot.buildings[1].constructionMaterials[1].held!=0) return 9;
     const auto saved=SaveWorld(world); if (saved.find("WORLD 7")==std::string::npos) return 5;
     World restored(catalog,1,1); if (!LoadWorld(saved,catalog,restored,error)) { std::cerr<<error.message<<"\n"; return 6; }
     if (restored.Snapshot().stateHash!=snapshot.stateHash || !restored.Snapshot().buildings[1].constructionSite) return 7;

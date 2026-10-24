@@ -298,6 +298,10 @@ struct RecipeProgressSnapshot {
     std::uint32_t remainingTicks{};
     std::uint64_t completedCycles{};
 };
+struct ConstructionMaterialSnapshot {
+    ResourceId resource{};
+    std::uint64_t required{}, held{};
+};
 struct BuildingSnapshot {
     BuildingId id{};
     BuildingTypeId type{};
@@ -308,6 +312,7 @@ struct BuildingSnapshot {
     std::vector<RecipeProgressSnapshot> recipes;
     StallRecord stall;
     bool constructionSite{};
+    std::vector<ConstructionMaterialSnapshot> constructionMaterials;
     std::uint8_t constructionState{}; // 0 waiting materials, 1 building, 2 done
     double constructionProgress{};
 };

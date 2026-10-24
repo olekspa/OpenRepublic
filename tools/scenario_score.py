@@ -136,10 +136,13 @@ def load_scenario(path):
         raise ScenarioError(f"setup may contain at most {MAX_SETUP_COMMANDS} commands")
     _object(scenario["score"], "score", ("metric",))
     metric = scenario["score"]["metric"]
-    if metric not in ("stored_non_raw_units", "utility_multi_objective"):
-        raise ScenarioError("score.metric must be stored_non_raw_units or utility_multi_objective")
+    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites"):
+        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, or completed_construction_sites")
     if metric == "utility_multi_objective" and "catalog" not in scenario:
         raise ScenarioError("utility_multi_objective scenarios must include a synthetic catalog")
+    if metric == "completed_construction_sites":
+        if "catalog" not in scenario or not any(b.get("constructionSite") is True for b in scenario["buildings"]):
+            raise ScenarioError("completed_construction_sites scenarios must include a catalog and at least one construction site")
     return scenario
 
 
@@ -211,6 +214,22 @@ def score_record(scenario, world, catalog, controller_ticks):
                             for building in world["buildings"]
                             for item in building["inventory"] if item["resource"] not in raw)
     breakdown = None
+    if scenario["score"]["metric"] == "completed_construction_sites":
+        sites = []
+        for expected in scenario["buildings"]:
+            if expected.get("constructionSite") is not True:
+                continue
+            building = next((candidate for candidate in world["buildings"]
+                             if candidate.get("type") == expected["type"] and
+                             candidate.get("cell") == {"x": expected["x"], "z": expected["z"]}), None)
+            sites.append({"buildingId": int(building["id"]) if building else None,
+                          "type": expected["type"],
+                          "state": building.get("constructionState", "unknown") if building else "missing",
+                          "progress": building.get("constructionProgress", 0.0) if building else 0.0})
+        completed = sum(1 for site in sites if site["state"] == "done")
+        score_micro_units = completed * 1_000_000
+        breakdown = {"completedSites": completed, "totalSites": len(sites),
+                     "siteStates": sites, "scoreDefinition": "one score unit per completed synthetic construction site"}
     if scenario["score"]["metric"] == "utility_multi_objective":
         diagnostics = world.get("utilityDiagnostics")
         if diagnostics is None:
@@ -244,9 +263,12 @@ def score_record(scenario, world, catalog, controller_ticks):
     }
     if breakdown is not None:
         stable["scoreBreakdown"] = breakdown
-        if scenario["score"]["metric"] == "utility_multi_objective":
+        if scenario["score"]["metric"] in ("utility_multi_objective", "completed_construction_sites"):
             stable.pop("scoreMicroUnits")
             stable.pop("scoreUnits")
+        if scenario["score"]["metric"] == "completed_construction_sites":
+            stable["scoreMicroUnits"] = score_micro_units
+            stable["scoreUnits"] = score_micro_units / 1_000_000
     digest = hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":"),
                                        ensure_ascii=False).encode("utf-8")).hexdigest()
     return {**stable, "scoreHash": digest}
@@ -333,10 +355,14 @@ def main(argv=None):
     parser.add_argument("--scenario", required=True, help="synthetic scenario JSON file")
     parser.add_argument("--ticks", required=True, type=tick_count,
                         help="autopilot simulation ticks after one setup tick")
+    parser.add_argument("--rounds", type=tick_count, default=1,
+                        help="number of autopilot planning rounds dividing the requested ticks")
+    parser.add_argument("--exact-ticks", action="store_true",
+                        help="cap each round at its scheduled tick despite extra controller actions")
     args = parser.parse_args(argv)
     try:
         scenario = load_scenario(args.scenario)
-        score = run_scenario(args.host, scenario, args.ticks)
+        score = run_scenario(args.host, scenario, args.ticks, exact_ticks=args.exact_ticks, rounds=args.rounds)
     except (ScenarioError, RuntimeError, OSError, ValueError) as error:
         print(f"scenario score failed: {error}", file=sys.stderr)
         return 1

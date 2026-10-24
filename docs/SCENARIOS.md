@@ -21,6 +21,9 @@ contain game data.
 | `import_missing_input` | Grain export post and coal-import mill | Exports earn treasury funds, then imports coal for a stalled input recipe. |
 | `export_surplus_for_power` | Grain export post and coal-fueled generator | Grain surplus funds coal imports; final-tick power flow is scored. |
 | `understaffed_mine` | Five-capacity housing and a ten-worker mine | OpenRepublic-authored synthetic population supplies half the mine's staffing requirement. |
+| `build_a_mill` | One mill construction site with no material source | The site requires planks, but the baseline has no stocked source to haul from. |
+| `build_a_mill_with_supply` | Farm, sawmill and one mill construction site on one road | The farm produces timber, the sawmill makes planks, and the autopilot serves and completes the site. |
+| `build_two_mills_with_supply` | Farm, sawmill and two mill construction sites on one road | The same authored planks chain supplies two sites; score reports completed-site count and each site's final state. |
 
 The building coordinates are origins on the host grid. Each building's access
 cell is one cell north (`x`, `z - 1`); the fixtures place that cell on a road.
@@ -40,7 +43,7 @@ A scenario is one JSON object with these required fields:
 - Optional `catalog`: bounded synthetic catalog DSL text. Utility fixtures use this to define their own power generator and consumer recipes; it contains no game-derived data. Population fixtures may declare `housing`, `workers`, and optional `food` rules as documented in [POPULATION.md](POPULATION.md).
 - Optional `utilityConnections`: array of `{ "resource": "power", "aBuilding": int, "bBuilding": int }`, where endpoints are zero-based indexes into the initial `buildings` array.
 - Trade catalogs may declare per-resource prices and trade-post storage. Trade commands run through the baseline controller; treasury appears in utility score breakdowns only when a catalog declares trade prices.
-- `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, or `{ "metric": "utility_multi_objective" }` for utility fixtures.
+- `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, `{ "metric": "utility_multi_objective" }` for utility fixtures, or `{ "metric": "completed_construction_sites" }` for construction fixtures.
 
 The loader and scorer are expected to reject malformed or unsupported scenario
 input with a diagnostic rather than silently substituting values.
@@ -54,17 +57,29 @@ count and the requested scenario path. For example:
 python tools/scenario_score.py --host build/headless/src/economy_host/Release/OpenRepublicEconomyHost.exe --scenario data/scenarios/full_chain.json --ticks 1000
 ```
 
+Construction supply scenarios need repeated planning as production generates
+material stock. For a fixed one-tick planning cadence, run for example:
+
+```powershell
+python tools/scenario_score.py --host build/headless/src/economy_host/Release/OpenRepublicEconomyHost.exe --scenario data/scenarios/build_a_mill_with_supply.json --ticks 64 --rounds 64 --exact-ticks
+```
+
 On Windows generators that place executables directly under the build tree,
 use the host executable's actual path. The scorer drives a fresh synthetic host
 instance, applies the scenario setup, then runs the rule-based autopilot for
 the requested main-step ticks. Initial buildings and roads consume one setup
 tick; utility links, when present, consume a second. Autopilot placement and
 trade attempts may advance additional one-tick steps. The output `tick` is the actual final
-simulation tick. Inventory scenarios emit score JSON with `scoreMicroUnits` and
+simulation tick; `--exact-ticks` caps each planning round at its scheduled tick.
+Inventory scenarios emit score JSON with `scoreMicroUnits` and
 `scoreUnits`. Utility scenarios emit `scoreBreakdown` with measured power
 throughput, unmet eligible demand, and an infrastructure-count cost proxy.
 Any scenario whose catalog declares trade prices adds final `treasury` to
 `scoreBreakdown`; non-trade scenarios do not get a treasury field.
+Construction scenarios score one unit per site whose final state is `done` and
+include `completedSites`, `totalSites`, and a `siteStates` list in
+`scoreBreakdown`. Their deterministic hashes include the normalized scenario,
+final host state, and site-state score receipt.
 `scenarioHash` hashes normalized scenario
 JSON; `stateHash` identifies the final host state; `scoreHash` hashes the
 canonical score record. These hashes
@@ -87,6 +102,8 @@ model. Utility diagnostics measure this independent model's per-tick flows and
 do not establish physical wattage, original-game topology, or parity. Neither
 score is a comprehensive play-quality or profit measure. Results depend on the
 authored catalog, simulation, autopilot, and tick horizon.
+`completed_construction_sites` counts completed authored synthetic sites; it is
+not a cost, profit, or construction-material valuation.
 
 **VERIFIED (fixture authorship and declared schema):** these files are
 OpenRepublic-authored synthetic layouts, and their intended road/building

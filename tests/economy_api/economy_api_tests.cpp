@@ -169,5 +169,26 @@ int main() {
         Check(refused.error == economy_api::ErrorCode::CommandHandleExhausted && refused.handle == 0 &&
               economy::SaveWorld(world) == before, "request after last usable handle does not mutate world");
     }
+    {
+        economy::CatalogBuilder builder;
+        economy::Catalog siteCatalog;
+        economy::CatalogErrorInfo error;
+        economy::ResourceId planks{};
+        economy::BuildingTypeId mill{};
+        Check(builder.AddResource("planks", &planks, error) &&
+              builder.AddBuildingType("mill", 1, 1, &mill, error) &&
+              builder.SetConstruction(mill, {{planks, 2}}, 3, error) &&
+              builder.Build(siteCatalog, error), "build construction material query fixture");
+        economy::World siteWorld(siteCatalog, 8, 8);
+        economy_api::EconomyApi siteApi(siteWorld, {true, true});
+        const auto placedSite = siteApi.PlaceConstructionSite(siteWorld.Revision(), "mill", {2, 2});
+        Check(placedSite.error == economy_api::ErrorCode::None && siteApi.Step() == economy_api::ErrorCode::None,
+              "place construction site through the typed API");
+        const auto siteView = siteApi.QueryWorld().world.buildings.front();
+        Check(siteView.constructionSite && siteView.constructionMaterials.size() == 1 &&
+              siteView.constructionMaterials[0].resource == "planks" &&
+              siteView.constructionMaterials[0].required == 2 && siteView.constructionMaterials[0].held == 0,
+              "typed world view exposes required and held site materials without ordinary inventory slots");
+    }
     std::cout << "Economy API contracts passed\n";
 }

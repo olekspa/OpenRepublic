@@ -492,9 +492,9 @@ Next: recover or repeat the missing private serializer trace, identify the exact
 - **UNKNOWN:** `$COST_WORK` units and the mapping to OpenRepublic simulation ticks.
 - **UNKNOWN:** `$COST_RESOURCE_AUTO` resource identity and amount rules; `$COST_RESOURCE` argument roles, resource identity, and amount units.
 - **UNKNOWN:** `$COST_ALL_MULTIPLY`, `$COST_WORK_BUILDING_NODE`, `$COST_WORK_BUILDING_KEYWORD`, and `$COST_WORK_BUILDING_ALL` multiplier/selection semantics.
-- **VERIFIED (OpenRepublic source):** the current native economy creates completed buildings on `PlaceBuilding`; haul orders target ordinary building inventories. It has no construction-site lifecycle or delayed work state.
+- **VERIFIED (OpenRepublic source):** ordinary `PlaceBuilding` still creates completed buildings. A separate opt-in authored `PlaceConstructionSite` path supports material-specific delivery into a bounded site store and delayed work/completion; this is OpenRepublic synthetic behavior, not an interpretation of WRSR declarations.
 - The economy-host `--construction-costs` option is diagnostic only. It reports retained raw declarations and does not infer or convert values. Synthetic tests verify that the option leaves canonical catalog text unchanged. No original-game inputs were used.
-- **Next:** implement a native construction-site entity/lifecycle, delivery target and persistence before adding import conversion; then use build-matched writer/consumer evidence to resolve source directive semantics.
+- **Next:** keep the authored synthetic lifecycle separate from imports. Resolve source directive semantics only through build-matched writer/consumer evidence before any conversion.
 
 ## GHIDRA-ROAD follow-up - 23 October 2026
 
