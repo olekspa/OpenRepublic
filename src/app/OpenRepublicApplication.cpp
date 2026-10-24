@@ -2249,6 +2249,20 @@ namespace openrepublic
 					if (found != native.buildings.end())
 					{
 						const auto* type = nativeEconomyCheckpoint.world->GetCatalog().BuildingType(found->type);
+						if (found->constructionSite)
+						{
+							static const char* const kSiteStates[] = { "waiting for materials", "building", "done" };
+							const std::size_t stateIndex = std::min<std::size_t>(found->constructionState, 2);
+							text << "
+Construction site (OpenRepublic synthetic rules): " << kSiteStates[stateIndex]
+								<< ", progress " << static_cast<int>(found->constructionProgress * 100.0 + 0.5) << "%";
+							for (const auto& material : found->constructionMaterials)
+							{
+								const auto* resource = nativeEconomyCheckpoint.world->GetCatalog().Resource(material.resource);
+								text << "
+  " << (resource ? resource->name : "resource") << " " << material.held << "/" << material.required;
+							}
+						}
 						for (std::size_t i = 0; type && i < found->recipes.size() && i < type->recipes.size(); ++i)
 							text << "\n" << type->recipes[i].name << ": " << found->recipes[i].completedCycles
 								<< " cycles, " << found->recipes[i].remainingTicks << " ticks remaining";
