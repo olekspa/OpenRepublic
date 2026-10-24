@@ -122,6 +122,13 @@ target_include_directories(OpenRepublicBuildingRecordWalkTests PRIVATE
 target_compile_features(OpenRepublicBuildingRecordWalkTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicBuildingRecordWalkTests COMMAND OpenRepublicBuildingRecordWalkTests)
 
+add_executable(OpenRepublicWorkersRecordWalkTests workers_record_walk_tests.cpp)
+target_link_libraries(OpenRepublicWorkersRecordWalkTests PRIVATE OpenRepublicContent)
+target_include_directories(OpenRepublicWorkersRecordWalkTests PRIVATE
+    "${PROJECT_SOURCE_DIR}/src/content")
+target_compile_features(OpenRepublicWorkersRecordWalkTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicWorkersRecordWalkTests COMMAND OpenRepublicWorkersRecordWalkTests)
+
 add_executable(OpenRepublicRoadNetworkTests
     road_network_tests.cpp
 )
