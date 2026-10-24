@@ -4,6 +4,8 @@ import importlib.util
 import io
 import pathlib
 import json
+import subprocess
+import sys
 import unittest
 
 
@@ -181,6 +183,55 @@ class AutopilotTests(unittest.TestCase):
         orders = [params["orders"] for method, params in host.calls if method == "create_haul_orders"]
         self.assertEqual(orders, [[{"source": 3, "destination": 2, "resource": "planks", "vehicleType": "truck"}]])
         self.assertEqual(result["creates_queued"], 1)
+
+    def test_depot_dispatch_uses_parked_truck_and_stocked_source_for_advised_need(self):
+        snapshot = world()
+        snapshot["buildings"] = [
+            {"id": 1, "type": "border_post", "cell": {"x": 2, "z": 2}, "stallReason": "running",
+             "inventory": [{"resource": "coal", "amount": "4000000"}]},
+            {"id": 2, "type": "heating_plant", "cell": {"x": 8, "z": 2},
+             "inventory": [{"resource": "coal", "amount": "0"}], "stallReason": "input_empty"},
+            {"id": 3, "type": "road_depot", "cell": {"x": 1, "z": 2}, "inventory": [], "stallReason": "running"},
+        ]
+        snapshot["vehicles"] = [{"id": 7, "ownerDepotId": 3, "parked": True,
+                                 "leg": "parked", "cell": {"x": 1, "z": 2}}]
+        plan = {"revision": "7", "unservedInputs": [{"building": 2, "resource": "coal",
+                "producers": [{"command": {"source": 1, "destination": 2,
+                    "resource": "coal", "vehicleType": "truck"}}]}]}
+        host = FakeHost(snapshot, [plan])
+        catalog = {"buildingTypes": [{"name": "road_depot", "depot": True, "recipes": []},
+                                     {"name": "border_post", "recipes": []},
+                                     {"name": "heating_plant", "recipes": []}]}
+        result = self.run_round(host, catalog)
+        commands = [params["command"] for method, params in host.calls if method == "submit"]
+        self.assertEqual(commands, [{"kind": "dispatch_truck", "vehicle": 7, "source": 1,
+                                    "destination": 2, "resource": "coal"}])
+        self.assertEqual(result["depot_dispatches_queued"], 1)
+        self.assertEqual(result["accepted_depot_dispatches"], 1)
+        self.assertEqual(result["creates_queued"], 0)
+
+    def test_depot_planner_does_not_dispatch_busy_trucks_or_duplicate_active_delivery(self):
+        snapshot = world()
+        snapshot["buildings"] = [
+            {"id": 1, "type": "storage", "cell": {"x": 1, "z": 1},
+             "inventory": [{"resource": "coal", "amount": "4000000"}]},
+            {"id": 2, "type": "plant", "cell": {"x": 4, "z": 1},
+             "inventory": [{"resource": "coal", "amount": "0"}]},
+            {"id": 3, "type": "depot", "inventory": []},
+        ]
+        snapshot["vehicles"] = [{"id": 7, "ownerDepotId": 3, "parked": False,
+                                 "leg": "to_destination", "cell": {"x": 2, "z": 1}}]
+        snapshot["orders"] = [{"id": 8, "source": 1, "destination": 2, "resource": "coal",
+                               "vehicleId": 7, "state": "to_destination"}]
+        plan = {"revision": "7", "unservedInputs": [{"building": 2, "resource": "coal", "producers": []}]}
+        catalog = {"buildingTypes": [{"name": "depot", "depot": True}]}
+        commands = autopilot._depot_dispatch_commands(plan, snapshot, catalog)
+        self.assertEqual(commands, [])
+
+    def test_llm_scripted_self_test_covers_depot_dispatch_validation(self):
+        script = SCRIPT.parents[1] / "tools" / "llm_republic.py"
+        subprocess.run([sys.executable, str(script), "--self-test"], check=True,
+                       capture_output=True, text=True)
 
     def test_site_haul_suppresses_existing_route_and_done_site(self):
         snapshot = world()

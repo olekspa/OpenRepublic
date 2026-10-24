@@ -27,6 +27,7 @@ They do not contain game data.
 | `growth_town` | Four-capacity home, farm→mill→bakery chain, grain exporter and market site | Residents consume bakery bread; grain exports fund imported planks and bricks, which the autopilot hauls to the market site. The receipt reports fed residents, completed sites and treasury separately. |
 | `power_and_build` | Generator, powered mine, smelter and timber-fed `power_line` site | The site produces wire after construction; the smelter requires wire, ore and connected power. The receipt reports site completion and final-tick utility throughput/deficit. The power links are explicit fixture connections; the `power_line` site is a synthetic production prerequisite. |
 | `austerity` | Grain trade post, local farm/mill/bakery chain and second mill site | Limited exports fund imports for both the trade post's flour recipe and site materials. At short horizons, the baseline can spend on inputs while the second mill remains waiting for materials; longer runs may eventually complete it. |
+| `coal_to_heat` | Grain export post, coal-import trade post, depot with two owned trucks, coal storage and heating plant | The rule-based baseline exports for treasury, imports coal for the plant's missing recipe input, then dispatches a parked depot truck from stocked inventory and replans as trucks return. Scores stored heat units. |
 | `rail_vs_road` | Independent 20-edge road and rail routes, two producer/destination pairs, and one train | The scorer moves 1,000 grain units by truck and train, records destination arrival ticks, and requires the rail run to finish first. See [RAIL.md](RAIL.md) for synthetic-rule boundaries and the explicit-transfer limitation. |
 
 The building coordinates are origins on the host grid. Each building's access
@@ -48,7 +49,7 @@ A scenario is one JSON object with these required fields:
 - Optional `catalog`: bounded synthetic catalog DSL text. Utility fixtures use this to define their own power generator and consumer recipes; it contains no game-derived data. Population fixtures may declare `housing`, `workers`, and optional `food` rules as documented in [POPULATION.md](POPULATION.md).
 - Optional `utilityConnections`: array of `{ "resource": "<declared utility>", "aBuilding": int, "bBuilding": int }`, where endpoints are zero-based indexes into the initial `buildings` array.
 - Trade catalogs may declare per-resource prices and trade-post storage. Trade commands run through the baseline controller; treasury appears in utility score breakdowns only when a catalog declares trade prices.
-- `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, `{ "metric": "utility_multi_objective" }` for utility fixtures, `{ "metric": "completed_construction_sites" }` for construction fixtures, `{ "metric": "combined_multi_objective", "objectives": [...] }` for combined fixtures, or the dedicated `rail_vs_road` comparison fields in its fixture. Supported combined fields are `fedResidents`, `completedSites`, `treasury`, `throughputUnits`, `unmetDemandUnits`, and `storedNonRawUnits`; each remains a separate objective in the score receipt.
+- `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, `{ "metric": "utility_multi_objective" }` for utility fixtures, `{ "metric": "completed_construction_sites" }` for construction fixtures, `{ "metric": "combined_multi_objective", "objectives": [...] }` for combined fixtures, `{ "metric": "heat_units" }` for the depot heating fixture, or the dedicated `rail_vs_road` comparison fields in its fixture. Supported combined fields are `fedResidents`, `completedSites`, `treasury`, `throughputUnits`, `unmetDemandUnits`, and `storedNonRawUnits`; each remains a separate objective in the score receipt.
 
 The loader and scorer are expected to reject malformed or unsupported scenario
 input with a diagnostic rather than silently substituting values.
@@ -155,6 +156,7 @@ extra ticks while attempting orders or placements.
 | `growth_town` | Fed residents; completed sites; treasury | 2; 1/1; 28 | 17 |
 | `power_and_build` | Completed sites; power throughput / unmet | 1/1; 4 / 0 | 18 |
 | `austerity` | Completed sites; treasury; stored non-raw units | 0/1; 6; 0.000027 | 17 |
+| `coal_to_heat` | Stored heat units at 600 / 1500 requested ticks | 98 / 100 | 601 / 1501 |
 
 The combined baseline results used 16 requested controller ticks,
 `--exact-ticks`, and 16 planning rounds. **OBSERVED (synthetic host, 24 October
