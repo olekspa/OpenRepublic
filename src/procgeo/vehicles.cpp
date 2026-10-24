@@ -57,7 +57,8 @@ namespace
 			for (float z : { frontZ, rearZ }) AddWheelX(m, x, radius, z, radius, tireWidth);
 	}
 
-	Mesh Build(VehicleKind kind, Color3 paint, std::uint32_t seed)
+	Mesh Build(VehicleKind kind, Color3 paint, std::uint32_t seed, bool includeWheels = true,
+		bool includeCargoLoad = true)
 	{
 		Mesh m;
 		const Color3 cab = paint;
@@ -81,7 +82,7 @@ namespace
 			Box(m,{0,2.44f,-2.63f},{1.00f,0.36f,0.63f},kGlass);
 			Box(m,{0,0.52f,3.65f},{1.04f,0.11f,0.10f},kChrome);
 			Box(m,{0,0.52f,-3.65f},{1.04f,0.11f,0.10f},kChrome);
-			Wheels(m,1.06f,2.45f,-2.42f,0.46f,0.27f);
+			if (includeWheels) Wheels(m,1.06f,2.45f,-2.42f,0.46f,0.27f);
 			for(float x:{-0.82f,0.82f}) { Box(m,{x,0.94f,3.67f},{0.13f,0.13f,0.035f},kLamp); Box(m,{x,0.94f,-3.67f},{0.13f,0.13f,0.035f},kTail); }
 			return m;
 		}
@@ -100,7 +101,7 @@ namespace
 		Box(m,{0,1.38f,2.32f},{1.12f,0.72f,1.22f},cab);
 		Box(m,{0,1.72f,3.48f},{0.87f,0.30f,0.035f},kGlass);
 		Box(m,{0,1.70f,1.15f},{0.91f,0.30f,0.035f},kGlass);
-		Wheels(m,1.12f,zFront,zRear,0.48f,0.30f);
+		if (includeWheels) Wheels(m,1.12f,zFront,zRear,0.48f,0.30f);
 		Box(m,{0,0.74f,3.75f},{1.03f,0.12f,0.12f},kChrome);
 		Box(m,{0,0.74f,-3.76f},{1.03f,0.12f,0.12f},kChrome);
 		for(float x:{-0.82f,0.82f}) { Box(m,{x,0.96f,3.78f},{0.16f,0.13f,0.04f},kLamp); Box(m,{x,0.96f,-3.78f},{0.14f,0.12f,0.04f},kTail); }
@@ -108,8 +109,11 @@ namespace
 		{
 			Box(m,{0,1.17f,-1.60f},{1.12f,0.15f,1.80f},kBed);
 			for(float x:{-1.08f,1.08f}) Box(m,{x,1.43f,-1.60f},{0.08f,0.18f,1.74f},kBed);
-			if ((seed & 1u) != 0u) Box(m,{0,1.68f,-1.55f},{0.78f,0.35f,1.18f},kWood);
-			else for(int i=0;i<3;++i) Box(m,{-0.48f+0.48f*i,1.57f,-1.62f},{0.19f,0.26f,1.34f},kWood);
+			if (includeCargoLoad)
+			{
+				if ((seed & 1u) != 0u) Box(m,{0,1.68f,-1.55f},{0.78f,0.35f,1.18f},kWood);
+				else for(int i=0;i<3;++i) Box(m,{-0.48f+0.48f*i,1.57f,-1.62f},{0.19f,0.26f,1.34f},kWood);
+			}
 		}
 		else if (kind == VehicleKind::Tanker)
 		{
@@ -128,6 +132,18 @@ namespace
 Mesh MakeVehicle(VehicleKind kind, std::uint32_t colorSeed)
 {
 	return Build(kind, kPaint[colorSeed % kPaint.size()], colorSeed);
+}
+
+Mesh MakeCargoTruckBody(std::uint32_t colorSeed)
+{
+	return Build(VehicleKind::CargoTruck, kPaint[colorSeed % kPaint.size()], colorSeed, false, false);
+}
+
+Mesh MakeVehicleWheel()
+{
+	Mesh wheel;
+	AddWheelX(wheel, 0.0f, 0.0f, 0.0f, 0.48f, 0.30f);
+	return wheel;
 }
 
 float VehicleLength(VehicleKind kind)

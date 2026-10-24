@@ -1,9 +1,12 @@
 #include "NativeEconomyScene.h"
+#include "ShowcaseProps.h"
 #include "openrepublic/runtime/native_economy_tools.h"
+#include "openrepublic/procgeo/vehicles.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string_view>
 #include <unordered_set>
 
 namespace openrepublic::preview
@@ -13,6 +16,29 @@ namespace openrepublic::preview
 		using Plan = runtime::NativeEconomyScenePlan;
 		using BuildingPrimitive = runtime::NativeBuildingPrimitive;
 		using RoadPrimitive = runtime::NativeRoadPrimitive;
+		constexpr float kTruckScale = 0.28f;
+		constexpr float kRoadSurfaceY = 0.11f;
+
+		wi::ecs::Entity CreateVehicleNode(wi::scene::Scene& scene, wi::ecs::Entity mesh,
+			const std::string& name)
+		{
+			if (mesh == wi::ecs::INVALID_ENTITY) return wi::ecs::INVALID_ENTITY;
+			const wi::ecs::Entity entity = scene.Entity_CreateObject(name);
+			if (entity == wi::ecs::INVALID_ENTITY) return entity;
+			wi::scene::ObjectComponent* object = scene.objects.GetComponent(entity);
+			if (object == nullptr) { scene.Entity_Remove(entity); return wi::ecs::INVALID_ENTITY; }
+			object->meshID = mesh;
+			return entity;
+		}
+
+		bool IsSmokePolicyBuilding(std::string_view name)
+		{
+			// OpenRepublic presentation policy: these authored catalog-name tokens
+			// receive a small smoke plume while any recipe is active.
+			return name.find("heating_plant") != std::string_view::npos ||
+				name.find("heatingplant") != std::string_view::npos ||
+				name.find("bakery") != std::string_view::npos;
+		}
 
 		bool ToFloat(double value, float& out) noexcept
 		{
@@ -285,8 +311,10 @@ namespace openrepublic::preview
 
 		std::unordered_set<economy::BuildingId> seenBuildings;
 		std::unordered_set<economy::RoadId> seenRoads;
+		std::unordered_set<economy::VehicleId> seenVehicles;
 		seenBuildings.reserve(plan.buildings.size());
 		seenRoads.reserve(plan.roads.size());
+		seenVehicles.reserve(snapshot.vehicles.size());
 		for (const BuildingPrimitive& primitive : plan.buildings)
 			if (!seenBuildings.insert(primitive.buildingId).second)
 			{
@@ -358,6 +386,106 @@ namespace openrepublic::preview
 			createdEntities.push_back(entity);
 			addedRoads.push_back({ primitive.roadId, { entity, primitive.centerX, primitive.centerZ,
 				primitive.width, primitive.depth, primitive.enabled } });
+		}
+		struct NewVehicle { economy::VehicleId id; VehicleVisual visual; };
+		std::vector<NewVehicle> addedVehicles;
+		addedVehicles.reserve(snapshot.vehicles.size());
+		if (!snapshot.vehicles.empty() && truckMesh_ == wi::ecs::INVALID_ENTITY)
+		{
+			truckMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic native truck mesh",
+				openrepublic::procgeo::MakeCargoTruckBody(5), 0.5f, 0.1f);
+			wheelMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic native wheel mesh",
+				openrepublic::procgeo::MakeVehicleWheel(), 0.82f, 0.0f);
+			if (truckMesh_ == wi::ecs::INVALID_ENTITY || wheelMesh_ == wi::ecs::INVALID_ENTITY)
+			{
+				if (truckMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(truckMesh_);
+				if (wheelMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(wheelMesh_);
+				truckMesh_ = wheelMesh_ = wi::ecs::INVALID_ENTITY;
+				error = "Wicked Engine could not create the native procedural truck meshes";
+				return false;
+			}
+		}
+		for (const auto& vehicle : snapshot.vehicles)
+		{
+			if (!seenVehicles.insert(vehicle.id).second)
+			{
+				rollback(); error = "native economy snapshot contains duplicate vehicle IDs"; return false;
+			}
+			VehicleVisual visual{};
+			const auto old = vehicles_.find(vehicle.id);
+			if (old != vehicles_.end()) visual = old->second;
+			else
+			{
+				visual.body = CreateVehicleNode(scene, truckMesh_, "OpenRepublic native truck " + std::to_string(vehicle.id));
+				visual.load = scene.Entity_CreateCube("OpenRepublic native cargo load " + std::to_string(vehicle.id));
+				for (wi::ecs::Entity& wheel : visual.wheels)
+					wheel = CreateVehicleNode(scene, wheelMesh_, "OpenRepublic native truck wheel " + std::to_string(vehicle.id));
+				if (visual.body == wi::ecs::INVALID_ENTITY || visual.load == wi::ecs::INVALID_ENTITY ||
+					std::any_of(visual.wheels.begin(), visual.wheels.end(), [](wi::ecs::Entity e) { return e == wi::ecs::INVALID_ENTITY; }))
+				{
+					if (visual.body != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.body);
+					if (visual.load != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.load);
+					for (wi::ecs::Entity wheel : visual.wheels) if (wheel != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(wheel);
+					rollback(); error = "Wicked Engine could not create a native vehicle node"; return false;
+				}
+				createdEntities.push_back(visual.body);
+				createdEntities.push_back(visual.load);
+				createdEntities.insert(createdEntities.end(), visual.wheels.begin(), visual.wheels.end());
+				if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(visual.load))
+				{
+					material->SetBaseColor(XMFLOAT4(0.48f, 0.29f, 0.13f, 1.0f));
+					material->CreateRenderData(true);
+				}
+				visual.hasPrevious = false;
+			}
+			visual.wheelRotationBase = visual.wheelRotation;
+			visual.previous = visual.hasPrevious ? visual.current : vehicle.cell;
+			visual.current = vehicle.cell;
+			visual.hasPrevious = true;
+			visual.loaded = vehicle.cargo > 0;
+			visual.idle = vehicle.state == economy::HaulState::Idle || vehicle.state == economy::HaulState::Waiting ||
+				vehicle.state == economy::HaulState::NoRoute;
+			addedVehicles.push_back({ vehicle.id, visual });
+		}
+
+		std::unordered_map<economy::BuildingId, const BuildingPrimitive*> presentationBuildings;
+		for (const BuildingPrimitive& primitive : plan.buildings) presentationBuildings.emplace(primitive.buildingId, &primitive);
+		std::vector<std::pair<economy::BuildingId, BuildingEffect>> desiredEffects;
+		for (const auto& building : snapshot.buildings)
+		{
+			const auto* type = catalog.BuildingType(building.type);
+			const bool active = type != nullptr && IsSmokePolicyBuilding(type->name) &&
+				std::any_of(building.recipes.begin(), building.recipes.end(), [](const auto& recipe) { return recipe.remainingTicks > 0; });
+			if (!active || desiredEffects.size() >= 8) continue;
+			const auto old = buildingEffects_.find(building.id);
+			if (old != buildingEffects_.end() && old->second.active)
+			{
+				desiredEffects.push_back({ building.id, old->second });
+				continue;
+			}
+			const auto geometry = presentationBuildings.find(building.id);
+			if (geometry == presentationBuildings.end()) continue;
+			const auto& shape = *geometry->second;
+			const wi::ecs::Entity emitterEntity = scene.Entity_CreateEmitter("OpenRepublic active production smoke",
+				XMFLOAT3(static_cast<float>(shape.centerX), static_cast<float>(shape.height + 0.3), static_cast<float>(shape.centerZ)));
+			if (emitterEntity == wi::ecs::INVALID_ENTITY)
+			{
+				rollback(); error = "Wicked Engine could not create a production smoke emitter"; return false;
+			}
+			createdEntities.push_back(emitterEntity);
+			if (wi::EmittedParticleSystem* emitter = scene.emitters.GetComponent(emitterEntity))
+			{
+				emitter->count = 4.0f; emitter->size = 2.5f; emitter->life = 9.0f;
+				emitter->random_life = 0.35f; emitter->normal_factor = 0.0f; emitter->random_factor = 0.35f;
+				emitter->velocity = XMFLOAT3(0.25f, 1.2f, 0.0f); emitter->scaleX = 1.3f;
+				emitter->mass = -0.01f; emitter->drag = 0.99f; emitter->rotation = 0.4f;
+			}
+			if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(emitterEntity))
+			{
+				material->SetBaseColor(XMFLOAT4(0.58f, 0.57f, 0.54f, 0.48f));
+				material->userBlendMode = wi::enums::BLENDMODE_ALPHA;
+			}
+			desiredEffects.push_back({ building.id, { emitterEntity, true } });
 		}
 
 		std::unordered_map<economy::BuildingId, const BuildingPrimitive*> buildingGeometry;
@@ -520,6 +648,28 @@ namespace openrepublic::preview
 			}
 			else ++it;
 		}
+		for (auto it = vehicles_.begin(); it != vehicles_.end();)
+		{
+			if (seenVehicles.find(it->first) == seenVehicles.end())
+			{
+				scene.Entity_Remove(it->second.body);
+				scene.Entity_Remove(it->second.load);
+				for (wi::ecs::Entity wheel : it->second.wheels) scene.Entity_Remove(wheel);
+				it = vehicles_.erase(it);
+			}
+			else ++it;
+		}
+		std::unordered_set<economy::BuildingId> activeEffectIds;
+		for (const auto& desired : desiredEffects) activeEffectIds.insert(desired.first);
+		for (auto it = buildingEffects_.begin(); it != buildingEffects_.end();)
+		{
+			if (activeEffectIds.find(it->first) == activeEffectIds.end())
+			{
+				scene.Entity_Remove(it->second.entity);
+				it = buildingEffects_.erase(it);
+			}
+			else ++it;
+		}
 		if (utilityGeometryChanged)
 		{
 			for (const UtilityVisual& visual : utilityConnections_) scene.Entity_Remove(visual.entity);
@@ -531,6 +681,8 @@ namespace openrepublic::preview
 			buildings_.emplace(item.id, item.visual);
 		}
 		for (NewRoad& item : addedRoads) roads_.emplace(item.id, item.visual);
+		for (NewVehicle& item : addedVehicles) vehicles_[item.id] = item.visual;
+		for (const auto& desired : desiredEffects) buildingEffects_[desired.first] = desired.second;
 		if (newGround != wi::ecs::INVALID_ENTITY) groundEntity_ = newGround;
 		groundTransform->scale_local = XMFLOAT3(groundHalfWidth, 1.0f, groundHalfDepth);
 		groundTransform->translation_local = XMFLOAT3(groundX, 0.0f, groundZ);
@@ -543,6 +695,47 @@ namespace openrepublic::preview
 			static_cast<float>(plan.minZ * 0.5 + plan.maxZ * 0.5));
 		initialized_ = true;
 		return true;
+	}
+
+	void NativeEconomyScene::UpdateVehicleMotion(wi::scene::Scene& scene, double alpha)
+	{
+		if (!transform_) return;
+		for (auto& entry : vehicles_)
+		{
+			VehicleVisual& visual = entry.second;
+			const runtime::NativeVehicleMotion motion = runtime::InterpolateNativeVehicleMotion(
+				visual.previous, visual.current, alpha, visual.yaw, *transform_, 0.48 * kTruckScale);
+			if (motion.moving) visual.yaw = static_cast<float>(motion.yawRadians);
+			visual.wheelRotation = visual.wheelRotationBase + static_cast<float>(motion.wheelRotationRadians);
+			XMFLOAT4 yawRotation;
+			XMStoreFloat4(&yawRotation, XMQuaternionRotationAxis(XMVectorSet(0, 1, 0, 0), visual.yaw));
+			const auto positionNode = [&](wi::ecs::Entity entity, float localX, float localY, float localZ,
+				const XMFLOAT3& scale, const XMFLOAT4& rotation)
+			{
+				wi::scene::TransformComponent* node = scene.transforms.GetComponent(entity);
+				if (!node) return;
+				const float x = static_cast<float>(motion.position.x) +
+					(std::cos(visual.yaw) * localX + std::sin(visual.yaw) * localZ) * kTruckScale;
+				const float z = static_cast<float>(motion.position.z) +
+					(-std::sin(visual.yaw) * localX + std::cos(visual.yaw) * localZ) * kTruckScale;
+				node->ClearTransform(); node->Scale(scale); node->Rotate(rotation);
+				node->Translate(XMFLOAT3(x, kRoadSurfaceY + localY * kTruckScale, z)); node->UpdateTransform();
+			};
+			positionNode(visual.body, 0, 0, 0, XMFLOAT3(kTruckScale, kTruckScale, kTruckScale), yawRotation);
+			const float loadY = visual.loaded ? 1.55f : -10000.0f;
+			positionNode(visual.load, 0, loadY, -1.55f,
+				XMFLOAT3(0.78f * kTruckScale, 0.30f * kTruckScale, 1.1f * kTruckScale), yawRotation);
+			if (wi::scene::ObjectComponent* object = scene.objects.GetComponent(visual.body))
+				object->color = visual.idle ? XMFLOAT4(0.78f, 0.78f, 0.82f, 1.0f) : XMFLOAT4(1, 1, 1, 1);
+			const float wheelOffsets[4][2] = {{-1.12f, 3.05f}, {1.12f, 3.05f}, {-1.12f, -2.62f}, {1.12f, -2.62f}};
+			XMFLOAT4 rollRotation;
+			XMStoreFloat4(&rollRotation, XMQuaternionRotationAxis(XMVectorSet(1, 0, 0, 0), visual.wheelRotation));
+			XMFLOAT4 combined;
+			XMStoreFloat4(&combined, XMQuaternionMultiply(XMLoadFloat4(&yawRotation), XMLoadFloat4(&rollRotation)));
+			for (std::size_t i = 0; i < visual.wheels.size(); ++i)
+				positionNode(visual.wheels[i], wheelOffsets[i][0], 0.48f, wheelOffsets[i][1],
+					XMFLOAT3(kTruckScale, kTruckScale, kTruckScale), combined);
+		}
 	}
 
 	std::optional<economy::BuildingId> NativeEconomyScene::BuildingForEntity(wi::ecs::Entity entity) const

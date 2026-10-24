@@ -1880,6 +1880,9 @@ namespace openrepublic
 		else if (regionEconomyApi && (mapPlacement || syntheticRegionFixtureMode || nativeEconomyCheckpointMode))
 		{
 			UpdateRegionEconomyPresentation();
+			if (nativeEconomyCheckpointMode && nativeEconomyPresentationValid)
+				nativeEconomyScene.UpdateVehicleMotion(previewWorld,
+					nativeEconomyRunning ? nativeEconomyRunClock.InterpolationAlpha() : 1.0);
 			if (selectedRegionBuildingEntity != wi::ecs::INVALID_ENTITY &&
 				!GetRegionBuildingForInstance(selectedRegionBuildingEntity).has_value())
 			{
@@ -2628,6 +2631,7 @@ namespace openrepublic
 			centerX = mapPlacement->placement.X();
 			centerZ = mapPlacement->placement.Z();
 		}
+		if (nativeEconomyCheckpointMode) return;
 		while (regionTruckEntities.size() < regionEconomySnapshot->vehicles.size())
 		{
 			wi::ecs::Entity truck = wi::ecs::INVALID_ENTITY;

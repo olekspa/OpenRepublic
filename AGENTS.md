@@ -9,3 +9,4 @@
 - Keep dependencies and licenses explicit. Do not copy GPL mod-loader code into this MIT project without an approved licensing change.
 - Make small scoped changes. Do not launch the game, modify saves, write to the Steam installation, publish assets, or change user-level tools/configuration unless the task explicitly requires that action.
 - Separate source validation, build results, original-game comparison, and graphics/hardware acceptance in reports.
+- Scope, goal, target, architecture map and working method are in CLAUDE.md; read it together with this file.

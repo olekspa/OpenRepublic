@@ -135,7 +135,7 @@ bool Fields(const Json &object, std::initializer_list<const char *> names, std::
 }
 
 bool NestedFields(const Json &object, std::initializer_list<const char *> names, std::string &error,
-                  std::initializer_list<const char *> optional = {}) {
+                  std::initializer_list<const char *> optionalNames = {}) {
   if (!object.is_object()) {
     error = "command must be a JSON object";
     return false;
@@ -143,7 +143,7 @@ bool NestedFields(const Json &object, std::initializer_list<const char *> names,
   std::set<std::string> allowed;
   for (const auto *name : names)
     allowed.emplace(name);
-  for (const auto *name : optional)
+  for (const auto *name : optionalNames)
     allowed.emplace(name);
   for (auto it = object.begin(); it != object.end(); ++it)
     if (!allowed.count(it.key())) {
@@ -276,14 +276,22 @@ std::string Failure(economy::CommandFailure e) {
     return "unknown_vehicle_type";
   case F::UnknownRoad:
     return "unknown_road";
+  case F::UnknownRail:
+    return "unknown_rail";
   case F::UnknownOrder:
     return "unknown_order";
   case F::OutOfBounds:
     return "out_of_bounds";
   case F::InvalidRoadGeometry:
     return "invalid_road_geometry";
+  case F::InvalidRailGeometry:
+    return "invalid_rail_geometry";
   case F::DuplicateRoad:
     return "duplicate_road";
+  case F::DuplicateRail:
+    return "duplicate_rail";
+  case F::RailOnBuilding:
+    return "rail_on_building";
   case F::RoadOnBuilding:
     return "road_on_building";
   case F::BuildingCollision:
@@ -347,6 +355,10 @@ std::string Stall(economy::StallReason s) {
     return "output_full";
   case economy::StallReason::Disabled:
     return "disabled";
+  case economy::StallReason::MissingHeating:
+    return "missing_heating";
+  case economy::StallReason::MissingWater:
+    return "missing_water";
   }
   return "unknown";
 }
@@ -379,6 +391,9 @@ std::string Haul(economy::HaulState s) {
     return "no_route";
   }
   return "unknown";
+}
+std::string Mode(economy::HaulMode mode) {
+  return mode == economy::HaulMode::Rail ? "rail" : "road";
 }
 std::string EventType(economy_api::EventType t) {
   using T = economy_api::EventType;
@@ -419,6 +434,8 @@ std::string Action(economy_api::Action action) {
     return "remove_building";
   case A::BuildRoad:
     return "build_road";
+  case A::BuildRail:
+    return "build_rail";
   case A::SetRoadEnabled:
     return "set_road_enabled";
   case A::SetBuildingEnabled:
@@ -519,13 +536,15 @@ Json Catalog(const economy_api::CatalogView &c) {
     if (b.constructionWorkTicks) { item["constructionMaterials"]=construction; item["constructionWorkTicks"]=b.constructionWorkTicks; }
     if (b.tradePost) item["tradePost"] = true;
     if (b.depot) { item["depot"] = true; item["loadTicks"] = b.loadTicks; item["unloadTicks"] = b.unloadTicks; Json fleet = Json::array(); for (const auto &entry : b.fleet) fleet.push_back(Json{{"vehicleType",entry.first},{"count",entry.second}}); item["fleet"] = std::move(fleet); }
+    if (b.station) item["station"] = true;
     buildings.push_back(std::move(item));
   }
   for (const auto &v : c.vehicleTypes)
     vehicles.push_back(Json{{"id", v.id},
                             {"name", v.name},
                             {"capacity", std::to_string(v.capacity)},
-                            {"cellsPerTick", v.cellsPerTick}});
+                            {"cellsPerTick", v.cellsPerTick},
+                            {"railOnly", v.railOnly}});
   return Json{{"errorCode", Error(c.error)},
               {"apiVersion", c.apiVersion},
               {"resources", resources},
@@ -533,7 +552,7 @@ Json Catalog(const economy_api::CatalogView &c) {
               {"vehicleTypes", vehicles}};
 }
 Json World(const economy_api::WorldView &w) {
-  Json buildings = Json::array(), roads = Json::array(), vehicles = Json::array(), orders = Json::array();
+  Json buildings = Json::array(), roads = Json::array(), rails = Json::array(), vehicles = Json::array(), orders = Json::array();
   Json utilityConnections = Json::array();
   for (const auto &b : w.buildings) {
     Json inventory = Json::array();
@@ -562,6 +581,8 @@ Json World(const economy_api::WorldView &w) {
   }
   for (const auto &r : w.roads)
     roads.push_back(Json{{"id", r.id}, {"a", Cell(r.a)}, {"b", Cell(r.b)}, {"enabled", r.enabled}});
+  for (const auto &r : w.rails)
+    rails.push_back(Json{{"id", r.id}, {"a", Cell(r.a)}, {"b", Cell(r.b)}});
   for (const auto &v : w.vehicles) {
     Json item{{"id", v.id},
                             {"orderId", v.order},
@@ -586,13 +607,14 @@ Json World(const economy_api::WorldView &w) {
                           {"vehicleId", o.vehicle},
                           {"state", Haul(o.state)},
                           {"failure", HaulFailure(o.failure)},
+                          {"mode", Mode(o.mode)},
                           {"cargo", std::to_string(o.cargo)},
                           {"vehicleCell", Cell(o.vehicleCell)}});
   for (const auto &u : w.utilityConnections)
     utilityConnections.push_back(Json{{"resource", u.resource}, {"a", u.a}, {"b", u.b}});
   Json result{{"apiVersion", w.apiVersion},     {"revision", std::to_string(w.revision)},
               {"tick", std::to_string(w.tick)}, {"stateHash", std::to_string(w.stateHash)},
-              {"buildings", buildings},         {"roads", roads},
+              {"buildings", buildings},         {"roads", roads}, {"rails", rails},
               {"vehicles", vehicles},           {"orders", orders},
               {"utilityConnections", utilityConnections},
               {"commandHistory", CommandHistory(w.commandHistory)}};
@@ -766,6 +788,8 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         for (const auto &road : q.page.roads)
           entities.push_back(
               Json{{"id", road.id}, {"a", Cell(road.a)}, {"b", Cell(road.b)}, {"enabled", road.enabled}});
+        for (const auto &rail : q.page.rails)
+          entities.push_back(Json{{"id", rail.id}, {"a", Cell(rail.a)}, {"b", Cell(rail.b)}});
         for (const auto &vehicle : q.page.vehicles) {
           Json item{{"id", vehicle.id},
                                   {"orderId", vehicle.order},
@@ -789,6 +813,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                                   {"vehicleType", order.vehicleType},
                                   {"vehicleId", order.vehicle},
                                   {"state", Haul(order.state)},
+                                  {"mode", Mode(order.mode)},
                                   {"cargo", std::to_string(order.cargo)},
                                   {"vehicleCell", Cell(order.vehicleCell)}});
         for (const auto &connection : q.page.utilityConnections)
@@ -828,7 +853,25 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                     ? Json(std::to_string(summary.workersRequired)) : Json(nullptr)},
                {"stock", stock},
                {"unservedInputs", unserved}, {"vehicles", summary.vehicles},
-               {"text", summary.text}};
+               {"text", summary.text},
+               {"calendar", summary.calendarEnabled
+                    ? Json{{"year", summary.calendarYear}, {"day", summary.calendarDay},
+                           {"month", summary.calendarMonth}, {"season", summary.calendarSeason}}
+                    : Json(nullptr)}};
+    const auto world = api_->QueryWorld();
+    if (world.error == economy_api::ErrorCode::None) {
+      const auto diagnostics = api_->QueryUtilityDiagnostics(world.world.revision, 0,
+          economy_api::MaxUtilityDiagnosticsPageSize);
+      if (diagnostics.error == economy_api::ErrorCode::None && diagnostics.available) {
+        Json flows = Json::array();
+        for (const auto &network : diagnostics.networks)
+          flows.push_back(Json{{"resource", network.resource}, {"component", network.component},
+              {"generated", network.generated}, {"requested", network.requested},
+              {"consumed", network.consumed}, {"unused", network.unused},
+              {"starvedRecipes", network.starvedRecipes}});
+        out["utilityNetworks"] = std::move(flows);
+      }
+    }
     if (!sites.empty()) out["constructionSites"]=std::move(sites);
     if (summary.fleetVehicles) out["fleet"] = Json{{"total",summary.fleetVehicles},{"parked",summary.parkedFleetVehicles},{"dispatched",summary.dispatchedFleetVehicles}};
   } else if (method == "utility_diagnostics") {
@@ -1233,7 +1276,8 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     out = Json{{"errorCode", Error(p.error)},    {"handle", std::to_string(h)},
                {"state", State(p.result.state)}, {"failure", Failure(p.result.failure)},
                {"message", p.result.message},    {"buildingId", p.result.building},
-               {"roadId", p.result.road},        {"orderId", p.result.order}};
+               {"roadId", p.result.road},        {"orderId", p.result.order},
+               {"railId", p.result.rail}};
   } else if (method == "compact_history") {
     if (!Fields(req, {"revision", "keepRecent"}, message))
       return invalid(message);
@@ -1336,6 +1380,13 @@ std::string Dispatcher::HandleLine(std::string_view line) {
           !Int32(c, "bz", bz, message))
         return invalid(message);
       s = api_->BuildRoad(revision, {ax, az}, {bx, bz});
+    } else if (kind == "build_rail") {
+      if (!NestedFields(c, {"kind", "ax", "az", "bx", "bz"}, message))
+        return invalid(message);
+      if (!Int32(c, "ax", ax, message) || !Int32(c, "az", az, message) || !Int32(c, "bx", bx, message) ||
+          !Int32(c, "bz", bz, message))
+        return invalid(message);
+      s = api_->BuildRail(revision, {ax, az}, {bx, bz});
     } else if (kind == "set_road_enabled") {
       if (!NestedFields(c, {"kind", "roadId", "enabled"}, message))
         return invalid(message);
@@ -1343,14 +1394,21 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         return invalid("roadId or enabled has invalid type");
       s = api_->SetRoadEnabled(revision, static_cast<economy::RoadId>(id1), c["enabled"].get<bool>());
     } else if (kind == "create_haul_order") {
-      if (!NestedFields(c, {"kind", "source", "destination", "resource", "vehicleType"}, message))
+      if (!NestedFields(c, {"kind", "source", "destination", "resource", "vehicleType"}, message, {"mode"}))
         return invalid(message);
       if (!Unsigned(c, "source", UINT32_MAX, id1, message) ||
           !Unsigned(c, "destination", UINT32_MAX, id2, message) ||
           !String(c, "resource", resource, message) || !String(c, "vehicleType", vehicle, message))
         return invalid(message);
+      economy::HaulMode mode = economy::HaulMode::Road;
+      if (c.contains("mode")) {
+        if (!c["mode"].is_string()) return invalid("mode must be road or rail");
+        const auto modeText = c["mode"].get<std::string>();
+        if (modeText == "rail") mode = economy::HaulMode::Rail;
+        else if (modeText != "road") return invalid("mode must be road or rail");
+      }
       s = api_->CreateHaulOrder(revision, static_cast<economy::BuildingId>(id1),
-                               static_cast<economy::BuildingId>(id2), resource, vehicle);
+                               static_cast<economy::BuildingId>(id2), resource, vehicle, mode);
     } else if (kind == "dispatch_truck") {
       if (!NestedFields(c, {"kind", "vehicle", "source", "destination", "resource"}, message, {"amount"})) return invalid(message);
       std::uint64_t amount=0;
@@ -1404,7 +1462,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     } else {
       Json results = Json::array();
       for (const auto &o : req["orders"]) {
-        if (!o.is_object() || !NestedFields(o, {"source", "destination", "resource", "vehicleType"}, message))
+        if (!o.is_object() || !NestedFields(o, {"source", "destination", "resource", "vehicleType"}, message, {"mode"}))
           return invalid(o.is_object() ? message : "each order must be an object");
         std::uint64_t source{}, destination{};
         std::string resource, vehicle;
@@ -1412,9 +1470,16 @@ std::string Dispatcher::HandleLine(std::string_view line) {
             !Unsigned(o, "destination", UINT32_MAX, destination, message) ||
             !String(o, "resource", resource, message) || !String(o, "vehicleType", vehicle, message))
           return invalid(message);
+        economy::HaulMode mode = economy::HaulMode::Road;
+        if (o.contains("mode")) {
+          if (!o["mode"].is_string()) return invalid("mode must be road or rail");
+          const auto modeText = o["mode"].get<std::string>();
+          if (modeText == "rail") mode = economy::HaulMode::Rail;
+          else if (modeText != "road") return invalid("mode must be road or rail");
+        }
         // Queuing does not change the revision, so the single check above covers the whole batch.
         const auto s = api_->CreateHaulOrder(revision, static_cast<economy::BuildingId>(source),
-                                             static_cast<economy::BuildingId>(destination), resource, vehicle);
+                                             static_cast<economy::BuildingId>(destination), resource, vehicle, mode);
         results.push_back(
             Json{{"errorCode", Error(s.error)}, {"handle", std::to_string(s.handle)}, {"state", State(s.state)}});
       }

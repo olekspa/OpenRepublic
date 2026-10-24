@@ -54,6 +54,33 @@ NativePoint NativeEconomyTransform::CellCenter(Cell cell) const noexcept {
             (static_cast<double>(cell.z) + 0.5 - centerCellZ) * DisplayUnitsPerCell};
 }
 
+NativeVehicleMotion InterpolateNativeVehicleMotion(
+    Cell previous, Cell current, double alpha, double lastYawRadians,
+    const NativeEconomyTransform &transform, double wheelRadiusDisplayUnits) noexcept {
+    const double t = std::isfinite(alpha) ? std::clamp(alpha, 0.0, 1.0) : 0.0;
+    const double dxCells = static_cast<double>(current.x) - static_cast<double>(previous.x);
+    const double dzCells = static_cast<double>(current.z) - static_cast<double>(previous.z);
+    const double cellDistance = std::hypot(dxCells, dzCells);
+    const bool teleport = !std::isfinite(cellDistance) || cellDistance > 1.0;
+    const NativePoint from = transform.CellCenter(previous);
+    const NativePoint to = transform.CellCenter(current);
+    NativeVehicleMotion motion;
+    if (teleport) {
+        motion.position = to;
+    } else {
+        motion.position = {from.x + (to.x - from.x) * t,
+                           from.z + (to.z - from.z) * t};
+        motion.traveledDisplayUnits = cellDistance * NativeEconomyTransform::DisplayUnitsPerCell * t;
+    }
+    motion.moving = !teleport && cellDistance > 0.0;
+    motion.yawRadians = motion.moving ? std::atan2(dxCells, dzCells) :
+        (std::isfinite(lastYawRadians) ? lastYawRadians : 0.0);
+    if (std::isfinite(wheelRadiusDisplayUnits) && wheelRadiusDisplayUnits > 0.0) {
+        motion.wheelRotationRadians = motion.traveledDisplayUnits / wheelRadiusDisplayUnits;
+    }
+    return motion;
+}
+
 NativePoint NativeEconomyTransform::FootprintCenter(Cell origin, std::uint32_t width,
                                                      std::uint32_t depth) const noexcept {
     return {(static_cast<double>(origin.x) + static_cast<double>(width) * 0.5 - centerCellX) *

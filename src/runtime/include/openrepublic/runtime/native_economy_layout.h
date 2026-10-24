@@ -13,6 +13,23 @@ struct NativePoint {
     double x{};
     double z{};
 };
+struct NativeEconomyTransform;
+
+/** Presentation-only interpolation of one cell-quantized vehicle sample pair. */
+struct NativeVehicleMotion {
+    NativePoint position;
+    double yawRadians{};
+    double wheelRotationRadians{};
+    double traveledDisplayUnits{};
+    bool moving{};
+};
+
+/** Interpolates within one cell step; jumps larger than one cell snap to current.
+ *  yaw is radians about +Y with +Z as forward. Stationary samples retain lastYaw.
+ *  Wheel rotation is traveled display distance divided by the supplied wheel radius. */
+NativeVehicleMotion InterpolateNativeVehicleMotion(
+    economy::Cell previous, economy::Cell current, double alpha, double lastYawRadians,
+    const NativeEconomyTransform &transform, double wheelRadiusDisplayUnits = 0.48) noexcept;
 
 /** Presentation-only mapping from native grid coordinates to centered display units.
  *  Four display units per cell is a renderer policy; native economy coordinates do

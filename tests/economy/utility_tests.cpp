@@ -100,6 +100,44 @@ void CatalogRules() {
           "utility catalog text round trips canonically");
 }
 
+void HeatWaterPolicy() {
+    Catalog catalog;
+    ParseError parse;
+    const std::string text =
+        "openrepublic-economy 1\n"
+        "utility heat\nutility water\n"
+        "building boiler 1 1\nrecipe generate every 1 out heat:2\nend\n"
+        "building dorm 1 1\nhousing 4\nrecipe retain every 1 in heat:1\nend\n"
+        "building tower 1 1\nrecipe pump every 1 out water:2\nend\n"
+        "building brewery 1 1\nrecipe brew every 1 in water:1\nend\n";
+    Check(ParseCatalogText(text, catalog, parse), "heat and water utilities parse as catalog resources");
+    Check(WriteCatalogText(catalog).find("utility heat\nutility water\n") != std::string::npos,
+          "heat and water utility declarations round trip");
+    World world(catalog, 16, 8);
+    world.PlaceBuilding(1, {1, 2}); // dorm
+    world.PlaceBuilding(0, {4, 2}); // boiler
+    world.PlaceBuilding(2, {7, 2}); // water tower
+    world.PlaceBuilding(3, {10, 2}); // brewery
+    world.Step();
+    auto snapshot = world.Snapshot();
+    Check(snapshot.population == 0 && snapshot.buildings[0].stall.reason == StallReason::MissingHeating,
+          "housing without heat reports a heat stall and loses residents");
+    const auto heatLink = world.ConnectUtility(0, snapshot.buildings[0].id, snapshot.buildings[1].id);
+    const auto waterLink = world.ConnectUtility(1, snapshot.buildings[2].id, snapshot.buildings[3].id);
+    world.Step();
+    snapshot = world.Snapshot();
+    Check(world.GetCommandResult(heatLink).state == CommandState::Accepted &&
+              world.GetCommandResult(waterLink).state == CommandState::Accepted,
+          "heat and water use the existing explicit utility link command");
+    Check(snapshot.population == 4 && snapshot.buildings[0].stall.reason == StallReason::Running,
+          "served heat lets housing refill and retain residents");
+    Check(snapshot.buildings[3].stall.reason == StallReason::Running,
+          "served water allows the brewery utility recipe");
+    const auto diagnostics = world.QueryUtilityDiagnostics();
+    Check(diagnostics.available && diagnostics.networks.size() >= 2,
+          "heat and water each expose measured network diagnostics");
+}
+
 void ConnectionAndAllocation() {
     const auto f = MakeFixture(1, false);
     World world(f.catalog, 16, 8);
@@ -346,6 +384,7 @@ void LegacyAndPendingSaveRules() {
 
 int main() {
     CatalogRules();
+    HeatWaterPolicy();
     ConnectionAndAllocation();
     FuelDeliveryAndPersistence();
     FuelAndCapacityGates();

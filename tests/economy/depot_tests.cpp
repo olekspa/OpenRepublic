@@ -36,7 +36,7 @@ vehicle truck capacity 4 speed 1
  Check(w.Step().accepted,"place roads and buildings");
  auto s=w.Snapshot(); Check(s.vehicles.size()==2,"fleet spawns two vehicles");
  Check(s.vehicles[0].id==1&&s.vehicles[0].ownerDepot==1&&s.vehicles[0].leg==VehicleLeg::None,"stable parked truck snapshot");
- const auto parkedSave=SaveWorld(w); Check(parkedSave.rfind("OPENREPUBLIC_ECONOMY_WORLD 8\n",0)==0,"depot save uses opt-in v8");
+ const auto parkedSave=SaveWorld(w); Check(parkedSave.rfind("OPENREPUBLIC_ECONOMY_WORLD 9\n",0)==0,"depot save uses opt-in v9 alongside rail v8");
  World parkedReload(catalog,1,1); const auto parkedLoaded=LoadWorld(parkedSave,catalog,parkedReload,error); if(!parkedLoaded)std::cerr<<"parked load error: "<<error.message<<'\n'; Check(parkedLoaded,"parked depot fleet reloads");
  Check(parkedReload.Snapshot().stateHash==s.stateHash,"parked fleet state hash survives reload");
  w.DispatchTruck(1,2,3,0,2); w.DispatchTruck(2,3,4,0,2); Check(w.Step().accepted,"queue dispatches");
