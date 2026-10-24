@@ -1,9 +1,12 @@
 {
   "scenario": "rail_vs_road",
-  "evidence": "OpenRepublic synthetic economy test",
+  "evidence": "OpenRepublic synthetic economy host scenario scorer",
   "grainUnits": 1000,
-  "railTicks": 5,
-  "roadTicks": 3881,
+  "railTicks": 4,
+  "roadTicks": 3880,
   "railFaster": true,
-  "stateHash": "476904576083757834"
+  "scenarioHash": "bf00b8fce5aeead26189b7c22d432c77d8f9fb56a6045bc7810aaadb4225ae31",
+  "scoreHash": "b423b588214e106a711e07520561b2de385f8615276054e5614a502d2651471f",
+  "stateHash": "2870064626806948809",
+  "tick": 3883
 }

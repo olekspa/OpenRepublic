@@ -153,16 +153,22 @@ def load_scenario(path):
     if len(scenario["roads"]) + len(rails) + len(scenario["buildings"]) + len(connections) > MAX_SETUP_COMMANDS:
         raise ScenarioError(f"setup may contain at most {MAX_SETUP_COMMANDS} commands")
     _object(scenario["score"], "score", ("metric",),
-            ("objectives", "amount", "roadSource", "roadDestination", "railSource", "railDestination"))
+            ("objectives", "amount", "roadSource", "roadDestination", "railSource", "railDestination",
+             "comparisonTicks"))
     metric = scenario["score"]["metric"]
     if metric != "rail_vs_road" and any(field in scenario["score"] for field in
-                                         ("amount", "roadSource", "roadDestination", "railSource", "railDestination")):
+                                         ("amount", "roadSource", "roadDestination", "railSource", "railDestination",
+                                          "comparisonTicks")):
         raise ScenarioError("rail_vs_road score fields require metric rail_vs_road")
     if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites", "combined_multi_objective", "rail_vs_road"):
         raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, completed_construction_sites, combined_multi_objective, or rail_vs_road")
     if metric == "rail_vs_road":
-        _object(scenario["score"], "score", ("metric", "amount", "roadSource", "roadDestination", "railSource", "railDestination"))
+        _object(scenario["score"], "score",
+                ("metric", "amount", "roadSource", "roadDestination", "railSource", "railDestination"),
+                ("comparisonTicks",))
         _integer(scenario["score"]["amount"], "score.amount", 1, 1_000_000)
+        if "comparisonTicks" in scenario["score"]:
+            _integer(scenario["score"]["comparisonTicks"], "score.comparisonTicks", 1, MAX_TICKS)
         for field in ("roadSource", "roadDestination", "railSource", "railDestination"):
             _integer(scenario["score"][field], f"score.{field}", 0, len(scenario["buildings"]) - 1)
         if not rails:
@@ -271,7 +277,7 @@ def _rail_vs_road_receipt(host, scenario, ticks):
     revision = autopilot._world(host)["revision"]
     for key in ("roadSource", "railSource"):
         result = host.call("submit", revision=revision, command={
-            "kind": "set_building_enabled", "building": int(refs[key]["id"]), "enabled": False})
+            "kind": "set_building_enabled", "buildingId": int(refs[key]["id"]), "enabled": False})
         if result.get("errorCode") != "none" or result.get("state") != "queued" or not result.get("handle"):
             raise RuntimeError(f"rail_vs_road could not disable fixture producer: {result}")
         handles.append(result["handle"])
@@ -305,7 +311,11 @@ def _rail_vs_road_receipt(host, scenario, ticks):
         return sum(int(item["amount"]) for item in building.get("inventory", [])
                    if item.get("resource") == "grain")
 
-    for _ in range(ticks):
+    # This specialized benchmark must run long enough for the declared truck
+    # capacity and route length. The scenario owns that comparison horizon;
+    # `ticks` remains the generic scorer/autopilot budget for other metrics.
+    comparison_ticks = max(ticks, int(score.get("comparisonTicks", ticks)))
+    for _ in range(comparison_ticks):
         current = autopilot._world(host)
         for mode, key in (("road", "roadDestination"), ("rail", "railDestination")):
             if arrivals[mode] is None and delivered(current["buildings"][score[key]]) >= amount:
@@ -319,14 +329,16 @@ def _rail_vs_road_receipt(host, scenario, ticks):
             arrivals[mode] = int(final["tick"]) - start_tick
     receipt = {
         "scenarioId": scenario["id"], "metric": "rail_vs_road", "amount": amount,
+        "scenarioHash": hashlib.sha256(json.dumps(scenario, sort_keys=True, separators=(",", ":"),
+                                                    ensure_ascii=False).encode("utf-8")).hexdigest(),
+        "buildings": len(final["buildings"]),
         "arrivalTicks": arrivals,
         "railFaster": arrivals["rail"] is not None and arrivals["road"] is not None and
                       arrivals["rail"] < arrivals["road"],
         "tick": int(final["tick"]), "stateHash": final["stateHash"],
         "scoreDefinition": "elapsed simulation ticks until each destination stores the requested grain amount",
     }
-    stable = {"scenarioHash": hashlib.sha256(json.dumps(scenario, sort_keys=True, separators=(",", ":"),
-                                                       ensure_ascii=False).encode("utf-8")).hexdigest(), **receipt}
+    stable = dict(receipt)
     receipt["scoreHash"] = hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":"),
                                                      ensure_ascii=False).encode("utf-8")).hexdigest()
     if not receipt["railFaster"]:

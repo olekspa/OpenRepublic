@@ -32,13 +32,15 @@ records how many simulation ticks each separate route needs to put 1,000 grain
 units into its destination inventory and asserts that rail completes first.
 The fixture uses independent source/destination pairs, fixed declared vehicle
 capacities and speeds, and disables the source recipes after their initial
-stock is produced. It is a comparison of these authored synthetic rules, not a
-general performance claim.
+stock is produced. Its `comparisonTicks` score field gives the scorer enough
+simulation time to measure the slow truck route; the generic `--ticks` budget
+still applies to other scenario metrics. It is a comparison of these authored
+synthetic rules, not a general performance claim.
 
-The headless core test receipt is recorded in
+The headless host scenario receipt is recorded in
 [`RAIL_VS_ROAD_RECEIPT.json`](RAIL_VS_ROAD_RECEIPT.json): 1,000 grain arrived
-by train in 5 ticks and by truck in 3,881 ticks. The state hash is for that
-synthetic test run and is not a WRSR state fingerprint.
+by train in 4 ticks and by truck in 3,880 ticks. Its scenario, score, and state
+hashes identify this synthetic scorer run; none is a WRSR state fingerprint.
 
 ## WRSR evidence boundary
 

@@ -54,5 +54,5 @@
     {"type":"rail_source","x":1,"z":8},
     {"type":"rail_destination","x":21,"z":8}
   ],
-  "score": {"metric":"rail_vs_road","amount":1000,"roadSource":0,"roadDestination":1,"railSource":2,"railDestination":3}
+  "score": {"metric":"rail_vs_road","amount":1000,"roadSource":0,"roadDestination":1,"railSource":2,"railDestination":3,"comparisonTicks":5000}
 }
