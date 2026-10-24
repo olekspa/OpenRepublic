@@ -274,10 +274,20 @@ def score_record(scenario, world, catalog, controller_ticks):
     return {**stable, "scoreHash": digest}
 
 
-def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rounds=1):
+def _default_rounds(scenario, ticks):
+    """Replan construction scenarios at bounded intervals as production creates stock."""
+    if scenario["score"]["metric"] != "completed_construction_sites":
+        return 1
+    # Keep long runs bounded while giving production-fed sites repeated advice passes.
+    return next(rounds for rounds in range(min(ticks, 64), 0, -1) if ticks % rounds == 0)
+
+
+def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rounds=None):
     """Run setup and one autopilot round; return a canonical, hashable score record."""
     if isinstance(ticks, bool) or not isinstance(ticks, int) or not 1 <= ticks <= MAX_TICKS:
         raise ValueError(f"ticks must be from 1 through {MAX_TICKS}")
+    if rounds is None:
+        rounds = _default_rounds(scenario, ticks)
     if isinstance(rounds, bool) or not isinstance(rounds, int) or not 1 <= rounds <= ticks or ticks % rounds:
         raise ValueError("rounds must be a positive divisor of ticks")
     temporary = tempfile.TemporaryDirectory(prefix="openrepublic-scenario-") if "catalog" in scenario else None
@@ -294,6 +304,7 @@ def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rou
         _seed(host, scenario)
         with contextlib.redirect_stdout(io.StringIO()):
             start_tick = int(autopilot._world(host)["tick"])
+            completion_tick = None
             placed = set()
             totals = {"placements_accepted": 0, "retargets_queued": 0, "accepted_retargets": 0,
                       "rejected_retargets": 0, "creates_queued": 0, "accepted_creates": 0,
@@ -303,6 +314,13 @@ def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rou
                 result = autopilot.run_round(
                     host, catalog, per_round, placed, round_number=round_number,
                     final_tick=start_tick+round_number*per_round if exact_ticks else None)
+                if (completion_tick is None and
+                        scenario["score"]["metric"] == "completed_construction_sites"):
+                    round_score = score_record(scenario, result["world"], catalog, ticks)
+                    if (round_score["scoreBreakdown"]["totalSites"] and
+                            round_score["scoreBreakdown"]["completedSites"] ==
+                            round_score["scoreBreakdown"]["totalSites"]):
+                        completion_tick = int(result["world"]["tick"])
                 for field in totals:
                     totals[field] += result[field]
             result["autopilotTotals"] = totals
@@ -320,6 +338,8 @@ def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rou
                 networks.extend(page.get("networks", []))
             world["utilityDiagnostics"] = {"available": True, "networks": networks}
         stable = score_record(scenario, world, catalog, ticks)
+        if scenario["score"]["metric"] == "completed_construction_sites":
+            stable["scoreBreakdown"]["completionTick"] = completion_tick
         stable = {key: value for key, value in stable.items() if key != "scoreHash"}
         stable.update({
             "autopilot": result["autopilotTotals"],
@@ -355,8 +375,8 @@ def main(argv=None):
     parser.add_argument("--scenario", required=True, help="synthetic scenario JSON file")
     parser.add_argument("--ticks", required=True, type=tick_count,
                         help="autopilot simulation ticks after one setup tick")
-    parser.add_argument("--rounds", type=tick_count, default=1,
-                        help="number of autopilot planning rounds dividing the requested ticks")
+    parser.add_argument("--rounds", type=tick_count, default=None,
+                        help="planning rounds dividing ticks (default: 1; construction scenarios use up to 64)")
     parser.add_argument("--exact-ticks", action="store_true",
                         help="cap each round at its scheduled tick despite extra controller actions")
     args = parser.parse_args(argv)

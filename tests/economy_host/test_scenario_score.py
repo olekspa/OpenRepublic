@@ -162,11 +162,14 @@ class ScenarioHostIntegrationTests(unittest.TestCase):
         for name, expected in (("build_a_mill_with_supply", 1), ("build_two_mills_with_supply", 2)):
             with self.subTest(scenario=name):
                 scenario = scenario_score.resolve_scenario(name)
-                first = scenario_score.run_scenario(HOST_EXE, scenario, 64, exact_ticks=True, rounds=64)
-                second = scenario_score.run_scenario(HOST_EXE, scenario, 64, exact_ticks=True, rounds=64)
+                first = scenario_score.run_scenario(HOST_EXE, scenario, 64, exact_ticks=True)
+                second = scenario_score.run_scenario(HOST_EXE, scenario, 64, exact_ticks=True)
                 self.assertEqual(first["scoreUnits"], expected)
                 self.assertEqual(first["scoreBreakdown"]["completedSites"], expected)
                 self.assertTrue(all(site["state"] == "done" for site in first["scoreBreakdown"]["siteStates"]))
+                self.assertGreater(first["scoreBreakdown"]["completionTick"], 1)
+                self.assertLessEqual(first["scoreBreakdown"]["completionTick"], first["tick"])
+                self.assertLessEqual(first["scoreBreakdown"]["completionTick"], 65)
                 self.assertEqual(first["scoreHash"], second["scoreHash"])
 
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
