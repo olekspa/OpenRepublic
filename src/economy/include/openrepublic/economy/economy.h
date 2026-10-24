@@ -202,6 +202,9 @@ bool ParseCatalogText(std::string_view text, Catalog &outCatalog, ParseError &er
 std::string WriteCatalogText(const Catalog &catalog);
 /** Builds a synthetic farm, mill, bakery, and market catalog owned by this project. */
 Catalog MakeSyntheticCatalog();
+/** Like MakeSyntheticCatalog plus planks/bricks, a sawmill and a brickworks, and `build` requirements on the
+ *  mill, bakery and market (OpenRepublic synthetic construction-site rules; see docs/CONSTRUCTION_SITES.md). */
+Catalog MakeSyntheticConstructionCatalog();
 
 enum class StallReason : std::uint8_t {
     Running = 0,

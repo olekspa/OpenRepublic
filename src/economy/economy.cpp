@@ -2164,6 +2164,47 @@ Catalog MakeSyntheticCatalog() {
     return out;
 }
 
+Catalog MakeSyntheticConstructionCatalog() {
+    CatalogBuilder b;
+    CatalogErrorInfo e;
+    ResourceId g{}, f{}, d{}, br{}, pl{}, bk{};
+    b.AddResource("grain", &g, e);
+    b.AddResource("flour", &f, e);
+    b.AddResource("dough", &d, e);
+    b.AddResource("bread", &br, e);
+    b.AddResource("planks", &pl, e);
+    b.AddResource("bricks", &bk, e);
+    BuildingTypeId farm{}, mill{}, bakery{}, market{}, sawmill{}, brickworks{};
+    b.AddBuildingType("farm", 2, 2, &farm, e);
+    b.AddBuildingType("mill", 2, 2, &mill, e);
+    b.AddBuildingType("bakery", 2, 2, &bakery, e);
+    b.AddBuildingType("market", 2, 2, &market, e);
+    b.AddBuildingType("sawmill", 2, 2, &sawmill, e);
+    b.AddBuildingType("brickworks", 2, 2, &brickworks, e);
+    b.AddStorage(farm, g, 20, e);
+    b.AddRecipe(farm, {"harvest", 2, {}, {{g, 2}}}, e);
+    b.AddStorage(mill, g, 8, e);
+    b.AddStorage(mill, f, 8, e);
+    b.AddRecipe(mill, {"grind", 1, {{g, 1}}, {{f, 1}}}, e);
+    b.AddStorage(bakery, f, 8, e);
+    b.AddStorage(bakery, d, 8, e);
+    b.AddStorage(bakery, br, 8, e);
+    b.AddRecipe(bakery, {"bake", 2, {{f, 1}}, {{br, 1}}}, e);
+    b.AddStorage(market, br, 16, e);
+    b.AddRecipe(market, {"consume", 1, {{br, 1}}, {}}, e);
+    b.AddStorage(sawmill, pl, 24, e);
+    b.AddRecipe(sawmill, {"saw", 2, {}, {{pl, 2}}}, e);
+    b.AddStorage(brickworks, bk, 24, e);
+    b.AddRecipe(brickworks, {"fire", 2, {}, {{bk, 2}}}, e);
+    b.SetConstruction(mill, {{pl, 6}, {bk, 4}}, 8, e);
+    b.SetConstruction(bakery, {{pl, 4}, {bk, 6}}, 10, e);
+    b.SetConstruction(market, {{pl, 4}}, 6, e);
+    b.AddVehicleType("truck", 4, 1, nullptr, e);
+    Catalog out;
+    b.Build(out, e);
+    return out;
+}
+
 struct World::Impl {
     State state;
     UtilityDiagnostics utilityDiagnostics;

@@ -262,6 +262,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::unique_ptr<openrepublic::economy::RestoredCheckpoint> economyCheckpoint;
 	bool economyCheckpointArgumentSeen = false;
 	bool nativeEconomyArgumentSeen = false;
+	bool nativeConstructionSitesArgumentSeen = false;
 	std::string nativeEconomyArgumentError;
 	std::vector<std::wstring> economyCheckpointIncompatibleOptions;
 	std::string economyCheckpointArgumentError;
@@ -309,6 +310,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 					continue;
 				}
 				nativeEconomyArgumentSeen = true;
+			}
+			else if (argument == L"--native-construction-sites")
+			{
+				// Opt-in synthetic catalog with planks/bricks and `build` requirements (requires --native-economy).
+				nativeConstructionSitesArgumentSeen = true;
 			}
 			else if (argument == L"--scene-probe" && i + 1 < argumentCount)
 			{
@@ -891,7 +897,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		economyCheckpoint = std::make_unique<openrepublic::economy::RestoredCheckpoint>();
 		economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>(
-			openrepublic::economy::MakeSyntheticCatalog());
+			nativeConstructionSitesArgumentSeen ? openrepublic::economy::MakeSyntheticConstructionCatalog()
+			                                    : openrepublic::economy::MakeSyntheticCatalog());
 		economyCheckpoint->world = std::make_unique<openrepublic::economy::World>(
 			*economyCheckpoint->catalog, 64, 64);
 		openrepublic::runtime::NativeEconomyScenePlan plan;
