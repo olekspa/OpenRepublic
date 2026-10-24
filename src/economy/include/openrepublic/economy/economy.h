@@ -6,6 +6,11 @@
 #include <string_view>
 #include <vector>
 
+// windows.h maps FindResource to FindResourceW; this header owns a C++ lookup with that name.
+#ifdef FindResource
+#undef FindResource
+#endif
+
 namespace openrepublic::economy {
 
 using ResourceId = std::uint32_t;

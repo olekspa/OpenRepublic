@@ -31,6 +31,9 @@ namespace openrepublic::preview
 			std::function<void()> connectUtility;
 			std::function<void()> disconnectUtility;
 			std::function<void()> utilitySelectionChanged;
+			std::function<void()> dispatchTruck;
+			std::function<void()> buyCoal;
+			std::function<void()> toggleAutoRun;
 		};
 
 		void Create(wi::gui::GUI& gui, const economy::Catalog& catalog, Callbacks callbacks,
@@ -51,6 +54,9 @@ namespace openrepublic::preview
 		void RefreshOrders(const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog);
 		/** Refreshes native road choices, preserving selection by exact road ID. */
 		void RefreshRoads(const economy::WorldSnapshot& snapshot);
+		void RefreshDispatchChoices(const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog);
+		void SetAutoRun(bool enabled);
+		void SetCoalDemoControls(bool enabled);
 
 		economy::BuildingTypeId SelectedBuildingType() const noexcept;
 		economy::ResourceId SelectedResource() const noexcept;
@@ -58,6 +64,11 @@ namespace openrepublic::preview
 		economy::VehicleTypeId SelectedVehicleType() const noexcept;
 		economy::OrderId SelectedOrder() const noexcept;
 		economy::RoadId SelectedRoad() const noexcept;
+		economy::VehicleId SelectedDispatchVehicle() const noexcept;
+		economy::BuildingId SelectedDispatchSource() const noexcept;
+		economy::BuildingId SelectedDispatchDestination() const noexcept;
+		economy::ResourceId SelectedDispatchResource() const noexcept;
+		std::uint64_t SelectedDispatchAmount() const noexcept;
 
 		/** True while a dropdown or other toolbar widget is actively capturing input. */
 		bool HasActiveInput() const noexcept;
@@ -79,6 +90,7 @@ namespace openrepublic::preview
 		wi::gui::ComboBox order_;
 		wi::gui::ComboBox roadChoice_;
 		wi::gui::ComboBox utilityResource_;
+		wi::gui::ComboBox dispatchVehicle_, dispatchSource_, dispatchDestination_, dispatchResource_, dispatchAmount_;
 		wi::gui::Button place_;
 		wi::gui::Button road_;
 		wi::gui::Button cancel_;
@@ -88,6 +100,9 @@ namespace openrepublic::preview
 		wi::gui::Button toggleRoad_;
 		wi::gui::Button connectUtility_;
 		wi::gui::Button disconnectUtility_;
+		wi::gui::Button dispatch_, buyCoal_, autoRun_;
+		std::vector<std::uint64_t> dispatchVehicleIds_, dispatchSourceIds_, dispatchDestinationIds_, dispatchResourceIds_;
+		bool autoRunEnabled_ = false;
 		std::vector<economy::ResourceId> haulResources_;
 		std::vector<economy::OrderId> orderIds_;
 		std::vector<economy::RoadId> roadIds_;

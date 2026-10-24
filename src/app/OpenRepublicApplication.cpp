@@ -1,4 +1,9 @@
 #include "OpenRepublicApplication.h"
+
+// Windows headers alias FindResource to FindResourceW, conflicting with Catalog's lookup API.
+#ifdef FindResource
+#undef FindResource
+#endif
 #include "ShowcaseProps.h"
 #include "openrepublic/procgeo/vehicles.h"
 #include "ModelImporter.h"
@@ -418,6 +423,25 @@ namespace openrepublic
 		nativeEconomyCheckpoint = std::move(checkpoint);
 		nativeEconomyFreshWorld = freshWorld;
 		nativeEconomyCheckpointMode = nativeEconomyCheckpoint.catalog && nativeEconomyCheckpoint.world;
+		nativeCoalDemo = false; nativeCoalAutoRun = false;
+		coalDemoBorder = coalDemoDepot = coalDemoStorage = coalDemoPlant = 0; coalDemoResource = coalDemoGrain = economy::InvalidResourceId;
+		if (nativeEconomyCheckpointMode && nativeEconomyFreshWorld) {
+			auto& catalog = *nativeEconomyCheckpoint.catalog;
+			auto& world = *nativeEconomyCheckpoint.world;
+			economy::BuildingTypeId ignored{};
+			nativeCoalDemo = catalog.FindBuildingType("border_post", ignored);
+			if (nativeCoalDemo) {
+				if (!catalog.FindResource("coal", coalDemoResource)) coalDemoResource = economy::InvalidResourceId;
+				if (!catalog.FindResource("grain", coalDemoGrain)) coalDemoGrain = economy::InvalidResourceId;
+				const auto snap = world.Snapshot();
+				for (const auto& b : snap.buildings) { const auto* type = catalog.BuildingType(b.type); if (!type) continue;
+					if (type->name == "border_post") coalDemoBorder = b.id;
+					else if (type->name == "road_depot") coalDemoDepot = b.id;
+					else if (type->name == "storage") coalDemoStorage = b.id;
+					else if (type->name == "heating_plant") coalDemoPlant = b.id;
+				}
+			}
+		}
 		mapRegionPreview = nativeEconomyCheckpointMode;
 	}
 
@@ -1715,9 +1739,13 @@ namespace openrepublic
 						[this] { QueueNativeRoadToggle(); },
 						[this] { QueueNativeUtilityConnection(true); },
 						[this] { QueueNativeUtilityConnection(false); },
-						[this] { UpdateRegionStatus(); } });
+						[this] { UpdateRegionStatus(); },
+						[this] { QueueNativeDispatch(); }, [this] { QueueNativeCoalImport(); },
+						[this] { nativeCoalAutoRun = !nativeCoalAutoRun; UpdateRegionStatus(); } });
 					nativeToolsReady = true;
 					RefreshNativeHaulChoices();
+					nativeEconomyTools.SetAutoRun(nativeCoalAutoRun);
+					nativeEconomyTools.SetCoalDemoControls(nativeCoalDemo);
 				}
 				else if (regionEconomyWorld && regionEconomyApi)
 				{
@@ -1806,6 +1834,7 @@ namespace openrepublic
 			return;
 		}
 		UpdateSceneControl(dt);
+		UpdateNativeCoalAutomation();
 		if (mapRegionPreview && mapRegionDynamicLod && renderPath != nullptr && renderPath->camera != nullptr)
 		{
 			buildingLodController.Update(previewWorld, renderPath->camera->Eye);
@@ -2337,6 +2366,19 @@ namespace openrepublic
 		{
 			text << "\nHaul source: OR-" << *regionHaulSourceId << " (select a destination and choose Haul to selected).";
 		}
+		if (nativeCoalDemo && nativeEconomyCheckpoint.world) {
+			const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
+			const auto legName = [](economy::VehicleLeg leg) {
+				switch (leg) { case economy::VehicleLeg::ToSource: return "to source"; case economy::VehicleLeg::Loading: return "loading";
+				case economy::VehicleLeg::ToDestination: return "to destination"; case economy::VehicleLeg::Unloading: return "unloading";
+				case economy::VehicleLeg::Returning: return "returning"; default: return "parked"; }
+			};
+			text << "\nDepot trucks:";
+			for (const auto& truck : snapshot.vehicles) if (truck.ownerDepot) {
+				text << "\n  Truck #" << truck.id << " | owner depot OR-" << truck.ownerDepot
+					<< " | leg " << legName(truck.leg) << " | cargo " << truck.cargo;
+			}
+		}
 		if (!uiNotice.empty() && !(nativeToolsReady && !nativeDetailsExpanded)) text << "\n" << uiNotice;
 		if (economyOverlay)
 		{
@@ -2350,6 +2392,7 @@ namespace openrepublic
 		{
 			std::ostringstream panel;
 			panel << "Economy overview | tick " << overview->tick << " | treasury " << overview->treasury;
+			panel << "\nHeat produced: " << overview->heatProduced << " (OpenRepublic synthetic output)";
 			if (overview->populationAvailable)
 				panel << "\nPopulation " << overview->population << " | housing " << overview->housingCapacity
 					<< " | workers " << overview->workersAssigned << "/" << overview->workersRequired;
@@ -2797,6 +2840,7 @@ namespace openrepublic
 		const auto snapshot = world->Snapshot();
 		nativeEconomyTools.RefreshOrders(snapshot, world->GetCatalog());
 		nativeEconomyTools.RefreshRoads(snapshot);
+		nativeEconomyTools.RefreshDispatchChoices(snapshot, world->GetCatalog());
 		if (regionHaulSourceId && std::none_of(snapshot.buildings.begin(), snapshot.buildings.end(),
 			[&](const auto& b) { return b.id == *regionHaulSourceId; })) regionHaulSourceId.reset();
 		nativeEconomyTools.RefreshHaulChoices(snapshot, world->GetCatalog(),
@@ -2928,6 +2972,47 @@ namespace openrepublic
 			: regionEconomyApi->CancelHaulOrder(snapshot.revision, id);
 		TrackNativeSubmission(submitted, std::string(retarget ? "retarget of haul " : "cancellation of haul ") + std::to_string(id));
 		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::QueueNativeDispatch()
+	{
+		auto* world = ActiveOwnedEconomyWorld();
+		if (!world || !regionEconomyApi || !CanQueueNativeCommand()) return;
+		const auto vehicle = nativeEconomyTools.SelectedDispatchVehicle();
+		const auto source = nativeEconomyTools.SelectedDispatchSource();
+		const auto destination = nativeEconomyTools.SelectedDispatchDestination();
+		const auto* resource = world->GetCatalog().Resource(nativeEconomyTools.SelectedDispatchResource());
+		const auto amount = nativeEconomyTools.SelectedDispatchAmount();
+		if (!vehicle || !source || !destination || source == destination || !resource || resource->utility || !amount) { uiNotice = "Choose an owned truck, two buildings, a storable resource, and an amount."; UpdateRegionStatus(); return; }
+		const auto snapshot = world->Snapshot();
+		TrackNativeSubmission(regionEconomyApi->DispatchTruck(snapshot.revision, vehicle, source, destination, resource->name, amount),
+			"dispatch truck #" + std::to_string(vehicle) + " with " + resource->name);
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::QueueNativeCoalImport()
+	{
+		auto* world = ActiveOwnedEconomyWorld();
+		if (!nativeCoalDemo || !world || !regionEconomyApi || !CanQueueNativeCommand() || !coalDemoBorder || coalDemoResource == economy::InvalidResourceId) return;
+		const auto snapshot = world->Snapshot();
+		TrackNativeSubmission(regionEconomyApi->TradeImport(snapshot.revision, coalDemoBorder, "coal", 4, 4), "import 4 coal");
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::UpdateNativeCoalAutomation()
+	{
+		if (!nativeCoalDemo || !nativeCoalAutoRun || !regionEconomyApi || !nativeEconomyCheckpoint.world || !regionPendingCommandHandles.empty()) return;
+		const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
+		const auto action = openrepublic::runtime::NextCoalDemoAction(snapshot, coalDemoBorder, coalDemoDepot,
+			coalDemoStorage, coalDemoPlant, coalDemoGrain, coalDemoResource, 4);
+		if (!action) return;
+		if (action->kind == openrepublic::runtime::CoalDemoActionKind::ExportGrain)
+			TrackNativeSubmission(regionEconomyApi->TradeExport(snapshot.revision, action->source, "grain", action->amount, action->amount), "auto export grain to fund coal");
+		else if (action->kind == openrepublic::runtime::CoalDemoActionKind::ImportCoal)
+			TrackNativeSubmission(regionEconomyApi->TradeImport(snapshot.revision, action->source, "coal", action->amount, action->amount), "auto import coal");
+		else
+			TrackNativeSubmission(regionEconomyApi->DispatchTruck(snapshot.revision, action->vehicle, action->source,
+				action->destination, "coal", action->amount), "auto dispatch truck #" + std::to_string(action->vehicle));
 	}
 
 	bool OpenRepublicApplication::CanQueueNativeCommand()

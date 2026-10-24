@@ -97,6 +97,9 @@ namespace openrepublic::preview
 		gui.AddWidget(&utilityResource_);
 		gui.AddWidget(&connectUtility_);
 		gui.AddWidget(&disconnectUtility_);
+		gui.AddWidget(&dispatchVehicle_); gui.AddWidget(&dispatchSource_); gui.AddWidget(&dispatchDestination_);
+		gui.AddWidget(&dispatchResource_); gui.AddWidget(&dispatchAmount_);
+		gui.AddWidget(&dispatch_); gui.AddWidget(&buyCoal_); gui.AddWidget(&autoRun_);
 	}
 
 	void NativeEconomyTools::Create(wi::gui::GUI& gui, const economy::Catalog& catalog, Callbacks callbacks,
@@ -119,6 +122,9 @@ namespace openrepublic::preview
 			gui_->RemoveWidget(&utilityResource_);
 			gui_->RemoveWidget(&connectUtility_);
 			gui_->RemoveWidget(&disconnectUtility_);
+			gui_->RemoveWidget(&dispatchVehicle_); gui_->RemoveWidget(&dispatchSource_); gui_->RemoveWidget(&dispatchDestination_);
+			gui_->RemoveWidget(&dispatchResource_); gui_->RemoveWidget(&dispatchAmount_);
+			gui_->RemoveWidget(&dispatch_); gui_->RemoveWidget(&buyCoal_); gui_->RemoveWidget(&autoRun_);
 		}
 
 		gui_ = &gui;
@@ -130,6 +136,17 @@ namespace openrepublic::preview
 		haveRoadRefresh_ = false;
 		hasLayout_ = false;
 		hasUtilityResources_ = false;
+		dispatchVehicle_.Create("NativeCoalTruck"); dispatchSource_.Create("NativeCoalSource");
+		dispatchDestination_.Create("NativeCoalDestination"); dispatchResource_.Create("NativeCoalResource");
+		dispatchAmount_.Create("NativeCoalAmount");
+		for (auto* combo : { &dispatchVehicle_, &dispatchSource_, &dispatchDestination_, &dispatchResource_, &dispatchAmount_ }) StyleCombo(*combo);
+		dispatchAmount_.AddItem("4 units", 4); dispatchAmount_.AddItem("8 units", 8); dispatchAmount_.SetSelectedWithoutCallback(0);
+		dispatch_.Create("NativeDispatchTruck"); dispatch_.SetText("Dispatch"); StyleButton(dispatch_);
+		dispatch_.OnClick([this](const wi::gui::EventArgs&) { if (callbacks_.dispatchTruck) callbacks_.dispatchTruck(); });
+		buyCoal_.Create("NativeBuyCoal"); buyCoal_.SetText("Buy coal"); StyleButton(buyCoal_);
+		buyCoal_.OnClick([this](const wi::gui::EventArgs&) { if (callbacks_.buyCoal) callbacks_.buyCoal(); });
+		autoRun_.Create("NativeAutoRunLogistics"); autoRun_.SetText("Auto-run logistics: off"); StyleButton(autoRun_);
+		autoRun_.OnClick([this](const wi::gui::EventArgs&) { autoRunEnabled_ = !autoRunEnabled_; SetAutoRun(autoRunEnabled_); if (callbacks_.toggleAutoRun) callbacks_.toggleAutoRun(); });
 
 		buildingType_.Create("NativeEconomyBuildingType");
 		buildingType_.ClearItems();
@@ -344,6 +361,12 @@ namespace openrepublic::preview
 		};
 		const std::array<float, 5> orderWidths = { 440.0f, 180.0f, 120.0f, 0.0f, 0.0f };
 		y = layoutRow(y + kRowGap, orderWidgets, orderWidths, 3);
+		const std::array<wi::gui::Widget*, 5> dispatchWidgets = { &dispatchVehicle_, &dispatchSource_, &dispatchDestination_, &dispatchResource_, &dispatchAmount_ };
+		const std::array<float, 5> dispatchWidths = { 160.0f, 180.0f, 180.0f, 150.0f, 90.0f };
+		y = layoutRow(y + kRowGap, dispatchWidgets, dispatchWidths, 5);
+		const std::array<wi::gui::Widget*, 5> dispatchButtons = { &dispatch_, &buyCoal_, &autoRun_, nullptr, nullptr };
+		const std::array<float, 5> dispatchButtonWidths = { 110.0f, 110.0f, 200.0f, 0.0f, 0.0f };
+		y = layoutRow(y + kRowGap, dispatchButtons, dispatchButtonWidths, 3);
 		if (hasUtilityResources_)
 		{
 			const std::array<wi::gui::Widget*, 5> utilityWidgets = {
@@ -392,6 +415,42 @@ namespace openrepublic::preview
 		roadChoice_.SetText("");
 		roadIds_ = std::move(ids);
 		haveRoadRefresh_ = true;
+	}
+
+	void NativeEconomyTools::RefreshDispatchChoices(const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog)
+	{
+		const auto selected = [](const wi::gui::ComboBox& c) -> std::uint64_t { return c.GetSelected() >= 0 ? c.GetSelectedUserdata() : 0; };
+		const auto rebuild = [](wi::gui::ComboBox& combo, const std::vector<std::pair<std::string, std::uint64_t>>& items,
+			std::uint64_t prior, std::vector<std::uint64_t>& oldIds) {
+			std::vector<std::uint64_t> ids; ids.reserve(items.size());
+			for (const auto& item : items) ids.push_back(item.second);
+			if (ids == oldIds) {
+				for (std::size_t i = 0; i < items.size(); ++i)
+					if (combo.GetItemText(static_cast<int>(i)) != items[i].first) combo.SetItemText(static_cast<int>(i), items[i].first);
+				return;
+			}
+			combo.ClearItems(); int index = -1;
+			for (std::size_t i = 0; i < items.size(); ++i) { combo.AddItem(items[i].first, items[i].second); if (items[i].second == prior) index = static_cast<int>(i); }
+			combo.SetSelectedWithoutCallback(index >= 0 ? index : (items.empty() ? -1 : 0)); oldIds = std::move(ids);
+		};
+		const auto pv=selected(dispatchVehicle_), ps=selected(dispatchSource_), pd=selected(dispatchDestination_), pr=selected(dispatchResource_);
+		std::vector<std::pair<std::string,std::uint64_t>> vehicles, buildings, resources;
+		for (const auto& v : snapshot.vehicles) if (v.ownerDepot) {
+			const char* leg = "parked";
+			switch (v.leg) { case economy::VehicleLeg::ToSource: leg="to source"; break; case economy::VehicleLeg::Loading: leg="loading"; break;
+			case economy::VehicleLeg::ToDestination: leg="to destination"; break; case economy::VehicleLeg::Unloading: leg="unloading"; break;
+			case economy::VehicleLeg::Returning: leg="returning"; break; default: break; }
+			vehicles.emplace_back("Truck #"+std::to_string(v.id)+" | "+leg+" | cargo "+std::to_string(v.cargo),v.id);
+		}
+		for (const auto& b : snapshot.buildings) { const auto* t=catalog.BuildingType(b.type); buildings.emplace_back((t?t->name:"building")+std::string(" #")+std::to_string(b.id),b.id); }
+		for (const auto& r : catalog.Resources()) if (!r.utility) resources.emplace_back(r.name,r.id);
+		rebuild(dispatchVehicle_,vehicles,pv,dispatchVehicleIds_); rebuild(dispatchSource_,buildings,ps,dispatchSourceIds_);
+		rebuild(dispatchDestination_,buildings,pd,dispatchDestinationIds_); rebuild(dispatchResource_,resources,pr,dispatchResourceIds_);
+	}
+	void NativeEconomyTools::SetAutoRun(bool enabled) { autoRunEnabled_=enabled; autoRun_.SetText(enabled ? "Auto-run logistics: on" : "Auto-run logistics: off"); }
+	void NativeEconomyTools::SetCoalDemoControls(bool enabled) {
+		buyCoal_.SetVisible(enabled); buyCoal_.SetEnabled(enabled);
+		autoRun_.SetVisible(enabled); autoRun_.SetEnabled(enabled);
 	}
 
 	void NativeEconomyTools::RefreshOrders(const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog)
@@ -543,6 +602,11 @@ namespace openrepublic::preview
 	{
 		return SelectedId(roadChoice_, economy::RoadId{0});
 	}
+	economy::VehicleId NativeEconomyTools::SelectedDispatchVehicle() const noexcept { return SelectedId(dispatchVehicle_, economy::VehicleId{}); }
+	economy::BuildingId NativeEconomyTools::SelectedDispatchSource() const noexcept { return SelectedId(dispatchSource_, economy::BuildingId{}); }
+	economy::BuildingId NativeEconomyTools::SelectedDispatchDestination() const noexcept { return SelectedId(dispatchDestination_, economy::BuildingId{}); }
+	economy::ResourceId NativeEconomyTools::SelectedDispatchResource() const noexcept { return SelectedId(dispatchResource_, economy::InvalidResourceId); }
+	std::uint64_t NativeEconomyTools::SelectedDispatchAmount() const noexcept { return SelectedId(dispatchAmount_, std::uint64_t{}); }
 
 	bool NativeEconomyTools::HasActiveInput() const noexcept
 	{
@@ -552,7 +616,8 @@ namespace openrepublic::preview
 		return active(buildingType_) || active(place_) || active(road_) || active(cancel_) ||
 			active(remove_) || active(resource_) || active(vehicleType_) || active(order_) || active(retargetOrder_) || active(cancelOrder_) ||
 			active(roadChoice_) || active(toggleRoad_) || active(utilityResource_) ||
-			active(connectUtility_) || active(disconnectUtility_);
+			active(connectUtility_) || active(disconnectUtility_) || active(dispatchVehicle_) || active(dispatchSource_) ||
+			active(dispatchDestination_) || active(dispatchResource_) || active(dispatchAmount_) || active(dispatch_) || active(buyCoal_) || active(autoRun_);
 	}
 
 	bool NativeEconomyTools::PointerOnControls(XMFLOAT2 pointer) const noexcept
@@ -565,6 +630,8 @@ namespace openrepublic::preview
 			WidgetContains(retargetOrder_, pointer) || WidgetContains(cancelOrder_, pointer) ||
 			WidgetContains(roadChoice_, pointer) || WidgetContains(toggleRoad_, pointer) ||
 			WidgetContains(utilityResource_, pointer) || WidgetContains(connectUtility_, pointer) ||
-			WidgetContains(disconnectUtility_, pointer);
+			WidgetContains(disconnectUtility_, pointer) || WidgetContains(dispatchVehicle_, pointer) || WidgetContains(dispatchSource_, pointer) ||
+			WidgetContains(dispatchDestination_, pointer) || WidgetContains(dispatchResource_, pointer) || WidgetContains(dispatchAmount_, pointer) ||
+			WidgetContains(dispatch_, pointer) || WidgetContains(buyCoal_, pointer) || WidgetContains(autoRun_, pointer);
 	}
 }

@@ -41,6 +41,7 @@ namespace openrepublic::runtime
 		bool populationAvailable{};
 		std::uint64_t population{}, housingCapacity{}, workersAssigned{}, workersRequired{};
 		std::size_t truckCount{};
+		std::uint64_t heatProduced{};
 		std::vector<EconomyOverviewResource> resources;
 		std::vector<EconomyOverviewConstructionSite> constructionSites;
 		std::vector<EconomyOverviewHaul> activeHauls;

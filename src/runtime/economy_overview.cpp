@@ -29,6 +29,18 @@ namespace openrepublic::runtime
 				return type.housing != 0 || type.workers != 0;
 			});
 		result.truckCount = current.vehicles.size();
+		for (const auto& building : current.buildings) {
+			const auto* type = catalog.BuildingType(building.type);
+			for (std::size_t i = 0; type && i < type->recipes.size() && i < building.recipes.size(); ++i)
+				for (const auto& output : type->recipes[i].outputs) {
+					const auto* resource = catalog.Resource(output.resource);
+					if (!resource || resource->name != "heat") continue;
+					const auto cycles = building.recipes[i].completedCycles;
+					const auto produced = cycles && output.amount > std::numeric_limits<std::uint64_t>::max() / cycles
+						? std::numeric_limits<std::uint64_t>::max() : cycles * output.amount;
+					SaturatingAdd(result.heatProduced, produced);
+				}
+		}
 		for (const auto& building : current.buildings)
 		{
 			if (building.constructionSite) continue;

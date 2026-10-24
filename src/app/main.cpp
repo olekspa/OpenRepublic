@@ -27,6 +27,11 @@
 #include <utility>
 #include <vector>
 
+// windows.h aliases FindResource to FindResourceW; preserve the economy API method name.
+#ifdef FindResource
+#undef FindResource
+#endif
+
 namespace
 {
 	openrepublic::OpenRepublicApplication application;
@@ -919,11 +924,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			}
 			for (std::int32_t x = 1; x < 14; ++x)
 				if (!world.BuildRoad({x,2}, {x+1,2})) return LogNativeEconomyStartupError("coal demo road setup failed");
-			if (world.Step().ticksAdvanced != 1 || world.Step().ticksAdvanced != 1)
+			if (!world.Step(1).accepted || !world.Step(1).accepted)
 				return LogNativeEconomyStartupError("coal demo initial setup step failed");
 			openrepublic::economy::ResourceId grain{};
 			if (!catalog.FindResource("grain", grain) || !world.TradeExport(2, grain, 4, 4) ||
-				world.Step().ticksAdvanced != 1 || world.Treasury() < 4)
+				!world.Step(1).accepted || world.Treasury() < 4)
 				return LogNativeEconomyStartupError("coal demo could not fund synthetic coal imports");
 		}
 		openrepublic::runtime::NativeEconomyScenePlan plan;
