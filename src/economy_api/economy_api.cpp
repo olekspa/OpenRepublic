@@ -17,6 +17,10 @@ std::string StallText(const economy::Catalog& c, const economy::StallRecord& s) 
         const auto* r = c.Resource(s.resource);
         return std::string("Waiting for input resource ") + (r ? r->name : "unknown") + ".";
     }
+    case economy::StallReason::MissingHeating:
+        return "Waiting for heating utility supply.";
+    case economy::StallReason::MissingWater:
+        return "Waiting for water utility supply.";
     case economy::StallReason::OutputFull: {
         const auto* r = c.Resource(s.resource);
         return std::string("Output storage is full for resource ") + (r ? r->name : "unknown") + ".";

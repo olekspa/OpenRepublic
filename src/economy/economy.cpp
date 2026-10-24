@@ -1323,8 +1323,14 @@ UtilityDiagnostics UtilityProductionPhase(State &s) {
             building.stall = {building.id, StallReason::Disabled, InvalidResourceId, 0};
         else if (full[bi])
             building.stall = {building.id, StallReason::OutputFull, fullResource[bi], 0};
-        else if (utilityMissing[bi])
-            building.stall = {building.id, StallReason::MissingInput, missingResource[bi], 0};
+        else if (utilityMissing[bi]) {
+            const auto *resource = s.catalog->Resource(missingResource[bi]);
+            const auto reason = resource && (resource->name == "heat" || resource->name == "heating")
+                ? StallReason::MissingHeating
+                : (resource && resource->name == "water" ? StallReason::MissingWater
+                                                            : StallReason::MissingInput);
+            building.stall = {building.id, reason, missingResource[bi], 0};
+        }
         else if (running[bi])
             building.stall = {building.id, StallReason::Running, InvalidResourceId, 0};
         else if (missing[bi])
@@ -1394,6 +1400,15 @@ UtilityDiagnostics AdvanceTick(State &s) {
             const auto components = UtilityComponents(s);
             receipt = MakeUtilityDiagnostics(s, components, {}, {}, {}, {});
         }
+    }
+    // Synthetic housing with an explicit heat or water input only retains
+    // residents while its utility-consuming recipe is served this tick.
+    // Ordinary housing declarations keep their historical fill/food rules.
+    for (auto &building : s.buildings) {
+        const auto *type = s.catalog->BuildingType(building.type);
+        if (type->housing && (building.stall.reason == StallReason::MissingHeating ||
+                              building.stall.reason == StallReason::MissingWater))
+            building.residents = 0;
     }
     for (auto &o : s.orders)
         Haul(s, o);
@@ -2963,7 +2978,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
             BuildingId id{};
             std::uint32_t reason{}, resource{}, recipe{};
             if (!(in >> tag >> id >> reason >> resource >> recipe) || tag != "S" || id != building.id ||
-                reason > static_cast<std::uint32_t>(StallReason::Disabled) ||
+                reason > static_cast<std::uint32_t>(StallReason::MissingWater) ||
                 (resource != InvalidResourceId && !c.Resource(resource)) ||
                 (c.BuildingType(building.type)->recipes.empty() ? recipe != 0
                                                                 : recipe >= c.BuildingType(building.type)->recipes.size())) {

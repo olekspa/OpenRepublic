@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "heated_housing",
+  "name": "Heated housing",
+  "description": "A synthetic heat boiler supplies housing through an explicit heat link.",
+  "catalog": "openrepublic-economy 1\nutility heat\nbuilding boiler 1 1\n  recipe heat every 1 out heat:3\nend\nbuilding housing_block 1 1\n  housing 6\n  recipe retain_heat every 1 in heat:2\nend\n",
+  "roads": [],
+  "buildings": [
+    { "type": "boiler", "x": 1, "z": 1 },
+    { "type": "housing_block", "x": 4, "z": 1 }
+  ],
+  "utilityConnections": [
+    { "resource": "heat", "aBuilding": 0, "bBuilding": 1 }
+  ],
+  "score": { "metric": "utility_multi_objective" }
+}

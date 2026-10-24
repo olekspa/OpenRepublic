@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "water_for_brewery",
+  "name": "Water for a brewery",
+  "description": "A synthetic water tower supplies a brewery through an explicit water link.",
+  "catalog": "openrepublic-economy 1\nresource beer\nutility water\nbuilding water_tower 1 1\n  recipe pump every 1 out water:4\nend\nbuilding brewery 1 1\n  store beer 24\n  recipe brew every 1 in water:3 out beer:1\nend\n",
+  "roads": [],
+  "buildings": [
+    { "type": "water_tower", "x": 1, "z": 1 },
+    { "type": "brewery", "x": 4, "z": 1 }
+  ],
+  "utilityConnections": [
+    { "resource": "water", "aBuilding": 0, "bBuilding": 1 }
+  ],
+  "score": { "metric": "utility_multi_objective" }
+}
