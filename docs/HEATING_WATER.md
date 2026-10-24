@@ -31,8 +31,13 @@ migration or habitability model.
 Their scorer receipts include flow by utility resource. Run them with
 `python tools/scenario_score.py --host build/headless/src/economy_host/Release/OpenRepublicEconomyHost.exe --scenario heated_housing --ticks 16` (replace the ID for the water fixture).
 
-**VERIFIED:** these rules are implemented in OpenRepublic source and exercised
-by synthetic scenario runs.
+**VERIFIED (source and focused utility test):** named heat/water resources use
+the utility production, explicit-link, diagnostic, and shortage paths. The
+utility test checks catalog round-tripping, explicit connections, housing
+resident loss/refill, water-consuming production, and available network
+diagnostics. Fixture JSON and scorer schema validation pass. Host scenario
+receipts remain pending because this headless configuration omitted the host
+when its pinned JSON header was unavailable.
 
 **UNKNOWN:** the original game's `heating.bin` and `waterpipes.bin` use shared
 network-file layout, but their gameplay semantics are unknown. No format,

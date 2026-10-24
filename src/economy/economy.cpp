@@ -2978,7 +2978,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
             BuildingId id{};
             std::uint32_t reason{}, resource{}, recipe{};
             if (!(in >> tag >> id >> reason >> resource >> recipe) || tag != "S" || id != building.id ||
-                reason > static_cast<std::uint32_t>(StallReason::Disabled) ||
+                reason > static_cast<std::uint32_t>(StallReason::MissingWater) ||
                 (resource != InvalidResourceId && !c.Resource(resource)) ||
                 (c.BuildingType(building.type)->recipes.empty() ? recipe != 0
                                                                 : recipe >= c.BuildingType(building.type)->recipes.size())) {
