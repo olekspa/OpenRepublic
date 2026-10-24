@@ -210,7 +210,9 @@ enum class StallReason : std::uint8_t {
     Running = 0,
     MissingInput,
     OutputFull,
-    Disabled
+    Disabled,
+    MissingHeating,
+    MissingWater
 };
 struct StallRecord {
     BuildingId building{};

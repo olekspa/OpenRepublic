@@ -105,8 +105,11 @@ def load_scenario(path):
         if not isinstance(scenario["catalog"], str) or not scenario["catalog"].strip() or len(scenario["catalog"]) > 16_384:
             raise ScenarioError("catalog must be non-empty text of at most 16384 characters")
         building_types = set(re.findall(r"(?m)^building\s+([a-z][a-z0-9_]*)\s+", scenario["catalog"]))
-        if not building_types or not re.search(r"(?m)^utility\s+power\s*$", scenario["catalog"]):
-            raise ScenarioError("catalog must declare utility power and at least one building")
+        if not building_types or not re.search(r"(?m)^utility\s+[a-z][a-z0-9_]*\s*$", scenario["catalog"]):
+            raise ScenarioError("catalog must declare at least one utility and one building")
+        utility_names = set(re.findall(r"(?m)^utility\s+([a-z][a-z0-9_]*)\s*$", scenario["catalog"]))
+    else:
+        utility_names = {"power"}
     for index, building in enumerate(scenario["buildings"]):
         _object(building, f"buildings[{index}]", ("type", "x", "z"), ("constructionSite",))
         if "constructionSite" in building and not isinstance(building["constructionSite"], bool):
@@ -122,8 +125,8 @@ def load_scenario(path):
     seen_connections = set()
     for index, link in enumerate(connections):
         _object(link, f"utilityConnections[{index}]", ("resource", "aBuilding", "bBuilding"))
-        if link["resource"] != "power":
-            raise ScenarioError(f"utilityConnections[{index}].resource must be power")
+        if link["resource"] not in utility_names:
+            raise ScenarioError(f"utilityConnections[{index}].resource must name a declared utility")
         a = _integer(link["aBuilding"], f"utilityConnections[{index}].aBuilding", 0, len(scenario["buildings"]) - 1)
         b = _integer(link["bBuilding"], f"utilityConnections[{index}].bBuilding", 0, len(scenario["buildings"]) - 1)
         if a == b:
@@ -253,11 +256,15 @@ def score_record(scenario, world, catalog, controller_ticks, summary=None):
         if diagnostics is None:
             raise RuntimeError("utility diagnostics are required for utility_multi_objective scoring")
         networks = diagnostics.get("networks", [])
-        requested = sum(int(network["requested"]) for network in networks if network["resource"] == "power")
-        consumed = sum(int(network["consumed"]) for network in networks if network["resource"] == "power")
+        requested = sum(int(network["requested"]) for network in networks)
+        consumed = sum(int(network["consumed"]) for network in networks)
         breakdown = {
             "throughputUnits": consumed,
             "unmetDemandUnits": max(0, requested - consumed),
+            "utilityFlows": [{"resource": n["resource"], "generated": n["generated"],
+                              "requested": n["requested"], "consumed": n["consumed"],
+                              "unmet": str(max(0, int(n["requested"]) - int(n["consumed"]))) }
+                             for n in networks],
             "costUnits": len(world["buildings"]) + len(world["roads"]) + len(world.get("utilityConnections", [])),
             "costDefinition": "final building + road + utility-link count",
         }
