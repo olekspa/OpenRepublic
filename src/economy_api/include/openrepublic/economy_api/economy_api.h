@@ -26,7 +26,7 @@ constexpr std::uint32_t MaxStepTicks = 100000;
 
 enum class Action : std::uint8_t {
     QueryWorld = 1, QueryCatalog, ExplainBuilding, Step, PlaceBuilding, RemoveBuilding,
-    BuildRoad, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, CancelHaulOrder,
+    BuildRoad, BuildRail, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, CancelHaulOrder,
     PollCommand, ReadEvents, RetargetHaulOrder, ExportCheckpoint, CompactCommandHistory,
     ConnectUtility, DisconnectUtility, QueryUtilityDiagnostics, TradeExport, TradeImport, PlaceConstructionSite
 };
@@ -70,6 +70,7 @@ struct BuildingTypeInfo {
     std::string name;
     std::uint32_t width{}, depth{};
     bool tradePost{};
+    bool station{};
     std::vector<StorageInfo> storage;
     std::vector<RecipeInfo> recipes;
     std::vector<RecipeAmountInfo> constructionMaterials;
@@ -80,6 +81,7 @@ struct VehicleTypeInfo {
     std::string name;
     std::uint64_t capacity{};
     std::uint32_t cellsPerTick{};
+    bool railOnly{};
 };
 struct CatalogView {
     ErrorCode error{ErrorCode::None};
@@ -114,6 +116,10 @@ struct RoadView {
     economy::Cell a{}, b{};
     bool enabled{};
 };
+struct RailView {
+    economy::RailId id{};
+    economy::Cell a{}, b{};
+};
 struct VehicleView {
     economy::VehicleId id{};
     economy::OrderId order{};
@@ -131,6 +137,7 @@ struct OrderView {
     economy::HaulFailure failure{economy::HaulFailure::None};
     std::uint64_t cargo{};
     economy::Cell vehicleCell{};
+    economy::HaulMode mode{economy::HaulMode::Road};
 };
 struct UtilityConnectionView {
     std::string resource;
@@ -152,6 +159,7 @@ struct WorldView {
     bool tradeEnabled{};
     std::vector<BuildingView> buildings;
     std::vector<RoadView> roads;
+    std::vector<RailView> rails;
     std::vector<VehicleView> vehicles;
     std::vector<OrderView> orders;
     std::vector<UtilityConnectionView> utilityConnections;
@@ -165,10 +173,11 @@ struct EntityPage {
     std::uint64_t revision{};
     std::size_t offset{}, nextOffset{}, total{};
     bool hasMore{};
-    // A page slices one collection selected by kind: buildings, roads, vehicles, orders, utility_connections.
+    // A page slices one collection selected by kind: buildings, roads, rails, vehicles, orders, utility_connections.
     std::string kind;
     std::vector<BuildingView> buildings;
     std::vector<RoadView> roads;
+    std::vector<RailView> rails;
     std::vector<VehicleView> vehicles;
     std::vector<OrderView> orders;
     std::vector<UtilityConnectionView> utilityConnections;
@@ -272,13 +281,16 @@ public:
     Submission RemoveBuilding(std::uint64_t revision, economy::BuildingId id);
     /** Queues an axis-aligned road segment after checking the expected revision. */
     Submission BuildRoad(std::uint64_t revision, economy::Cell a, economy::Cell b);
+    /** Queues an axis-aligned rail segment after checking the expected revision. */
+    Submission BuildRail(std::uint64_t revision, economy::Cell a, economy::Cell b);
     /** Queues road enablement after checking the expected revision. */
     Submission SetRoadEnabled(std::uint64_t revision, economy::RoadId id, bool enabled);
     /** Queues building enablement after checking the expected revision. */
     Submission SetBuildingEnabled(std::uint64_t revision, economy::BuildingId id, bool enabled);
     /** Queues a haul order using exact resource and vehicle type names. */
     Submission CreateHaulOrder(std::uint64_t revision, economy::BuildingId source,
-        economy::BuildingId destination, const std::string& resource, const std::string& vehicleType);
+        economy::BuildingId destination, const std::string& resource, const std::string& vehicleType,
+        economy::HaulMode mode = economy::HaulMode::Road);
     /** Queues cancellation after revision checks; execution rejects an order carrying cargo. */
     Submission CancelHaulOrder(std::uint64_t revision, economy::OrderId id);
     /** Queues retargeting of a haul order after checking the expected revision. */

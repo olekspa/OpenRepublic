@@ -63,6 +63,9 @@ WorldView MakeWorld(const economy::Catalog& c, const economy::WorldSnapshot& s) 
     for (const auto& r : s.roads) {
         v.roads.push_back({r.id, r.a, r.b, r.enabled});
     }
+    for (const auto& r : s.rails) {
+        v.rails.push_back({r.id, r.a, r.b});
+    }
     for (const auto& x : s.vehicles) {
         const auto* t = c.VehicleType(x.type);
         v.vehicles.push_back({x.id, x.order, t ? t->name : "", x.cell, x.cargo, x.state});
@@ -71,7 +74,7 @@ WorldView MakeWorld(const economy::Catalog& c, const economy::WorldSnapshot& s) 
         const auto* r = c.Resource(x.resource);
         const auto* t = c.VehicleType(x.vehicleType);
         v.orders.push_back({x.id, x.source, x.destination, r ? r->name : "",
-            t ? t->name : "", x.vehicle, x.state, x.failure, x.cargo, x.vehicleCell});
+            t ? t->name : "", x.vehicle, x.state, x.failure, x.cargo, x.vehicleCell, x.mode});
     }
     for (const auto& x : s.utilityConnections) {
         const auto* r = c.Resource(x.resource);
@@ -103,7 +106,7 @@ Capabilities EconomyApi::DiscoverCapabilities() const {
         Action::QueryUtilityDiagnostics};
     if (permissions_.control && permissions_.query) {
         c.actions.insert(c.actions.end(), {Action::Step, Action::PlaceBuilding, Action::RemoveBuilding,
-            Action::BuildRoad, Action::SetRoadEnabled, Action::SetBuildingEnabled,
+            Action::BuildRoad, Action::BuildRail, Action::SetRoadEnabled, Action::SetBuildingEnabled,
             Action::CreateHaulOrder, Action::CancelHaulOrder, Action::RetargetHaulOrder,
             Action::CompactCommandHistory, Action::ConnectUtility, Action::DisconnectUtility,
             Action::TradeExport, Action::TradeImport, Action::PlaceConstructionSite});
@@ -179,7 +182,7 @@ CatalogView EconomyApi::DescribeCatalog() const {
         v.resources.push_back({r.id, r.name, r.utility, r.tradeDeclared, r.buyPrice, r.sellPrice});
     }
     for (const auto& b : catalog_->BuildingTypes()) {
-        BuildingTypeInfo x{b.id, b.name, b.width, b.depth, b.tradePost, {}, {}, {}, b.constructionWorkTicks};
+        BuildingTypeInfo x{b.id, b.name, b.width, b.depth, b.tradePost, b.station, {}, {}, {}, b.constructionWorkTicks};
         for (const auto& s : b.storage) {
             const auto* r = catalog_->Resource(s.resource);
             x.storage.push_back({r ? r->name : "", s.capacity});
@@ -202,7 +205,7 @@ CatalogView EconomyApi::DescribeCatalog() const {
         v.buildingTypes.push_back(std::move(x));
     }
     for (const auto& t : catalog_->VehicleTypes()) {
-        v.vehicleTypes.push_back({t.id, t.name, t.capacity, t.cellsPerTick});
+        v.vehicleTypes.push_back({t.id, t.name, t.capacity, t.cellsPerTick, t.railOnly});
     }
     return v;
 }
@@ -230,6 +233,7 @@ PageQuery EconomyApi::QueryWorld(std::uint64_t revision, const std::string& kind
     economy::SnapshotCollection collection;
     if (kind == "buildings") collection = economy::SnapshotCollection::Buildings;
     else if (kind == "roads") collection = economy::SnapshotCollection::Roads;
+    else if (kind == "rails") collection = economy::SnapshotCollection::Rails;
     else if (kind == "vehicles") collection = economy::SnapshotCollection::Vehicles;
     else if (kind == "orders") collection = economy::SnapshotCollection::Orders;
     else if (kind == "utility_connections")
@@ -254,6 +258,10 @@ PageQuery EconomyApi::QueryWorld(std::uint64_t revision, const std::string& kind
         p.roads.reserve(snapshot.roads.size());
         for (const auto& road : snapshot.roads)
             p.roads.push_back({road.id, road.a, road.b, road.enabled});
+    } else if (kind == "rails") {
+        p.rails.reserve(snapshot.rails.size());
+        for (const auto& rail : snapshot.rails)
+            p.rails.push_back({rail.id, rail.a, rail.b});
     } else if (kind == "vehicles") {
         p.vehicles.reserve(snapshot.vehicles.size());
         for (const auto& vehicle : snapshot.vehicles) {
@@ -418,6 +426,13 @@ Submission EconomyApi::BuildRoad(std::uint64_t revision, economy::Cell a, econom
         return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->BuildRoad(a, b));
 }
+Submission EconomyApi::BuildRail(std::uint64_t revision, economy::Cell a, economy::Cell b) {
+    if (!Allowed(true)) return {ErrorCode::PermissionDenied, 0, {}};
+    if (world_->Revision() != revision) return {ErrorCode::StaleRevision, 0, {}};
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
+    return Submit(revision, world_->BuildRail(a, b));
+}
 Submission EconomyApi::SetRoadEnabled(std::uint64_t revision, economy::RoadId id, bool enabled) {
     if (!Allowed(true)) {
         return {ErrorCode::PermissionDenied, 0, {}};
@@ -441,7 +456,7 @@ Submission EconomyApi::SetBuildingEnabled(std::uint64_t revision, economy::Build
     return Submit(revision, world_->SetBuildingEnabled(id, enabled));
 }
 Submission EconomyApi::CreateHaulOrder(std::uint64_t revision, economy::BuildingId s, economy::BuildingId d,
-    const std::string& resource, const std::string& vehicle) {
+    const std::string& resource, const std::string& vehicle, economy::HaulMode mode) {
     if (!Allowed(true)) {
         return {ErrorCode::PermissionDenied, 0, {}};
     }
@@ -454,7 +469,7 @@ Submission EconomyApi::CreateHaulOrder(std::uint64_t revision, economy::Building
         return {ErrorCode::InvalidArgument, 0, {}};
     if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
         return {ErrorCode::CommandHandleExhausted, 0, {}};
-    return Submit(revision, world_->CreateHaulOrder(s, d, r, v));
+    return Submit(revision, world_->CreateHaulOrder(s, d, r, v, mode));
 }
 Submission EconomyApi::CancelHaulOrder(std::uint64_t revision, economy::OrderId id) {
     if (!Allowed(true)) {
