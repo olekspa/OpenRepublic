@@ -1,12 +1,12 @@
 ﻿# Network kinds and compiled constants (24 October 2026)
 
-**VERIFIED (static review of the original's linear-network initialiser, build context 23935965; no decompiled code recorded):** one routine configures every linear-network class (roads, rails, pipes, wires, paths) from a small integer *network kind* and loads that kind's materials from the `paths` and `editor/models` folders. Per kind it sets a block of float constants in the network object at fixed member offsets and a few flag bytes. The constants are compiled into the executable, which is why no road-type definition file exists in the media. The member offsets are named below only by offset; **what each constant means is UNKNOWN unless stated INFERRED**. Constants are exact IEEE floats decoded from the instruction immediates.
+**VERIFIED (static review of the original's linear-network initialiser, build context 23935965):** one routine configures linear-network objects from an integer *network kind* and loads kind-specific materials from the `paths` and `editor/models` folders. It sets compiled float constants at fixed member offsets and a few flag bytes; no separate road-type definition file was identified in the inspected media. The exact constants are recorded below. Their semantic meanings remain unresolved unless explicitly supported by a consumer trace.
 
 ## Kinds seen and their materials (VERIFIED where a kind-specific branch loads the material)
 
 | Kind | Observed role (INFERRED from loaded materials) | Distinct materials loaded |
 |---|---|---|
-| 1 and 2 | road networks (a flag is set for these two) | `road_poormud`, rail-style set shared at init, then sidewalks, lines, one-way line sets, tunnel and tram sets |
+| 1 and 2 | rail networks (the +0x25c flag is set for these two) | rail gravel, rails, wires, tunnels, and related shared materials |
 | 3 | pedestrian paths | `brick_footpath_*` (second set), `road_poormud_only` (a siberia variant when terrain type is 3) |
 | 4 | footpaths | `brick_footpath_*`, `footpath_asphalt_inside` |
 | 5 | connection overlay | `connection_lines`, `connection_outsidelines` |
@@ -36,12 +36,12 @@ Defaults for every kind: +0x44 = 2500, +0x48 = 150, +0x38 = 4.8, +0x3c = 0.5; th
 
 ## Interpretation status
 
-- **INFERRED, not established:** the two values at +0x40 and +0x48 behave like a lower and upper limit of the same quantity (road kinds 35 and 50, footpaths 4.5 and 6, wires 10 and 10), which fits speed limits in km/h or a similar rate; +0x34 (12, 6 and 2) is a candidate for width or lane-group width in metres; +0x18 and +0x20 are candidates for half-widths or edge offsets. None of this has a consumer trace; do not use these values for rendering or gameplay until one exists.
-- **UNKNOWN:** how the kind maps to the package files (`road.bin`, `road_secondary.bin`, `rail.bin`, `pedestrianway.bin`, `heating.bin`, `waterpipes.bin`, `conveyor.bin`, `pipe.bin`, `electro_*`) and how the per-segment kind/sub selector (see [MAP_SURVEY.md](MAP_SURVEY.md)) and per-connection type ids relate to these constants. The most likely route to width, speed and lane data is tracing consumers of the +0x34, +0x40 and +0x48 members.
+- **UNKNOWN (consumer audit, static code review, build context 23935965):** the semantic uses of +0x18, +0x20, +0x34, +0x40 and +0x48 have not been established. All 57 functions listed as referencing the network object were decompiled in private scratch output and screened for these member offsets, but the reviewed uses did not provide a conclusive trace from a member load to a domain meaning. The numeric patterns below are **INFERRED hypotheses only**: +0x34 could be a width or lane-group measure; +0x18/+0x20 could be geometry offsets; +0x40/+0x48 could be bounds on a quantity such as speed. Units and roles are UNKNOWN. Do not use these values for rendering or gameplay as widths or speed limits.
+- **UNKNOWN:** how the per-segment kind/sub selector (see [MAP_SURVEY.md](MAP_SURVEY.md)) and per-connection type ids relate to these constants. The package-file-to-network-kind mapping is established separately below.
 
 ## Data cross-check: 12 m spacing (24 October 2026)
 
-**OBSERVED (one road.bin, private analysis):** for each primary road segment the distance to the nearest point of any segment that shares no node with it clusters sharply at 12.0 m (269 of about 800 segments with a neighbour within 20 m; neighbouring half-metre bins hold 14 to 38). That agrees with the kind-0 constant +0x34 = 12.0 above, so 12 m is plausibly a snapping or lane-group spacing unit of the original's town layout (**INFERRED**; a road width of 12 m is not implied because the peak is between separate segments). It does not support 6.0 (the kind-1 value) as a spacing.
+**OBSERVED (one road.bin, private analysis):** for each primary road segment the distance to the nearest point of any segment that shares no node with it clusters sharply at 12.0 m (269 of about 800 segments with a neighbour within 20 m; neighbouring half-metre bins hold 14 to 38). This is a spatial observation only. It does not establish the meaning of +0x34: the measured nearest points are between separate, unconnected segments, and no code or controlled in-game observation links the 12 m spacing to that member. A road width of 12 m is not established. The kind-1 value is 6.0.
 
 ## File to network kind mapping (added; VERIFIED)
 
@@ -66,4 +66,4 @@ Defaults for every kind: +0x44 = 2500, +0x48 = 150, +0x38 = 4.8, +0x3c = 0.5; th
 | `fence.bin` | 15 (0xf) |
 | `waterpipes.bin` | 16 (0x10) |
 
-With this mapping the constant table above reads per file. **INFERRED, not established** (plausibility only; no consumer trace): member +0x34 is the cross-section width in metres (main roads 12.0, rail 6.0, wires and pipes 2.0), and the pair +0x40/+0x48 are lower/upper speed limits in metres per second (main roads 17 and 25, rails 35 and 50, pedestrian paths 4.5 and 6, airport 35 and 35). The 12 m nearest-neighbour peak between unconnected road segments (see above) agrees with a 12 m main-road width. These readings are **not** used by OpenRepublic code; the road mesh keeps its own presentation width. The road-kind flag at +0x25c is set for the rail kinds (1 and 2), not for kind 0, so the earlier table row labelled "1 and 2: road networks" should read "rail networks" (material sets: rail gravel, rails, wires, tunnels).
+With this mapping the constant table above reads per file. **UNKNOWN (consumer audit):** no reviewed consumer establishes +0x34 as cross-section width or +0x40/+0x48 as speed limits, and no units are established. Those interpretations remain **INFERRED hypotheses** from the value patterns only. The 12 m nearest-neighbour peak between unconnected road segments is not width evidence. These constants are not used by OpenRepublic code; the road mesh keeps its own presentation width. The road-kind flag at +0x25c is set for rail kinds 1 and 2, not main road kind 0.
