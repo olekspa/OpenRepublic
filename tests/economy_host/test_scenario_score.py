@@ -158,6 +158,18 @@ class ScenarioHostIntegrationTests(unittest.TestCase):
         self.assertEqual(first["tick"], 17)
 
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
+    def test_supply_scenarios_complete_sites_and_repeat_deterministic_hashes(self):
+        for name, expected in (("build_a_mill_with_supply", 1), ("build_two_mills_with_supply", 2)):
+            with self.subTest(scenario=name):
+                scenario = scenario_score.resolve_scenario(name)
+                first = scenario_score.run_scenario(HOST_EXE, scenario, 64, exact_ticks=True, rounds=64)
+                second = scenario_score.run_scenario(HOST_EXE, scenario, 64, exact_ticks=True, rounds=64)
+                self.assertEqual(first["scoreUnits"], expected)
+                self.assertEqual(first["scoreBreakdown"]["completedSites"], expected)
+                self.assertTrue(all(site["state"] == "done" for site in first["scoreBreakdown"]["siteStates"]))
+                self.assertEqual(first["scoreHash"], second["scoreHash"])
+
+    @unittest.skipUnless(HOST_EXE, "host executable argument is required")
     def test_power_objectives_report_measured_deficit_isolation_and_surplus(self):
         # The live host reports last-tick utility amounts in catalog units (power:2 -> 2), not micro-scaled.
         expected = {

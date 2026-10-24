@@ -355,10 +355,14 @@ def main(argv=None):
     parser.add_argument("--scenario", required=True, help="synthetic scenario JSON file")
     parser.add_argument("--ticks", required=True, type=tick_count,
                         help="autopilot simulation ticks after one setup tick")
+    parser.add_argument("--rounds", type=tick_count, default=1,
+                        help="number of autopilot planning rounds dividing the requested ticks")
+    parser.add_argument("--exact-ticks", action="store_true",
+                        help="cap each round at its scheduled tick despite extra controller actions")
     args = parser.parse_args(argv)
     try:
         scenario = load_scenario(args.scenario)
-        score = run_scenario(args.host, scenario, args.ticks)
+        score = run_scenario(args.host, scenario, args.ticks, exact_ticks=args.exact_ticks, rounds=args.rounds)
     except (ScenarioError, RuntimeError, OSError, ValueError) as error:
         print(f"scenario score failed: {error}", file=sys.stderr)
         return 1

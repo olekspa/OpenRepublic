@@ -57,13 +57,21 @@ count and the requested scenario path. For example:
 python tools/scenario_score.py --host build/headless/src/economy_host/Release/OpenRepublicEconomyHost.exe --scenario data/scenarios/full_chain.json --ticks 1000
 ```
 
+Construction supply scenarios need repeated planning as production generates
+material stock. For a fixed one-tick planning cadence, run for example:
+
+```powershell
+python tools/scenario_score.py --host build/headless/src/economy_host/Release/OpenRepublicEconomyHost.exe --scenario data/scenarios/build_a_mill_with_supply.json --ticks 64 --rounds 64 --exact-ticks
+```
+
 On Windows generators that place executables directly under the build tree,
 use the host executable's actual path. The scorer drives a fresh synthetic host
 instance, applies the scenario setup, then runs the rule-based autopilot for
 the requested main-step ticks. Initial buildings and roads consume one setup
 tick; utility links, when present, consume a second. Autopilot placement and
 trade attempts may advance additional one-tick steps. The output `tick` is the actual final
-simulation tick. Inventory scenarios emit score JSON with `scoreMicroUnits` and
+simulation tick; `--exact-ticks` caps each planning round at its scheduled tick.
+Inventory scenarios emit score JSON with `scoreMicroUnits` and
 `scoreUnits`. Utility scenarios emit `scoreBreakdown` with measured power
 throughput, unmet eligible demand, and an infrastructure-count cost proxy.
 Any scenario whose catalog declares trade prices adds final `treasury` to
