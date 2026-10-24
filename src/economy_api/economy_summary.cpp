@@ -18,6 +18,11 @@ EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
     const economy::WorldSnapshot& snapshot) {
     EconomySummary result;
     result.tick = snapshot.tick;
+    result.calendarEnabled = catalog.Calendar().ticksPerDay != 0;
+    if (result.calendarEnabled) {
+        result.calendarYear = snapshot.calendarYear; result.calendarDay = snapshot.calendarDay;
+        result.calendarMonth = snapshot.calendarMonth; result.calendarSeason = snapshot.calendarSeason;
+    }
     result.population = snapshot.population;
     result.workersAssigned = snapshot.workersAssigned;
     result.workersRequired = snapshot.workersRequired;
@@ -100,6 +105,9 @@ EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
     for (const auto& item : result.unservedInputs)
         text << '\n' << "  " << item.resource << " at " << item.buildingType
              << "#" << item.building << ": " << item.held << "/" << item.needed;
+    if (result.calendarEnabled)
+        text << '\n' << "Calendar: " << result.calendarYear << " day " << result.calendarDay
+             << " month " << result.calendarMonth << " (" << result.calendarSeason << ")";
     text << '\n' << "Vehicles: " << result.vehicles;
     if (!result.constructionSites.empty()) text << '\n' << "Construction sites: " << result.constructionSites.size();
     result.text = text.str();

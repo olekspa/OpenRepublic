@@ -35,11 +35,21 @@ struct SkippedBuilding {
     std::string reason;
 };
 
+struct DirectiveCoverage {
+    std::size_t parsedTyped{};
+    std::size_t retainedRaw{};
+    std::size_t ignored{};
+};
+
 struct ImportReport {
     CatalogImportOptions options;
     bool success{};
     std::string error;
     std::size_t definitionsSeen{};
+    // Counts of supplied definitions containing each directive. "ignored" means the
+    // catalog importer does not interpret the directive; parser preservation
+    // in BuildingDefinition::other is independent of this classification.
+    std::map<std::string, DirectiveCoverage> directiveCoverage;
     std::size_t resourcesImported{};
     std::size_t buildingsImported{};
     std::size_t buildingsSkipped{};

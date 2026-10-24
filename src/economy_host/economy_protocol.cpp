@@ -355,6 +355,10 @@ std::string Stall(economy::StallReason s) {
     return "output_full";
   case economy::StallReason::Disabled:
     return "disabled";
+  case economy::StallReason::MissingHeating:
+    return "missing_heating";
+  case economy::StallReason::MissingWater:
+    return "missing_water";
   }
   return "unknown";
 }
@@ -830,7 +834,25 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                     ? Json(std::to_string(summary.workersRequired)) : Json(nullptr)},
                {"stock", stock},
                {"unservedInputs", unserved}, {"vehicles", summary.vehicles},
-               {"text", summary.text}};
+               {"text", summary.text},
+               {"calendar", summary.calendarEnabled
+                    ? Json{{"year", summary.calendarYear}, {"day", summary.calendarDay},
+                           {"month", summary.calendarMonth}, {"season", summary.calendarSeason}}
+                    : Json(nullptr)}};
+    const auto world = api_->QueryWorld();
+    if (world.error == economy_api::ErrorCode::None) {
+      const auto diagnostics = api_->QueryUtilityDiagnostics(world.world.revision, 0,
+          economy_api::MaxUtilityDiagnosticsPageSize);
+      if (diagnostics.error == economy_api::ErrorCode::None && diagnostics.available) {
+        Json flows = Json::array();
+        for (const auto &network : diagnostics.networks)
+          flows.push_back(Json{{"resource", network.resource}, {"component", network.component},
+              {"generated", network.generated}, {"requested", network.requested},
+              {"consumed", network.consumed}, {"unused", network.unused},
+              {"starvedRecipes", network.starvedRecipes}});
+        out["utilityNetworks"] = std::move(flows);
+      }
+    }
     if (!sites.empty()) out["constructionSites"]=std::move(sites);
   } else if (method == "utility_diagnostics") {
     if (!Fields(req, {"revision", "offset", "limit"}, message, {"buildingId"}))

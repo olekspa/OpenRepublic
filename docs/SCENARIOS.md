@@ -46,7 +46,7 @@ A scenario is one JSON object with these required fields:
 - Optional `rails`: array of the same adjacent-cell shape for declared rail edges. Rail fixtures use the opt-in `build_rail` host command.
 - `buildings`: array of `{ "type": string, "x": int, "z": int }`; built-in fixtures use `farm`, `mill`, `bakery`, or `market`.
 - Optional `catalog`: bounded synthetic catalog DSL text. Utility fixtures use this to define their own power generator and consumer recipes; it contains no game-derived data. Population fixtures may declare `housing`, `workers`, and optional `food` rules as documented in [POPULATION.md](POPULATION.md).
-- Optional `utilityConnections`: array of `{ "resource": "power", "aBuilding": int, "bBuilding": int }`, where endpoints are zero-based indexes into the initial `buildings` array.
+- Optional `utilityConnections`: array of `{ "resource": "<declared utility>", "aBuilding": int, "bBuilding": int }`, where endpoints are zero-based indexes into the initial `buildings` array.
 - Trade catalogs may declare per-resource prices and trade-post storage. Trade commands run through the baseline controller; treasury appears in utility score breakdowns only when a catalog declares trade prices.
 - `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, `{ "metric": "utility_multi_objective" }` for utility fixtures, `{ "metric": "completed_construction_sites" }` for construction fixtures, `{ "metric": "combined_multi_objective", "objectives": [...] }` for combined fixtures, or the dedicated `rail_vs_road` comparison fields in its fixture. Supported combined fields are `fedResidents`, `completedSites`, `treasury`, `throughputUnits`, `unmetDemandUnits`, and `storedNonRawUnits`; each remains a separate objective in the score receipt.
 
@@ -77,8 +77,11 @@ tick; utility links, when present, consume a second. Autopilot placement and
 trade attempts may advance additional one-tick steps. The output `tick` is the actual final
 simulation tick; `--exact-ticks` caps each planning round at its scheduled tick.
 Inventory scenarios emit score JSON with `scoreMicroUnits` and
-`scoreUnits`. Utility scenarios emit `scoreBreakdown` with measured power
-throughput, unmet eligible demand, and an infrastructure-count cost proxy.
+`scoreUnits`. Utility scenarios emit `scoreBreakdown` with measured throughput
+and unmet eligible demand for the primary utility, per-resource `utilityFlows`,
+and an infrastructure-count cost proxy. Power remains the primary utility when
+present; otherwise the first reported utility is primary. Resource-specific
+flows are retained separately so unlike utility units are not added together.
 Any scenario whose catalog declares trade prices adds final `treasury` to
 `scoreBreakdown`; non-trade scenarios do not get a treasury field.
 Construction scenarios score one unit per site whose final state is `done` and
@@ -98,9 +101,11 @@ the original game.
 `stored_non_raw_units` is the final stored inventory total for resources the
 host's synthetic catalog classifies as non-raw, reported in whole units, with
 the exact value retained in `scoreMicroUnits`. For utility scenarios,
-`throughputUnits` is power consumed during the final tick and
-`unmetDemandUnits` is eligible power demand minus consumption. These are catalog
-units as reported by the live host; they are not micro-scaled. `costUnits` is
+`throughputUnits` is primary-utility consumption during the final tick and
+`unmetDemandUnits` is primary-utility eligible demand minus consumption. Each
+`utilityFlows` entry reports the generated, requested, consumed, and unmet
+catalog units for one resource. These are reported by the live host and are not
+micro-scaled. `costUnits` is
 final buildings + roads + utility links. Cost is an explicit
 infrastructure-count proxy; the current economy has no construction-price
 model. Utility diagnostics measure this independent model's per-tick flows and

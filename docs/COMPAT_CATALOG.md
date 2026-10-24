@@ -51,6 +51,17 @@ scenario is claimed.
 - Buildings with nonzero converted production or consumption get an `operate`
   recipe. Each used recipe resource receives a storage slot. An explicitly mapped
   storage-only definition imports with storage and no recipe.
+- Multiple production and consumption rows are accumulated independently by
+  exact resource spelling and direction, so a recipe can have multiple inputs
+  and outputs. `$CONSUMPTION_PER_SECOND` rows enter the same consumption totals
+  after the verified factor of 60. A row is worker-scaled only when the parser
+  observed a positive `$WORKERS_NEEDED` earlier in that definition; static
+  evidence also identifies a separate type-code rule that rescales earlier
+  declarations, which this adapter cannot identify and leaves unsupported.
+- Resource names are not normalized, aliased, lowercased, or trimmed by the
+  catalog importer. Spelling and case remain exact; for example, `eletric`,
+  `electric`, and `Electric` are distinct synthetic catalog names. This avoids
+  silently repairing source tokens without evidence.
 - **INFERRED:** capacity uses `ceil(storageDaysFallback * larger daily rate)`
   in micro-units, with a minimum of four times the larger per-tick amount.
   This remains the default when no explicit capacity profile is supplied or a
@@ -59,9 +70,31 @@ scenario is claimed.
   the 20-unit, 2-cells-per-tick `truck` are OpenRepublic defaults, not WRSR
   data.
 
-`ImportReport` records the options, counts, ordered skipped buildings,
-warnings, and errors. `DescribeImport` produces a deterministic human-readable
-summary. The adapter does not read or write game files, saves, or assets.
+`ImportReport::directiveCoverage` counts definitions containing each directive
+across the
+provided definitions, grouped by directive spelling and classified as parsed
+typed, retained raw, or ignored by the economy catalog. Each definition counts
+once per directive in its strongest available category. “Ignored” means no
+catalog rule consumes it; the content parser may still retain it in an opaque
+directive record. `DescribeImport` prints this table in deterministic order.
+It also records counts, ordered skipped buildings, warnings, and errors.
+
+For an aggregate local install measurement, configure the headless build and
+build the opt-in read-only target `OpenRepublicCatalogCoverageProbe`. Then run
+`tools/measure_catalog_coverage.ps1 <install-or-definitions-directory>` (or pass
+its build directory as the second argument). It resolves the conventional
+`media_soviet/buildings_types` or `buildings_types` subdirectory when given an
+install/content root, and otherwise treats the argument as the definition
+directory. The probe reports parsed definition
+count, valid imported economy building-type count, top skip reasons, and
+directive coverage. Parse/read failures, unnamed files, and duplicate stems
+are summarized separately. It writes no files and does not print source paths,
+definition names, or contents. Keep install data and any captured output local;
+tests use synthetic definition values only.
+
+The adapter does not write game files, saves, or assets. Real building
+footprints remain **UNKNOWN** in the evidence ledger, so the economy import
+continues to use its configured square default.
 
 ## Optional authored storage capacity profiles
 
