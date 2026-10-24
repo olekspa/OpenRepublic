@@ -70,6 +70,7 @@ int main() {
     definitions.emplace("electric_consumer", electricity);
 
     content::BuildingDefinition empty;
+    empty.other.push_back({"$OPAQUE_TEST", {"value"}, 1});
     definitions.emplace("decorative", empty);
 
     content::BuildingDefinition invalid;
@@ -94,6 +95,11 @@ int main() {
           "skipped buildings are deterministic and include reasons");
     Check(report.resourceSpecificStorageEntriesSeen == 1,
           "resource-specific explicit storage entries are counted");
+    Check(report.directiveCoverage.at("$PRODUCTION").parsedTyped == 4 &&
+              report.directiveCoverage.at("$CONSUMPTION_PER_SECOND").parsedTyped == 1 &&
+              report.directiveCoverage.at("$STORAGE_MISC").parsedTyped == 1 &&
+              report.directiveCoverage.at("$OPAQUE_TEST").ignored == 1,
+          "directive coverage counts typed declarations and importer-ignored directives");
     Check(catalog.Resources().size() == 6 && catalog.BuildingTypes().size() == 4 &&
               catalog.VehicleTypes().size() == 1,
           "catalog includes sorted valid resources, economic buildings, and default truck");
@@ -132,6 +138,9 @@ int main() {
                                        std::string::npos;
                             }) == 7,
           "opt-in reports every retained cost directive without guessing conversions");
+    Check(diagnosticCostReport.directiveCoverage.at("$COST_RESOURCE_AUTO").retainedRaw == 1 &&
+              diagnosticCostReport.directiveCoverage.at("$COST_WORK").retainedRaw == 1,
+          "directive coverage identifies raw-retained economic declarations");
 
     economy::ResourceId plants{}, water{}, food{}, electricityId{}, dust{}, storageOnly{};
     Check(catalog.FindResource("plants", plants) && catalog.FindResource("water", water) &&
@@ -141,6 +150,19 @@ int main() {
           "all valid economic resources are imported");
     Check(!catalog.FindResource("invalid resource", dust),
           "invalid resource name is excluded and its building is skipped");
+
+    content::BuildingDefinition exactResourceNames;
+    exactResourceNames.production = {Rate("eletric", 1.0), Rate("electric", 2.0),
+                                     Rate("Electric", 3.0)};
+    economy::Catalog exactNameCatalog;
+    compat::ImportReport exactNameReport;
+    Check(compat::ImportCatalogFromDefinitions({{"exact_names", exactResourceNames}}, options,
+                                                exactNameCatalog, exactNameReport) &&
+              exactNameCatalog.FindResource("eletric", dust) &&
+              exactNameCatalog.FindResource("electric", dust) &&
+              exactNameCatalog.FindResource("Electric", dust) &&
+              exactNameCatalog.Resources().size() == 3,
+          "resource-name normalization preserves exact spelling and case");
 
     economy::BuildingTypeId farmId{}, factoryId{}, electricId{}, tinyId{};
     Check(catalog.FindBuildingType("farm", farmId), "farm building type is imported");

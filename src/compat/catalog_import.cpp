@@ -66,6 +66,38 @@ bool IsSupportedStorageDirective(const std::string &directive) {
            directive == "$STORAGE_EXPORT_SPECIAL";
 }
 
+void AddCoverage(ImportReport &report, const std::string &directive, int category) {
+    auto &coverage = report.directiveCoverage[directive];
+    if (category == 0)
+        ++coverage.parsedTyped;
+    else if (category == 1)
+        ++coverage.retainedRaw;
+    else
+        ++coverage.ignored;
+}
+
+void CollectDirectiveCoverage(const content::BuildingDefinition &definition,
+                               ImportReport &report) {
+    std::set<std::string> typedNames, rawNames, ignoredNames;
+    if (definition.nameId) typedNames.insert("$NAME");
+    if (definition.workersNeeded) typedNames.insert("$WORKERS_NEEDED");
+    if (definition.workingVehiclesNeeded) typedNames.insert("$WORKING_VEHICLES_NEEDED");
+    if (!definition.production.empty()) typedNames.insert("$PRODUCTION");
+    if (!definition.consumption.empty()) typedNames.insert("$CONSUMPTION");
+    if (!definition.consumptionPerSecond.empty()) typedNames.insert("$CONSUMPTION_PER_SECOND");
+    for (const auto &entry : definition.storage) typedNames.insert(entry.directive);
+    for (const auto &flag : definition.typeFlags) typedNames.insert("$TYPE_" + flag);
+    for (const auto &entry : definition.electricalConnections) typedNames.insert(entry.directive);
+    for (const auto &entry : definition.economicRaw) rawNames.insert(entry.name);
+    for (const auto &entry : definition.other) {
+        if (!typedNames.count(entry.name) && !rawNames.count(entry.name))
+            ignoredNames.insert(entry.name);
+    }
+    for (const auto &name : typedNames) AddCoverage(report, name, 0);
+    for (const auto &name : rawNames) AddCoverage(report, name, 1);
+    for (const auto &name : ignoredNames) AddCoverage(report, name, 2);
+}
+
 bool ToExplicitCapacity(double rawAmount, double factor, std::uint64_t &capacity) {
     if (!std::isfinite(rawAmount) || rawAmount <= 0.0 || !std::isfinite(factor) || factor <= 0.0)
         return false;
@@ -210,6 +242,7 @@ bool ImportCatalogFromDefinitions(
     std::set<std::string> resourceNames;
     for (const auto &building : definitions) {
         const auto &definition = building.second;
+        CollectDirectiveCoverage(definition, next);
         if (options.constructionCosts) {
             for (const auto &directive : definition.economicRaw) {
                 if (directive.name.rfind("$COST_", 0) != 0)
@@ -480,6 +513,10 @@ std::string DescribeImport(const ImportReport &report) {
     output << "Definitions: " << report.definitionsSeen << ", resources: " << report.resourcesImported
            << ", buildings imported: " << report.buildingsImported << ", skipped: "
            << report.buildingsSkipped << "\n";
+    output << "Directive coverage (definitions): parsed-typed / retained-raw / ignored-by-catalog\n";
+    for (const auto &entry : report.directiveCoverage)
+        output << "  " << entry.first << ": " << entry.second.parsedTyped << " / "
+               << entry.second.retainedRaw << " / " << entry.second.ignored << "\n";
     output << "Resource-specific storage entries observed: "
            << report.resourceSpecificStorageEntriesSeen << "\n";
     output << "Explicit storage profile entries: " << report.storageEntriesMapped << " mapped, "

@@ -41,6 +41,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -1683,6 +1684,17 @@ namespace openrepublic
 						UpdateRegionStatus();
 					});
 					gui.AddWidget(&nativeDetailsButton);
+					nativeOverviewButton.Create("NativeEconomyOverviewButton");
+					nativeOverviewButton.SetText("Overview");
+					nativeOverviewButton.SetTooltip("Show economy totals and recent stock changes.");
+					StyleButton(nativeOverviewButton);
+					nativeOverviewButton.SetSize(XMFLOAT2(132, 28));
+					nativeOverviewButton.OnClick([this](const wi::gui::EventArgs&) {
+						nativeOverviewExpanded = !nativeOverviewExpanded;
+						nativeOverviewButton.SetText(nativeOverviewExpanded ? "Hide overview" : "Overview");
+						UpdateRegionStatus();
+					});
+					gui.AddWidget(&nativeOverviewButton);
 					nativeSaveButton.Create("NativeEconomySaveCheckpointButton");
 					nativeSaveButton.SetText("Save checkpoint");
 					StyleButton(nativeSaveButton);
@@ -1719,6 +1731,17 @@ namespace openrepublic
 						UpdateRegionStatus();
 					});
 					gui.AddWidget(&nativeDetailsButton);
+					nativeOverviewButton.Create("RegionEconomyOverviewButton");
+					nativeOverviewButton.SetText("Overview");
+					nativeOverviewButton.SetTooltip("Show economy totals and recent stock changes.");
+					StyleButton(nativeOverviewButton);
+					nativeOverviewButton.SetSize(XMFLOAT2(132, 28));
+					nativeOverviewButton.OnClick([this](const wi::gui::EventArgs&) {
+						nativeOverviewExpanded = !nativeOverviewExpanded;
+						nativeOverviewButton.SetText(nativeOverviewExpanded ? "Hide overview" : "Overview");
+						UpdateRegionStatus();
+					});
+					gui.AddWidget(&nativeOverviewButton);
 					nativeEconomyTools.Create(gui, regionEconomyWorld->GetCatalog(), {
 						{}, {}, {}, {},
 						[this] { QueueNativeOrderChange(true); },
@@ -2172,6 +2195,22 @@ namespace openrepublic
 			RefreshNativeHaulChoices();
 		}
 		text << regionWorldStatus;
+		const auto* overviewWorld = ActiveOwnedEconomyWorld();
+		std::optional<openrepublic::runtime::EconomyOverview> overview;
+		if (nativeToolsReady && overviewWorld)
+		{
+			const auto current = overviewWorld->Snapshot();
+			if (!nativeOverviewHistory.empty() && current.tick < nativeOverviewHistory.back().tick)
+				nativeOverviewHistory.clear();
+			if (nativeOverviewHistory.empty() || current.tick > nativeOverviewHistory.back().tick)
+				nativeOverviewHistory.push_back(current);
+			else if (current.tick == nativeOverviewHistory.back().tick)
+				nativeOverviewHistory.back() = current;
+			while (nativeOverviewHistory.size() > 21) nativeOverviewHistory.pop_front();
+			const std::optional<economy::WorldSnapshot> baseline = nativeOverviewHistory.size() > 1
+				? std::optional<economy::WorldSnapshot>(nativeOverviewHistory.front()) : std::nullopt;
+			overview = openrepublic::runtime::BuildEconomyOverview(current, overviewWorld->GetCatalog(), baseline);
+		}
 		if (nativeEconomyCheckpointMode)
 		{
 			text << (nativeEconomyPresentationValid ? "\nNative buildings shown: " : "\nScene is stale; selection disabled. Frame world can rebase. Buildings shown: ")
@@ -2304,7 +2343,47 @@ namespace openrepublic
 		const std::string utilityStatus = SelectedUtilityStatus(nativeDetailsExpanded);
 		if (!utilityStatus.empty()) text << "\n" << utilityStatus;
 		std::string statusText = text.str();
-		if (nativeToolsReady && !nativeDetailsExpanded && ActiveOwnedEconomyWorld())
+		if (nativeOverviewExpanded && overview)
+		{
+			std::ostringstream panel;
+			panel << "Economy overview | tick " << overview->tick << " | treasury " << overview->treasury;
+			if (overview->populationAvailable)
+				panel << "\nPopulation " << overview->population << " | housing " << overview->housingCapacity
+					<< " | workers " << overview->workersAssigned << "/" << overview->workersRequired;
+			else panel << "\nPopulation/workforce: unavailable (catalog has no population declarations)";
+			panel << "\nStored resources:";
+			for (const auto& resource : overview->resources)
+			{
+				panel << "\n  " << resource.name << ": " << resource.stored;
+				if (resource.perTickDelta)
+					panel << " (" << std::showpos << std::fixed << std::setprecision(2)
+						<< *resource.perTickDelta << std::noshowpos << std::defaultfloat << " / tick)";
+				else panel << " (rate warming up)";
+			}
+			panel << "\nConstruction sites: " << overview->constructionSites.size();
+			static const char* const constructionStates[] = { "waiting materials", "building", "done" };
+			for (const auto& site : overview->constructionSites)
+				panel << "\n  OR-" << site.id << " " << site.type << " | "
+					<< constructionStates[std::min<std::size_t>(site.state, 2)] << " | "
+					<< static_cast<int>(std::clamp(site.progress, 0.0, 1.0) * 100.0 + 0.5) << "%";
+			panel << "\nActive haul orders: " << overview->activeHauls.size() << " | trucks: " << overview->truckCount;
+			const auto haulStateName = [](economy::HaulState state) {
+				switch (state) {
+				case economy::HaulState::Idle: return "idle";
+				case economy::HaulState::ToDestination: return "to destination";
+				case economy::HaulState::ToSource: return "to source";
+				case economy::HaulState::Waiting: return "waiting";
+				case economy::HaulState::NoRoute: return "no route";
+				}
+				return "unknown";
+			};
+			for (const auto& haul : overview->activeHauls)
+				panel << "\n  #" << haul.id << " OR-" << haul.source << " -> OR-" << haul.destination
+					<< " | " << haul.resource << " cargo " << haul.cargo << " | truck #" << haul.vehicle
+					<< " | " << haulStateName(haul.state);
+			statusText = panel.str();
+		}
+		if (nativeToolsReady && !nativeDetailsExpanded && !nativeOverviewExpanded && ActiveOwnedEconomyWorld())
 		{
 			const auto snapshot = ActiveOwnedEconomyWorld()->Snapshot();
 			std::ostringstream compact;
@@ -2328,7 +2407,7 @@ namespace openrepublic
 			const float viewportHeight = static_cast<float>(renderPath->GetLogicalHeight());
 			const float statusWidth = std::max(240.0f, std::min(900.0f, viewportWidth - 36.0f));
 			const bool ownedStatus = nativeToolsReady && ActiveOwnedEconomyWorld();
-			const float statusHeightCap = ownedStatus ? (nativeDetailsExpanded ? 230.0f : (utilityStatus.empty() ? 80.0f : 120.0f)) : 420.0f;
+			const float statusHeightCap = ownedStatus ? (nativeOverviewExpanded ? 420.0f : (nativeDetailsExpanded ? 230.0f : (utilityStatus.empty() ? 80.0f : 120.0f))) : 420.0f;
 			const float availableHeight = std::max(60.0f, viewportHeight - (nativeToolsReady ? nativeStatusTop : 54.0f) - 24.0f);
 			const float targetStatusHeight = ownedStatus
 				? std::min(statusHeightCap, std::max(60.0f, viewportHeight - 36.0f))
@@ -2655,7 +2734,7 @@ namespace openrepublic
 		float x = 18.0f, y = 18.0f;
 		for (auto* button : { &regionStepOneButton, &regionStepButton, &regionToggleButton,
 			&regionHaulSourceButton, &regionHaulButton, &nativeFrameButton, &nativeStepManyButton, &nativeRunPauseButton,
-			&nativeDetailsButton, &nativeSaveButton })
+			&nativeDetailsButton, &nativeOverviewButton, &nativeSaveButton })
 		{
 			if (!nativeEconomyCheckpointMode && (button == &nativeFrameButton || button == &nativeStepManyButton ||
 				button == &nativeRunPauseButton || button == &nativeSaveButton)) continue;
