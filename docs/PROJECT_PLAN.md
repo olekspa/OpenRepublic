@@ -1,5 +1,7 @@
 # OpenRepublic project plan
 
+Latest consolidated status and handoff: [HANDOFF_2026-10-24.md](HANDOFF_2026-10-24.md).
+
 **Construction profile increment (23 October 2026):** ordered cost/work/recipe
 declarations and opaque station rows now have a bounded source profile and an
 aggregate-only inspection target. All 488 named local definitions extract;

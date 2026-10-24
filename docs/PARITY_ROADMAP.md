@@ -1,5 +1,7 @@
 # WRSR parity roadmap (23 October 2026)
 
+Latest consolidated status and handoff: [HANDOFF_2026-10-24.md](HANDOFF_2026-10-24.md).
+
 This document tracks the distance between OpenRepublic and Workers & Resources: Soviet Republic (WRSR) by area. It is a planning aid, not a compatibility claim: nothing here establishes parity. Evidence labels follow AGENTS.md (VERIFIED, OBSERVED, INFERRED, UNKNOWN); build context for original-game evidence is the single locally inspected build. Chronological detail lives in [PROGRESS_LOG.md](PROGRESS_LOG.md), field-level evidence in [REVERSE_ENGINEERING_LEDGER.md](REVERSE_ENGINEERING_LEDGER.md).
 
 Full feature parity is the target, not the status of the existing showcase or
