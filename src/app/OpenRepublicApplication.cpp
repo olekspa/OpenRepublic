@@ -2921,8 +2921,14 @@ namespace openrepublic
 		{
 			const auto* type = nativeEconomyCheckpoint.world->GetCatalog().BuildingType(nativePlacementType);
 			if (!type) return;
-			if (TrackNativeSubmission(regionEconomyApi->PlaceBuilding(regionEconomySnapshot->revision, type->name, cell),
-				type->name + " at (" + std::to_string(cell.x) + ", " + std::to_string(cell.z) + ")"))
+			// A type with a synthetic `build ... work N` declaration starts as a construction site that
+			// needs material hauls; other types keep the instant placement path (OpenRepublic policy).
+			const bool asSite = type->constructionWorkTicks > 0;
+			const auto submission = asSite
+				? regionEconomyApi->PlaceConstructionSite(regionEconomySnapshot->revision, type->name, cell)
+				: regionEconomyApi->PlaceBuilding(regionEconomySnapshot->revision, type->name, cell);
+			if (TrackNativeSubmission(submission,
+				std::string(asSite ? "construction site " : "") + type->name + " at (" + std::to_string(cell.x) + ", " + std::to_string(cell.z) + ")"))
 			{
 				nativeConstructionMode = NativeConstructionMode::None;
 				ClearNativeConstructionPreview();
