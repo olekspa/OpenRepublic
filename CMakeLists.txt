@@ -23,6 +23,11 @@ add_subdirectory(src/economy)
 add_subdirectory(src/procgeo)
 add_subdirectory(src/runtime)
 add_subdirectory(src/compat)
+
+# Explicit local-only read-only probe. Never place its input or output in Git.
+add_executable(OpenRepublicCatalogCoverageProbe EXCLUDE_FROM_ALL tools/catalog_coverage_probe.cpp)
+target_link_libraries(OpenRepublicCatalogCoverageProbe PRIVATE OpenRepublicCompat)
+target_compile_features(OpenRepublicCatalogCoverageProbe PRIVATE cxx_std_17)
 add_subdirectory(src/economy_api)
 
 # The stdio Agent API adapter reuses the same MIT-licensed JSON header pinned
