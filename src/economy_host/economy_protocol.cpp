@@ -1234,7 +1234,8 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     out = Json{{"errorCode", Error(p.error)},    {"handle", std::to_string(h)},
                {"state", State(p.result.state)}, {"failure", Failure(p.result.failure)},
                {"message", p.result.message},    {"buildingId", p.result.building},
-               {"roadId", p.result.road},        {"orderId", p.result.order}};
+               {"roadId", p.result.road},        {"orderId", p.result.order},
+               {"railId", p.result.rail}};
   } else if (method == "compact_history") {
     if (!Fields(req, {"revision", "keepRecent"}, message))
       return invalid(message);

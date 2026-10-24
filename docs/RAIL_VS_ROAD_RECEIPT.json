@@ -1,0 +1,9 @@
+{
+  "scenario": "rail_vs_road",
+  "evidence": "OpenRepublic synthetic economy test",
+  "grainUnits": 1000,
+  "railTicks": 5,
+  "roadTicks": 3881,
+  "railFaster": true,
+  "stateHash": "476904576083757834"
+}

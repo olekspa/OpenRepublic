@@ -13,6 +13,7 @@ using BuildingTypeId = std::uint32_t;
 using VehicleTypeId = std::uint32_t;
 using BuildingId = std::uint32_t;
 using RoadId = std::uint32_t;
+using RailId = std::uint32_t;
 using OrderId = std::uint32_t;
 using VehicleId = std::uint32_t;
 using CommandId = std::uint64_t;
@@ -68,6 +69,7 @@ struct BuildingTypeDef {
     std::vector<StorageDef> storage;
     std::vector<RecipeDef> recipes;
     bool tradePost{};
+    bool station{};
     std::uint64_t housing{};
     std::uint64_t workers{};
     std::vector<RecipeAmount> constructionMaterials;
@@ -78,6 +80,7 @@ struct VehicleTypeDef {
     std::string name;
     std::uint64_t capacity{};
     std::uint32_t cellsPerTick{1};
+    bool railOnly{};
 };
 
 enum class CatalogError : std::uint8_t {
@@ -156,8 +159,10 @@ public:
     /** Adds a positive-capacity, positive-speed vehicle type and returns its dense ID. */
     bool AddVehicleType(std::string_view name, std::uint64_t capacity, std::uint32_t cellsPerTick,
                         VehicleTypeId *outId, CatalogErrorInfo &error);
+    bool SetRailOnly(VehicleTypeId vehicle, bool enabled, CatalogErrorInfo &error);
     bool AddTradePrice(const TradePriceDef &price, CatalogErrorInfo &error);
     bool SetTradePost(BuildingTypeId building, bool enabled, CatalogErrorInfo &error);
+    bool SetStation(BuildingTypeId building, bool enabled, CatalogErrorInfo &error);
     bool SetHousing(BuildingTypeId building, std::uint64_t capacity, CatalogErrorInfo &error);
     bool SetWorkers(BuildingTypeId building, std::uint64_t requirement, CatalogErrorInfo &error);
     bool SetConstruction(BuildingTypeId building, const std::vector<RecipeAmount>& materials,
@@ -253,7 +258,11 @@ enum class CommandFailure : std::uint8_t {
     TradeUnavailable,
     InsufficientTradeStock,
     InsufficientTreasury,
-    TradeRateExceeded
+    TradeRateExceeded,
+    UnknownRail,
+    InvalidRailGeometry,
+    DuplicateRail,
+    RailOnBuilding
 };
 enum class CommandState : std::uint8_t {
     Unknown = 0,
@@ -270,6 +279,7 @@ struct CommandResult {
     BuildingId building{};
     RoadId road{};
     OrderId order{};
+    RailId rail{};
 };
 struct CommandHistorySnapshot {
     CommandId firstRetainedCommandId{1};
@@ -325,6 +335,8 @@ struct RoadSnapshot {
     Cell b{};
     bool enabled{true};
 };
+struct RailSnapshot { RailId id{}; Cell a{}, b{}; };
+enum class HaulMode : std::uint8_t { Road = 0, Rail = 1 };
 enum class HaulState : std::uint8_t {
     Idle = 0,
     ToDestination,
@@ -358,6 +370,7 @@ struct HaulOrderSnapshot {
     HaulFailure failure{HaulFailure::None};
     std::uint64_t cargo{};
     Cell vehicleCell{};
+    HaulMode mode{HaulMode::Road};
 };
 struct UtilityConnectionSnapshot {
     ResourceId resource{};
@@ -396,6 +409,7 @@ struct WorldSnapshot {
     CommandHistorySnapshot commandHistory;
     std::vector<BuildingSnapshot> buildings;
     std::vector<RoadSnapshot> roads;
+    std::vector<RailSnapshot> rails;
     std::vector<VehicleSnapshot> vehicles;
     std::vector<HaulOrderSnapshot> orders;
     std::vector<UtilityConnectionSnapshot> utilityConnections;
@@ -405,12 +419,13 @@ struct WorldSnapshot {
     std::uint64_t workersRequired{};
 };
 
-enum class SnapshotCollection : std::uint8_t { Buildings, Roads, Vehicles, Orders, UtilityConnections };
+enum class SnapshotCollection : std::uint8_t { Buildings, Roads, Vehicles, Orders, UtilityConnections, Rails };
 struct WorldSnapshotPage {
     std::uint64_t revision{};
     std::size_t total{}, offset{}, count{};
     std::vector<BuildingSnapshot> buildings;
     std::vector<RoadSnapshot> roads;
+    std::vector<RailSnapshot> rails;
     std::vector<VehicleSnapshot> vehicles;
     std::vector<HaulOrderSnapshot> orders;
     std::vector<UtilityConnectionSnapshot> utilityConnections;
@@ -452,6 +467,8 @@ public:
     CommandId RemoveBuilding(BuildingId building);
     /** Queues one in-bounds axis-aligned unit-step road segment. */
     CommandId BuildRoad(Cell a, Cell b);
+    /** Queues one in-bounds axis-aligned unit-step rail segment. */
+    CommandId BuildRail(Cell a, Cell b);
     /** Queues road state; vehicles re-route or wait if a segment closes. */
     CommandId SetRoadEnabled(RoadId road, bool enabled);
     /** Queues a production enabled-state change. */
@@ -459,6 +476,8 @@ public:
     /** Queues a repeating haul order with one vehicle spawned at source access. */
     CommandId CreateHaulOrder(BuildingId source, BuildingId destination, ResourceId resource,
                               VehicleTypeId vehicleType);
+    CommandId CreateHaulOrder(BuildingId source, BuildingId destination, ResourceId resource,
+                              VehicleTypeId vehicleType, HaulMode mode);
     /** Queues cancellation of an empty order and its vehicle; loaded cargo prevents cancellation. */
     CommandId CancelHaulOrder(OrderId order);
     /** Queues a new destination while preserving the order, vehicle, source, resource, and cargo.

@@ -1,10 +1,21 @@
 # Synthetic rail transport
 
+**VERIFIED (OpenRepublic core/API source and headless tests):** catalog station
+and rail-only vehicle declarations, rail construction, rail-mode hauling,
+conditional world persistence, and typed API queries are implemented. Protocol
+v0 dispatch and JSON fields are added in source, but the host target could not
+be built in this worktree because `nlohmann/json.hpp` is unavailable. The core
+comparison receipt below measures the synthetic rules only.
+
 Rail is an opt-in OpenRepublic economy rule. A catalog may declare a vehicle
 named `train` with its own positive cargo capacity and cells-per-tick speed, and
 mark a building type as a `station`. A train haul must start and end at station
 access cells and follow connected declared rail edges. Roads and rails are
 separate networks. Truck orders continue to use road edges.
+
+The catalog marks a rail-only vehicle with the optional `mode rail` suffix,
+for example `vehicle train capacity 1000 speed 4 mode rail`; these are
+OpenRepublic-authored values, not original-game capacity or speed claims.
 
 `build_rail` adds one orthogonally adjacent rail edge between cells, using the
 same integer grid coordinate convention as `build_road`. Train movement and
@@ -23,6 +34,11 @@ The fixture uses independent source/destination pairs, fixed declared vehicle
 capacities and speeds, and disables the source recipes after their initial
 stock is produced. It is a comparison of these authored synthetic rules, not a
 general performance claim.
+
+The headless core test receipt is recorded in
+[`RAIL_VS_ROAD_RECEIPT.json`](RAIL_VS_ROAD_RECEIPT.json): 1,000 grain arrived
+by train in 5 ticks and by truck in 3,881 ticks. The state hash is for that
+synthetic test run and is not a WRSR state fingerprint.
 
 ## WRSR evidence boundary
 

@@ -26,9 +26,10 @@ constexpr std::uint32_t MaxStepTicks = 100000;
 
 enum class Action : std::uint8_t {
     QueryWorld = 1, QueryCatalog, ExplainBuilding, Step, PlaceBuilding, RemoveBuilding,
-    BuildRoad, BuildRail, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, CancelHaulOrder,
+    BuildRoad, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, CancelHaulOrder,
     PollCommand, ReadEvents, RetargetHaulOrder, ExportCheckpoint, CompactCommandHistory,
-    ConnectUtility, DisconnectUtility, QueryUtilityDiagnostics, TradeExport, TradeImport, PlaceConstructionSite
+    ConnectUtility, DisconnectUtility, QueryUtilityDiagnostics, TradeExport, TradeImport, PlaceConstructionSite,
+    BuildRail
 };
 struct Permissions {
     bool query{true};
