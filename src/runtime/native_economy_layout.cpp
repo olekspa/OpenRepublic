@@ -178,7 +178,13 @@ bool BuildNativeEconomyScenePlan(const economy::WorldSnapshot &snapshot,
         if (!std::isfinite(center.x) || !std::isfinite(center.z)) {
             return Fail("native scene building transform exceeds finite display coordinates", error);
         }
-        const double height = BuildingHeight(type->width, type->depth);
+        double height = BuildingHeight(type->width, type->depth);
+        if (building->constructionSite && building->constructionState < 2) {
+            // OpenRepublic presentation: a site rises from a quarter height (foundation) to full height
+            // as its synthetic construction progress goes from 0 to 1.
+            const double progress = std::min(1.0, std::max(0.0, building->constructionProgress));
+            height *= 0.25 + 0.75 * progress;
+        }
         plan.buildings.push_back({building->id, building->type, center.x, center.z, width, depth, height});
         displayBounds.Include(center.x - width * 0.5, center.z - depth * 0.5,
                               center.x + width * 0.5, center.z + depth * 0.5);

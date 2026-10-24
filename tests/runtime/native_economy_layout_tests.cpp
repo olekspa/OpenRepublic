@@ -260,6 +260,30 @@ int main() {
               unchanged.cameraDistance == 456.0,
           "finite but overflowing fixed transform rejects without mutating output");
 
+    {
+        economy::WorldSnapshot sites;
+        sites.gridWidth = 32;
+        sites.gridDepth = 32;
+        sites.buildings.push_back(Building(1, 1, {4, 4}, {4, 3}));
+        sites.buildings.push_back(Building(2, 1, {12, 4}, {12, 3}));
+        sites.buildings.push_back(Building(3, 1, {20, 4}, {20, 3}));
+        sites.buildings[1].constructionSite = true;
+        sites.buildings[1].constructionState = 0;
+        sites.buildings[1].constructionProgress = 0.0;
+        sites.buildings[2].constructionSite = true;
+        sites.buildings[2].constructionState = 1;
+        sites.buildings[2].constructionProgress = 0.5;
+        runtime::NativeEconomyScenePlan sitePlan;
+        Check(runtime::BuildNativeEconomyScenePlan(sites, catalog, sitePlan, error), "site plan builds: " + error);
+        const double full = sitePlan.buildings[0].height;
+        Check(Near(sitePlan.buildings[1].height, full * 0.25) && Near(sitePlan.buildings[2].height, full * 0.625),
+              "construction sites render at a progress-scaled height");
+        sites.buildings[1].constructionState = 2;
+        Check(runtime::BuildNativeEconomyScenePlan(sites, catalog, sitePlan, error) &&
+                  Near(sitePlan.buildings[1].height, full),
+              "a finished site renders at full height");
+    }
+
     if (failures != 0) {
         std::cerr << failures << " native-economy-layout test(s) failed\n";
         return 1;

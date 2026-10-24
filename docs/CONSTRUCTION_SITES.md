@@ -25,3 +25,7 @@ These are OpenRepublic policy choices, not claims about WRSR delivery, work, mat
 ## Desktop sandbox (opt-in)
 
 `OpenRepublic.exe --native-economy --native-construction-sites` starts the native sandbox with `MakeSyntheticConstructionCatalog()`: the usual farm, mill, bakery and market plus a sawmill and a brickworks that produce planks and bricks, with `build` requirements on the mill (planks 6, bricks 4, work 8), bakery (planks 4, bricks 6, work 10) and market (planks 4, work 6). In that mode the construction tool places those three types as sites; the inspector shows state, progress and held/required materials. OpenRepublic synthetic rules; WRSR parity UNKNOWN. The default sandbox catalog and its hashes are unchanged.
+
+## In-scene presentation
+
+In the native desktop scene a site is drawn at a quarter of the building's display height when it waits for materials and rises linearly to full height as its progress goes from 0 to 1; a finished site draws at full height (OpenRepublic presentation only, produced by the headless-tested scene plan in src/runtime).
