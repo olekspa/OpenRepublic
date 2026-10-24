@@ -3,7 +3,7 @@
   "id": "rail_vs_road",
   "name": "Rail versus road: 1000 units of grain",
   "description": "OpenRepublic synthetic comparison: move 1000 grain units between separate source and destination pairs using a truck over roads and a train between stations over declared rail.",
-  "catalog": "openrepublic-economy 1\nresource grain\nutility power\nbuilding rail_source 1 1\n  store grain 1000\n  recipe fill every 1 out grain:1000\n  station\nend\nbuilding rail_destination 1 1\n  store grain 1000\n  station\nend\nbuilding road_source 1 1\n  store grain 1000\n  recipe fill every 1 out grain:1000\nend\nbuilding road_destination 1 1\n  store grain 1000\nend\nvehicle truck capacity 10 speed 1\nvehicle train capacity 1000 speed 4 mode rail\n",
+  "catalog": "openrepublic-economy 1\nresource grain\nutility power\nbuilding rail_source 1 1\n  store grain 1000\n  recipe fill every 1 out grain:1000\n  station\nend\nbuilding rail_destination 1 1\n  store grain 1000\n  station\nend\nbuilding road_source 1 1\n  store grain 1000\n  recipe fill every 1 out grain:1000\nend\nbuilding road_destination 1 1\n  store grain 1000\nend\nvehicle truck capacity 50 speed 1\nvehicle train capacity 100 speed 3 mode rail\n",
   "roads": [
     {"a":{"x":1,"z":3},"b":{"x":2,"z":3}},
     {"a":{"x":2,"z":3},"b":{"x":3,"z":3}},

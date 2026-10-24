@@ -28,6 +28,7 @@ They do not contain game data.
 | `power_and_build` | Generator, powered mine, smelter and timber-fed `power_line` site | The site produces wire after construction; the smelter requires wire, ore and connected power. The receipt reports site completion and final-tick utility throughput/deficit. The power links are explicit fixture connections; the `power_line` site is a synthetic production prerequisite. |
 | `austerity` | Grain trade post, local farm/mill/bakery chain and second mill site | Limited exports fund imports for both the trade post's flour recipe and site materials. At short horizons, the baseline can spend on inputs while the second mill remains waiting for materials; longer runs may eventually complete it. |
 | `rail_vs_road` | Independent 20-edge road and rail routes, two producer/destination pairs, and one train | The scorer moves 1,000 grain units by truck and train, records destination arrival ticks, and requires the rail run to finish first. See [RAIL.md](RAIL.md) for synthetic-rule boundaries and the explicit-transfer limitation. |
+| `water_for_brewery` | Water tower linked to two breweries | The tower generates 4 water units per tick for 6 units of brewery demand; stable recipe order lets the first brewery consume 3 while the second remains short, exposing both throughput and unmet demand. |
 
 The building coordinates are origins on the host grid. Each building's access
 cell is one cell north (`x`, `z - 1`); the fixtures place that cell on a road.
@@ -132,42 +133,64 @@ claim is made.
 ## Baseline scores across the fixture suite
 
 The following **OBSERVED** results came from the rule-based baseline autopilot
-in this checkout, using the headless Release host and 16 requested autopilot
-ticks per scenario. The output score is the inventory total in whole units, or
-`throughputUnits / unmetDemandUnits` with the infrastructure-count proxy for
-utility scenarios. Inventory totals can be fractional because the exact host
-inventory is stored in micro-units. Final ticks vary when the autopilot advances
-extra ticks while attempting orders or placements.
+using the Windows Release headless host with scenario/economy sources matching
+revision `5dbdcedc7cddc9066676698ba8a5b72fb1d72321`, with
+`--ticks 600 --exact-ticks` and the scorer's default planning-round behavior.
+The exception is
+`rail_vs_road`, whose dedicated scorer measures arrival within its declared
+5,000 tick comparison horizon. Utility values are final-tick
+`throughputUnits / unmetDemandUnits`; construction status is the number of
+completed sites. Inventory totals are shown in whole units with the exact
+micro-unit amount in parentheses. `N/A` means the fixture declares no binary
+completion objective; it was loaded, run, and scored. These are synthetic
+baseline results, not WRSR results.
 
-| Scenario | Metric | Baseline score | Final tick |
-| --- | --- | ---: | ---: |
-| `flour_oversupply` | Stored non-raw units | 0.000006 (6 micro-units) | 17 |
-| `full_chain` | Stored non-raw units | 0.000004 (4 micro-units) | 17 |
-| `grain_shortage` | Stored non-raw units | 0.000009 (9 micro-units) | 20 |
-| `road_gap` | Stored non-raw units | 0 (0 micro-units) | 17 |
-| `power_deficit` | Throughput / unmet; cost | 2 / 2; cost 5 | 18 |
-| `unconnected_consumer` | Throughput / unmet; cost | 0 / 2; cost 2 | 17 |
-| `overbuilt_generator` | Throughput / unmet; cost | 2 / 0; cost 3 | 18 |
-| `powered_chain_link_gap` | Throughput / unmet; cost | 2 / 2; cost 12 | 18 |
-| `powered_chain_road_and_link_gap` | Throughput / unmet; cost | 2 / 0; cost 7 | 18 |
-| `import_missing_input` | Stored non-raw; treasury | 0.000018 (18 micro-units); treasury 0 | 19 |
-| `export_surplus_for_power` | Throughput / unmet; cost; treasury | 1 / 0; cost 10; treasury 1 | 20 |
-| `growth_town` | Fed residents; completed sites; treasury | 2; 1/1; 28 | 17 |
-| `power_and_build` | Completed sites; power throughput / unmet | 1/1; 4 / 0 | 18 |
-| `austerity` | Completed sites; treasury; stored non-raw units | 0/1; 6; 0.000027 | 17 |
+| Scenario | Baseline score | Completion status |
+| --- | --- | --- |
+| `austerity` | Sites 1/1; treasury 1,518; non-raw 0.000162 | Complete at tick 61; shorter horizons can end before the site completes. |
+| `build_a_mill` | Stored non-raw 0 (0 micro-units) | Stalled: no material source. |
+| `build_a_mill_with_supply` | Sites 1/1 | Complete at tick 21. |
+| `build_two_mills_with_supply` | Sites 2/2 | Complete at tick 21. |
+| `coal_to_heat` | Heat 4; both trucks parked | Complete (scripted controller). |
+| `export_surplus_for_power` | Throughput/unmet 0/1; cost 10; treasury 0 | Stalled: no funded fuel flow at the final tick. |
+| `farm_seasons` | Stored non-raw 0 (0 micro-units) | N/A. |
+| `flour_oversupply` | Stored non-raw 0.000008 (8 micro-units) | N/A. |
+| `full_chain` | Stored non-raw 0.000011 (11 micro-units) | N/A. |
+| `grain_export_for_power` | Stored non-raw 0 (0 micro-units); treasury 0 | Stalled: no export completed. |
+| `grain_shortage` | Stored non-raw 0.000014 (14 micro-units) | N/A. |
+| `growth_town` | Fed residents 2; sites 1/1; treasury 2,318 | Partial: market complete; 2 of 4 authored housing places fed. |
+| `heated_housing` | Throughput/unmet 2/0; cost 3 | Active heat delivery. |
+| `import_missing_input` | Stored non-raw 0 (0 micro-units); treasury 0 | Stalled: no import funds. |
+| `overbuilt_generator` | Throughput/unmet 0/0; cost 3; generation 8 | Scored; no completion objective. |
+| `powered_chain_link_gap` | Throughput/unmet 0/2; cost 12 | Stalled: smelter demand is isolated from supply. |
+| `powered_chain_road_and_link_gap` | Throughput/unmet 0/0; cost 7 | Stalled before eligible power demand; ore route remains disconnected. |
+| `power_and_build` | Sites 1/1; throughput/unmet 0/0 | Complete at tick 12; final-tick power flow is zero. |
+| `power_deficit` | Throughput/unmet 0/0; cost 5 | Scored; no eligible demand at the final tick. |
+| `rail_vs_road` | Grain arrival: rail 123 ticks; road 760 ticks | Complete; rail is 6.2× faster in this fixture. |
+| `road_gap` | Stored non-raw 0 (0 micro-units) | Stalled: disconnected road fragments. |
+| `unconnected_consumer` | Throughput/unmet 0/2; cost 2 | Stalled: consumer remains outside the generator network. |
+| `understaffed_mine` | Stored non-raw 0 (0 micro-units) | Scored; authored workforce cannot satisfy mine staffing. |
+| `water_for_brewery` | Throughput/unmet 3/3; cost 5 | Partial water supply: 4 generated, 6 requested, 3 consumed. |
 
-The combined baseline results used 16 requested controller ticks,
-`--exact-ticks`, and 16 planning rounds. **OBSERVED (synthetic host, 24 October
-2026):** growth_town completed its market and exported grain to fund
-trade-material imports, but the final population total was 2 of the four
-authored housing places. The power_and_build baseline completed its power-line
-production prerequisite and ended with power throughput 4 and no eligible
-unmet demand. The austerity baseline queued trade and haul actions but left the
-second mill waiting for materials at tick 17. A separate 64-tick run completed
-the site, so this is a short-horizon budget stall rather than a permanent
-deadlock. Repeated 64-tick runs of each combined ID produced identical
-`scoreHash` and `stateHash` values. These observations apply only to the current
-OpenRepublic host, authored catalogs, rule-based controller and horizons.
+The 600-tick observations update the earlier short-horizon results:
+`austerity` eventually completes its second mill, while `growth_town` still
+feeds only 2 of 4 housing places. `power_and_build` completes its site but its
+final tick has no power flow. Utility scores are final-tick measurements, so a
+zero can reflect an idle, blocked, or exhausted chain at that horizon; it is
+not a cumulative production total. A bounded integration test loads all 24
+shipped scenario files, runs each twice, and checks that their score hashes
+repeat. These observations apply only to the current OpenRepublic host,
+authored catalogs, rule-based controller and horizons.
+
+The earlier `water_for_brewery` fixture had one brewery with a 24-unit beer
+store. The explicit water link and recipe were present, but the brewery's
+output store filled; the synthetic recipe stock-room check then made it
+ineligible to request utility water. The refreshed fixture uses two breweries
+with larger beer stores and links both to one tower. Their combined demand is 6
+water per tick against 4 generated: at the reported final tick, the first
+brewery consumes 3 and the second is left short, for throughput 3 and unmet
+demand 3. This demonstrates the authored utility chain and its finite supply
+limit; it says nothing about WRSR utility behavior.
 
 The `rail_vs_road` receipt is produced by its dedicated deterministic scorer
 path, not by the baseline autopilot. It records elapsed ticks until each
@@ -176,8 +199,9 @@ This is a synthetic fixture result; it is not a speed, capacity, route, or
 parity claim about WRSR. Run it with the same command form as other scenarios,
 for example `--scenario rail_vs_road --ticks 5000`.
 
-The last two scenarios leave their initial utility-link configuration unchanged;
-the road-and-link fixture also retains its three disconnected road segments.
+`powered_chain_link_gap` and `powered_chain_road_and_link_gap` leave their
+initial utility-link configuration unchanged; the road-and-link fixture also
+retains its three disconnected road segments.
 The autopilot creates one ore-hauling order in each. In the connected-road
 fixture, eligible smelter demand remains unmet because the autopilot does not
 add a power link. In the road-and-link fixture, the ore remains unreachable

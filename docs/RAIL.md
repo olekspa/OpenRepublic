@@ -14,7 +14,7 @@ access cells and follow connected declared rail edges. Roads and rails are
 separate networks. Truck orders continue to use road edges.
 
 The catalog marks a rail-only vehicle with the optional `mode rail` suffix,
-for example `vehicle train capacity 1000 speed 4 mode rail`; these are
+for example `vehicle train capacity 100 speed 3 mode rail`; these are
 OpenRepublic-authored values, not original-game capacity or speed claims.
 
 `build_rail` adds one orthogonally adjacent rail edge between cells, using the
@@ -37,10 +37,20 @@ simulation time to measure the slow truck route; the generic `--ticks` budget
 still applies to other scenario metrics. It is a comparison of these authored
 synthetic rules, not a general performance claim.
 
-The headless host scenario receipt is recorded in
-[`RAIL_VS_ROAD_RECEIPT.json`](RAIL_VS_ROAD_RECEIPT.json): 1,000 grain arrived
-by train in 4 ticks and by truck in 3,880 ticks. Its scenario, score, and state
-hashes identify this synthetic scorer run; none is a WRSR state fingerprint.
+The fixture uses a 100-unit train at 3 cells per tick and a 50-unit truck at
+1 cell per tick. Both routes span 20 edges. The capacity ratio is 2:1 and the
+speed ratio is 3:1, so a roughly sixfold rail advantage is the expected scale
+before route-endpoint and discrete-tick effects. This deliberately avoids a
+single full-load train trip against hundreds of small truck trips. These are
+fixture tuning values for a bounded synthetic comparison, not estimates of
+real vehicle capacities or speeds.
+
+**OBSERVED (OpenRepublic Windows Release host, scenario/economy sources matching revision
+`5dbdcedc7cddc9066676698ba8a5b72fb1d72321`, 24 October 2026):** the refreshed
+receipt records 1,000 grain arriving by train in 123 ticks and by truck in 760
+ticks, a 6.2× rail advantage. The scenario, score, and state hashes in
+[`RAIL_VS_ROAD_RECEIPT.json`](RAIL_VS_ROAD_RECEIPT.json) identify this fixture
+and host run only; none is a WRSR state fingerprint.
 
 ## WRSR evidence boundary
 
