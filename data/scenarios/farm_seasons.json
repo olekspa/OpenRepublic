@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "farm_seasons",
+  "name": "Farm seasons",
+  "description": "OpenRepublic synthetic demonstration of catalog-declared seasonal farm output over a fixed 360-day calendar. All recipe amounts and season percentages are authored fixture data, not WRSR behavior.",
+  "catalog": "openrepublic-economy 1\nresource grain\nutility power\ncalendar ticks_per_day 1 start_year 1980 start_day 1\nbuilding farm 1 1\n  store grain 1000\n  recipe harvest every 1 out grain:10\n  season spring 50\n  season summer 150\n  season autumn 100\n  season winter 0\nend\n",
+  "roads": [],
+  "buildings": [
+    { "type": "farm", "x": 2, "z": 2 }
+  ],
+  "score": { "metric": "stored_non_raw_units" }
+}

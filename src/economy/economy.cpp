@@ -1,4 +1,5 @@
-﻿#include "openrepublic/economy/economy.h"
+#include "openrepublic/economy/economy.h"
+#include "openrepublic/economy/calendar.h"
 
 #include <algorithm>
 #include <atomic>
@@ -420,10 +421,12 @@ bool Inputs(const Building &b, const BuildingTypeDef &t, const RecipeDef &r, Res
     }
     return true;
 }
-bool Room(const Building &b, const BuildingTypeDef &t, const RecipeDef &r, ResourceId &full) {
+bool Room(const Building &b, const BuildingTypeDef &t, const RecipeDef &r, ResourceId &full, std::uint32_t season = 4) {
     for (auto a : r.outputs) {
         auto i = Slot(t, a.resource);
-        if (i >= b.inventory.size() || a.amount > t.storage[i].capacity - b.inventory[i]) {
+        const auto percent = season < r.seasonalOutputPercent.size() ? r.seasonalOutputPercent[season] : 100;
+        const auto amount = ApplySeasonPercent(a.amount, percent);
+        if (i >= b.inventory.size() || amount > t.storage[i].capacity - b.inventory[i]) {
             full = a.resource;
             return false;
         }
@@ -434,9 +437,10 @@ void Consume(Building &b, const BuildingTypeDef &t, const RecipeDef &r) {
     for (auto a : r.inputs)
         b.inventory[Slot(t, a.resource)] -= a.amount;
 }
-void Produce(Building &b, const BuildingTypeDef &t, const RecipeDef &r) {
+void Produce(Building &b, const BuildingTypeDef &t, const RecipeDef &r, std::uint32_t season = 4) {
+    const auto percent = season < r.seasonalOutputPercent.size() ? r.seasonalOutputPercent[season] : 100;
     for (auto a : r.outputs)
-        b.inventory[Slot(t, a.resource)] += a.amount;
+        b.inventory[Slot(t, a.resource)] += ApplySeasonPercent(a.amount, percent);
 }
 std::uint64_t SaturatingAdd(std::uint64_t a, std::uint64_t b);
 std::vector<std::uint64_t> AssignedWorkers(const State &s) {
@@ -474,6 +478,8 @@ bool StaffedThisTick(const State &s, const BuildingTypeDef &type, std::uint64_t 
     return phase >= type.workers - assigned;
 }
 void Production(State &s, Building &b, std::uint64_t assigned) {
+    const auto date = CalendarAt(s.catalog->Calendar(), s.tick);
+    const auto currentSeason = s.catalog->Calendar().ticksPerDay ? date.season : 4;
     if (b.constructionSite) return;
     const auto *t = s.catalog->BuildingType(b.type);
     b.stall = {b.id, StallReason::MissingInput, InvalidResourceId, 0};
@@ -493,8 +499,8 @@ void Production(State &s, Building &b, std::uint64_t assigned) {
                 ++b.remaining[i];
             if (b.remaining[i] >= interval) {
                 ResourceId x{};
-                if (Room(b, *t, r, x)) {
-                    Produce(b, *t, r);
+                if (Room(b, *t, r, x, currentSeason)) {
+                    Produce(b, *t, r, currentSeason);
                     b.remaining[i] = 0;
                     ++b.completed[i];
                 } else {
@@ -512,7 +518,7 @@ void Production(State &s, Building &b, std::uint64_t assigned) {
                 mr = x;
             continue;
         }
-        if (!Room(b, *t, r, x)) {
+        if (!Room(b, *t, r, x, currentSeason)) {
             full = true;
             if (fr == InvalidResourceId)
                 fr = x;
@@ -522,7 +528,7 @@ void Production(State &s, Building &b, std::uint64_t assigned) {
         b.remaining[i] = 1;
         running = true;
         if (interval == 1) {
-            Produce(b, *t, r);
+            Produce(b, *t, r, currentSeason);
             b.remaining[i] = 0;
             ++b.completed[i];
         }
@@ -991,12 +997,16 @@ bool StockInputs(const State &s, const Building &b, const BuildingTypeDef &type,
 }
 bool StockRoom(const State &s, const Building &b, const BuildingTypeDef &type, const RecipeDef &recipe,
                ResourceId &full) {
+    const auto date = CalendarAt(s.catalog->Calendar(), s.tick);
+    const auto season = s.catalog->Calendar().ticksPerDay ? date.season : 4;
     for (const auto amount : recipe.outputs) {
         const auto *resource = s.catalog->Resource(amount.resource);
         if (resource && resource->utility)
             continue;
         const auto slot = Slot(type, amount.resource);
-        if (slot >= b.inventory.size() || amount.amount > type.storage[slot].capacity - b.inventory[slot]) {
+        const auto percent = season < recipe.seasonalOutputPercent.size() ? recipe.seasonalOutputPercent[season] : 100;
+        const auto produced = ApplySeasonPercent(amount.amount, percent);
+        if (slot >= b.inventory.size() || produced > type.storage[slot].capacity - b.inventory[slot]) {
             full = amount.resource;
             return false;
         }
@@ -1011,10 +1021,12 @@ void ConsumeStock(const State &s, Building &b, const BuildingTypeDef &type, cons
     }
 }
 void ProduceStock(const State &s, Building &b, const BuildingTypeDef &type, const RecipeDef &recipe) {
+    const auto date = CalendarAt(s.catalog->Calendar(), s.tick);
+    const auto season = s.catalog->Calendar().ticksPerDay ? date.season : 4;
+    const auto percent = season < recipe.seasonalOutputPercent.size() ? recipe.seasonalOutputPercent[season] : 100;
     for (const auto amount : recipe.outputs) {
         const auto *resource = s.catalog->Resource(amount.resource);
-        if (!(resource && resource->utility))
-            b.inventory[Slot(type, amount.resource)] += amount.amount;
+        if (!(resource && resource->utility)) b.inventory[Slot(type, amount.resource)] += ApplySeasonPercent(amount.amount, percent);
     }
 }
 using UtilityBudgetKey = std::pair<ResourceId, BuildingId>;
@@ -1192,7 +1204,10 @@ UtilityDiagnostics UtilityProductionPhase(State &s) {
                     continue;
                 const auto &byBuilding = components.at(output.resource);
                 const auto component = byBuilding.at(building.id);
-                budget[{output.resource, component}].Add(output.amount);
+                const auto date = CalendarAt(s.catalog->Calendar(), s.tick);
+                const auto season = s.catalog->Calendar().ticksPerDay ? date.season : 4;
+                const auto percent = season < recipe.seasonalOutputPercent.size() ? recipe.seasonalOutputPercent[season] : 100;
+                budget[{output.resource, component}].Add(ApplySeasonPercent(output.amount, percent));
             }
             ++building.completed[ri];
         }
@@ -1452,6 +1467,12 @@ std::uint64_t Hash(const State &s) {
     HashU(h, s.nextOrder);
     HashU(h, s.nextVehicle);
     HashU(h, s.nextCommand);
+    if (s.catalog->Calendar().ticksPerDay) {
+        HashS(h, "openrepublic.synthetic-calendar.v1");
+        HashU(h, s.catalog->Calendar().ticksPerDay); HashU(h, s.catalog->Calendar().startYear); HashU(h, s.catalog->Calendar().startDay);
+        for (const auto &type : s.catalog->BuildingTypes()) for (const auto &recipe : type.recipes)
+            for (auto percent : recipe.seasonalOutputPercent) HashU(h, percent);
+    }
     const bool populationDeclared = s.catalog->Food().resource != InvalidResourceId ||
         std::any_of(s.catalog->BuildingTypes().begin(), s.catalog->BuildingTypes().end(),
                     [](const BuildingTypeDef &type) { return type.housing || type.workers; });
@@ -1607,6 +1628,7 @@ const std::vector<VehicleTypeDef> &Catalog::VehicleTypes() const noexcept {
     return vehicleTypes_;
 }
 const FoodDef &Catalog::Food() const noexcept { return food_; }
+const CalendarDef &Catalog::Calendar() const noexcept { return calendar_; }
 bool Catalog::FindResource(std::string_view n, ResourceId &i) const noexcept {
     for (const auto &x : resources_)
         if (Same(n, x.name)) {
@@ -1710,6 +1732,22 @@ bool CatalogBuilder::SetConstruction(BuildingTypeId building, const std::vector<
     }
     auto& type = draft_.buildingTypes_[building];
     type.constructionMaterials = materials; type.constructionWorkTicks = workTicks; e = {}; return true;
+}
+bool CatalogBuilder::SetCalendar(const CalendarDef &c, CatalogErrorInfo &e) {
+    if (!c.ticksPerDay || c.ticksPerDay > 100000 || !c.startYear || !c.startDay || c.startDay > 360 || draft_.calendar_.ticksPerDay) { CatError(e, CatalogError::InvalidAmount, "calendar requires positive bounded ticks/day, year, and day 1..360"); return false; }
+    draft_.calendar_ = c; e = {}; return true;
+}
+bool CatalogBuilder::SetSeasonalOutput(BuildingTypeId b, std::string_view recipe, std::string_view season, std::uint32_t percent, CatalogErrorInfo &e) {
+    if (b >= draft_.buildingTypes_.size() || percent > 10000) { CatError(e, CatalogError::InvalidAmount, "invalid seasonal percentage"); return false; }
+    static constexpr std::string_view names[] = {"spring", "summer", "autumn", "winter"};
+    std::size_t index=4; for (std::size_t i=0;i<4;++i) if (season==names[i]) index=i;
+    auto &recipes=draft_.buildingTypes_[b].recipes;
+    if(index==4 || recipes.empty() || recipes.back().name!=recipe) { CatError(e, CatalogError::InvalidRecipeName, "season must follow its recipe and name a known season"); return false; }
+    auto &values=recipes.back().seasonalOutputPercent;
+    auto &declared=recipes.back().seasonalOutputDeclared;
+    if(values.empty()) { values.assign(4,100); declared.assign(4,0); }
+    if(declared[index]) { CatError(e, CatalogError::DuplicateRecipe, "duplicate seasonal modifier"); return false; }
+    values[index]=percent; declared[index]=1; e={}; return true;
 }
 bool CatalogBuilder::SetFood(ResourceId resource, std::uint64_t amount, std::uint32_t interval, CatalogErrorInfo &e) {
     if (resource >= draft_.resources_.size() || draft_.resources_[resource].utility || !amount || !interval ||
@@ -1895,6 +1933,8 @@ bool CatalogBuilder::AddVehicleType(std::string_view n, std::uint64_t cap, std::
     return true;
 }
 bool CatalogBuilder::Build(Catalog &out, CatalogErrorInfo &e) const {
+    for (const auto &type : draft_.buildingTypes_) for (const auto &recipe : type.recipes)
+        if (!recipe.seasonalOutputDeclared.empty() && !draft_.calendar_.ticksPerDay) { CatError(e, CatalogError::InvalidAmount, "seasonal recipe modifiers require a declared calendar"); return false; }
     out = draft_;
     e = {};
     return true;
@@ -1916,6 +1956,7 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
     BuildingTypeId current = InvalidBuildingTypeId;
     std::uint32_t line = 0;
     bool header = false, closed = true;
+    std::string lastRecipe;
     std::size_t pos = 0;
     while (pos <= text.size()) {
         auto end = text.find('\n', pos);
@@ -1946,6 +1987,11 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
             if (w[0] == "end" && w.size() == 1) {
                 current = InvalidBuildingTypeId;
                 closed = true;
+                continue;
+            }
+            if (w[0] == "season" && w.size() == 3) {
+                std::uint32_t percent{};
+                if (!Unsigned(w[2], percent) || !b.SetSeasonalOutput(current, lastRecipe, w[1], percent, ce)) { ParseErr(e, ParseErrorCode::CatalogInvalid, line, "invalid season directive"); return false; }
                 continue;
             }
             if (w[0] == "tradepost" && w.size() == 1) {
@@ -1995,6 +2041,7 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
                 }
                 RecipeDef r;
                 r.name = w[1];
+                lastRecipe = r.name;
                 r.intervalTicks = interval;
                 enum class Section {
                     None,
@@ -2046,6 +2093,11 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
             }
             ParseErr(e, ParseErrorCode::UnexpectedToken, line, "unexpected building member");
             return false;
+        }
+        if (w[0] == "calendar" && w.size() == 7 && w[1] == "ticks_per_day" && w[3] == "start_year" && w[5] == "start_day") {
+            CalendarDef calendar{};
+            if (!Unsigned(w[2], calendar.ticksPerDay) || !Unsigned(w[4], calendar.startYear) || !Unsigned(w[6], calendar.startDay) || !b.SetCalendar(calendar, ce)) { ParseErr(e, ParseErrorCode::CatalogInvalid, line, ce.message); return false; }
+            continue;
         }
         if ((w[0] == "resource" || w[0] == "utility") && w.size() == 2) {
             const bool added = w[0] == "utility" ? b.AddUtilityResource(w[1], nullptr, ce)
@@ -2112,6 +2164,7 @@ std::string WriteCatalogText(const Catalog &c) {
     std::string o = "openrepublic-economy 1\n";
     for (const auto &r : c.Resources())
         o += std::string(r.utility ? "utility " : "resource ") + r.name + "\n";
+    if (c.Calendar().ticksPerDay) o += "calendar ticks_per_day " + Num(c.Calendar().ticksPerDay) + " start_year " + Num(c.Calendar().startYear) + " start_day " + Num(c.Calendar().startDay) + "\n";
     for (const auto &r : c.Resources()) if (r.tradeDeclared)
         o += "trade " + r.name + " buy " + Num(r.buyPrice) + " sell " + Num(r.sellPrice) + "\n";
     if (c.Food().resource != InvalidResourceId)
@@ -2142,6 +2195,11 @@ std::string WriteCatalogText(const Catalog &c) {
                     o += " " + c.Resource(a.resource)->name + ":" + Num(a.amount);
             }
             o += "\n";
+            if (r.seasonalOutputDeclared.size() == 4) {
+                static constexpr const char *seasons[] = {"spring", "summer", "autumn", "winter"};
+                for (std::size_t i=0;i<4;++i) if (r.seasonalOutputDeclared[i])
+                    o += "  season " + std::string(seasons[i]) + " " + Num(r.seasonalOutputPercent[i]) + "\n";
+            }
         }
         o += "end\n";
     }
@@ -2339,6 +2397,8 @@ CommandId Queue(State &s, Pending p) {
 }
 
 void RefreshStall(State &s, Building &b) {
+    const auto date = CalendarAt(s.catalog->Calendar(), s.tick);
+    const auto currentSeason = s.catalog->Calendar().ticksPerDay ? date.season : 4;
     const auto *t = s.catalog->BuildingType(b.type);
     b.stall = {b.id, b.enabled ? StallReason::Running : StallReason::Disabled, InvalidResourceId, 0};
     if (!b.enabled)
@@ -2356,7 +2416,7 @@ void RefreshStall(State &s, Building &b) {
             b.stall.recipeIndex = static_cast<std::uint32_t>(i);
             return;
         }
-        if (!Room(b, *t, r, x)) {
+        if (!Room(b, *t, r, x, currentSeason)) {
             b.stall.reason = StallReason::OutputFull;
             b.stall.resource = x;
             b.stall.recipeIndex = static_cast<std::uint32_t>(i);
@@ -2524,6 +2584,11 @@ WorldSnapshot World::Snapshot() const {
     o.gridWidth = s.width;
     o.gridDepth = s.depth;
     o.tick = s.tick;
+    if (s.catalog->Calendar().ticksPerDay) {
+        const auto date = CalendarAt(s.catalog->Calendar(), s.tick);
+        o.calendarYear = date.year; o.calendarDay = date.day; o.calendarMonth = date.month;
+        o.calendarSeason = CalendarSeasonName(date.season);
+    }
     o.revision = s.revision;
     o.treasury = s.treasury;
     for (const auto &building : s.buildings)
@@ -2719,6 +2784,7 @@ std::string SaveWorld(const World &w) {
             o += "SITE " + Num(b.id) + " " + Num(b.constructionSite) + " " + Num(b.constructionProgress) + " " + Num(b.constructionSite ? b.constructionStore.size() : 0);
             if (b.constructionSite) for (auto amount : b.constructionStore) o += " " + Num(amount);
             o += "\n";
+
         }
         if (o.size() > MaxWorldSaveBytes)
             return {};

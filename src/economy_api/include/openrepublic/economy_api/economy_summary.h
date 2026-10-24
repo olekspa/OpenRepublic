@@ -26,6 +26,9 @@ struct EconomySummary {
     std::uint64_t workersRequired{};
     bool populationEnabled{};
     bool workforceEnabled{};
+    bool calendarEnabled{};
+    std::uint32_t calendarYear{}, calendarDay{}, calendarMonth{};
+    std::string calendarSeason;
     std::vector<SummaryStock> stock;
     std::vector<SummaryUnservedInput> unservedInputs;
     std::vector<SummaryConstructionSite> constructionSites;

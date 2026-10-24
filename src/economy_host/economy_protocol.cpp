@@ -810,7 +810,11 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                     ? Json(std::to_string(summary.workersRequired)) : Json(nullptr)},
                {"stock", stock},
                {"unservedInputs", unserved}, {"vehicles", summary.vehicles},
-               {"text", summary.text}};
+               {"text", summary.text},
+               {"calendar", summary.calendarEnabled
+                    ? Json{{"year", summary.calendarYear}, {"day", summary.calendarDay},
+                           {"month", summary.calendarMonth}, {"season", summary.calendarSeason}}
+                    : Json(nullptr)}};
     const auto world = api_->QueryWorld();
     if (world.error == economy_api::ErrorCode::None) {
       const auto diagnostics = api_->QueryUtilityDiagnostics(world.world.revision, 0,

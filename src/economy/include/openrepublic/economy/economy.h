@@ -46,7 +46,11 @@ struct RecipeDef {
     std::uint32_t intervalTicks{1};
     std::vector<RecipeAmount> inputs;
     std::vector<RecipeAmount> outputs;
+    // Optional OpenRepublic synthetic output percentages in season order spring, summer, autumn, winter.
+    std::vector<std::uint32_t> seasonalOutputPercent;
+    std::vector<std::uint8_t> seasonalOutputDeclared;
 };
+struct CalendarDef { std::uint32_t ticksPerDay{}, startYear{}, startDay{}; };
 struct FoodDef {
     ResourceId resource{InvalidResourceId};
     std::uint64_t amount{};
@@ -118,6 +122,7 @@ public:
     /** Returns vehicle types in dense immutable ID order. */
     const std::vector<VehicleTypeDef> &VehicleTypes() const noexcept;
     const FoodDef &Food() const noexcept;
+    const CalendarDef &Calendar() const noexcept;
     /** Looks up an exact resource name without modifying the immutable catalog. */
     bool FindResource(std::string_view name, ResourceId &id) const noexcept;
     /** Looks up an exact building type name without modifying the immutable catalog. */
@@ -137,6 +142,7 @@ private:
     std::vector<BuildingTypeDef> buildingTypes_;
     std::vector<VehicleTypeDef> vehicleTypes_;
     FoodDef food_;
+    CalendarDef calendar_;
 };
 
 class CatalogBuilder final {
@@ -164,6 +170,9 @@ public:
                          std::uint32_t workTicks, CatalogErrorInfo &error);
     bool SetFood(ResourceId resource, std::uint64_t amount, std::uint32_t intervalTicks,
                  CatalogErrorInfo &error);
+    bool SetCalendar(const CalendarDef &calendar, CatalogErrorInfo &error);
+    bool SetSeasonalOutput(BuildingTypeId building, std::string_view recipe,
+                           std::string_view season, std::uint32_t percent, CatalogErrorInfo &error);
     /** Resolves a resource name and adds its storage slot. */
     bool AddStorage(BuildingTypeId building, std::string_view resource, std::uint64_t capacity,
                     CatalogErrorInfo &error);
@@ -405,6 +414,8 @@ struct WorldSnapshot {
     std::uint64_t population{};
     std::uint64_t workersAssigned{};
     std::uint64_t workersRequired{};
+    std::uint32_t calendarYear{}, calendarDay{}, calendarMonth{};
+    std::string calendarSeason;
 };
 
 enum class SnapshotCollection : std::uint8_t { Buildings, Roads, Vehicles, Orders, UtilityConnections };
