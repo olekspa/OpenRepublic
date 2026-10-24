@@ -117,13 +117,30 @@ class ScenarioLoaderTests(unittest.TestCase):
             scenario = scenario_score.resolve_scenario(name)
             self.assertEqual(scenario["score"]["metric"], "combined_multi_objective")
             self.assertEqual(scenario["score"]["objectives"], objectives)
-
         malformed = scenario_score.resolve_scenario("growth_town")
         malformed["score"]["objectives"] = [{"unsupported": True}]
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "bad-objectives.json"
             path.write_text(json.dumps(malformed), encoding="utf-8")
             with self.assertRaisesRegex(scenario_score.ScenarioError, "objectives list"):
+                scenario_score.load_scenario(path)
+
+    def test_rail_vs_road_fixture_declares_two_networks_and_1000_unit_receipt(self):
+        scenario = scenario_score.resolve_scenario("rail_vs_road")
+        self.assertEqual(len(scenario["roads"]), 20)
+        self.assertEqual(len(scenario["rails"]), 20)
+        self.assertEqual(scenario["score"]["metric"], "rail_vs_road")
+        self.assertEqual(scenario["score"]["amount"], 1000)
+        self.assertIn("station", scenario["catalog"])
+        self.assertIn("vehicle train capacity 1000 speed 4", scenario["catalog"])
+
+    def test_rail_fixture_rejects_non_adjacent_rail_edge(self):
+        scenario = scenario_score.resolve_scenario("rail_vs_road")
+        scenario["rails"][0]["b"] = {"x": 3, "z": 7}
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "bad_rail.json"
+            path.write_text(json.dumps(scenario), encoding="utf-8")
+            with self.assertRaisesRegex(scenario_score.ScenarioError, "adjacent rail edge"):
                 scenario_score.load_scenario(path)
 
     def test_combined_score_receipt_is_multi_objective_and_deterministic(self):
