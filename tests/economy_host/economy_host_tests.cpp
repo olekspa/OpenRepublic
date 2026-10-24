@@ -229,5 +229,40 @@ int main() {
                     populationSummary["result"]["workersRequired"] == "10",
                 "protocol v0 summary exposes population and worker totals as decimal strings");
   }
+  {
+    economy::CatalogBuilder builder; economy::Catalog depotCatalog; economy::CatalogErrorInfo error;
+    economy::ResourceId coal{}; economy::BuildingTypeId depot{}, border{}, store{}, plant{}; economy::VehicleTypeId truck{};
+    const bool built = builder.AddResource("coal",&coal,error) && builder.AddResource("heat",nullptr,error) &&
+      builder.AddBuildingType("depot",1,1,&depot,error) && builder.SetDepot(depot,true,error) &&
+      builder.AddBuildingType("border",1,1,&border,error) && builder.AddStorage(border,coal,20,error) &&
+      builder.SetTradePost(border,true,error) && builder.AddBuildingType("storage",1,1,&store,error) && builder.AddStorage(store,coal,20,error) &&
+      builder.AddBuildingType("plant",1,1,&plant,error) && builder.AddStorage(plant,coal,20,error) &&
+      builder.AddVehicleType("truck",4,1,&truck,error) && builder.AddFleet(depot,truck,2,error) && builder.Build(depotCatalog,error);
+    ok &= Check(built,"build depot protocol fixture");
+    if (built) {
+      economy::World depotWorld(depotCatalog,20,8); for(int x=1;x<14;++x)depotWorld.BuildRoad({x,2},{x+1,2});
+      depotWorld.PlaceBuilding(depot,{1,3});depotWorld.PlaceBuilding(border,{5,3});depotWorld.PlaceBuilding(store,{9,3});depotWorld.PlaceBuilding(plant,{13,3});
+      depotWorld.Step(); economy_api::EconomyApi api(depotWorld,{true,true}); economy_host::Dispatcher host(economy_host::Role::Controller,api,false,false);
+      auto snapshot=Response(host,Request("depot-world","world"))["result"]["world"];
+      ok &= Check(snapshot["vehicles"].size()==2&&snapshot["vehicles"][0]["ownerDepotId"]==1&&snapshot["vehicles"][0]["parked"],"protocol world exposes owned parked trucks");
+      const auto vehiclePage=Response(host,Request("depot-vehicle-page","world",Json{{"revision",snapshot["revision"]},{"kind","vehicles"},{"offset",0},{"limit",2}}));
+      ok &= Check(vehiclePage["result"]["entities"][0]["ownerDepotId"]==1&&vehiclePage["result"]["entities"][0]["leg"]=="parked","paged vehicle query exposes additive depot fields");
+      const auto fleetSummary=Response(host,Request("depot-summary","summary"))["result"];
+      ok &= Check(fleetSummary["fleet"]["total"]==2&&fleetSummary["fleet"]["parked"]==2,"summary exposes fleet totals");
+      auto command=Json{{"kind","dispatch_truck"},{"vehicle",1},{"source",2},{"destination",3},{"resource","coal"},{"amount","2"}};
+      auto dispatch=Response(host,Request("dispatch","submit",Json{{"revision",snapshot["revision"]},{"command",command}}));
+      auto busy=Response(host,Request("busy","submit",Json{{"revision",snapshot["revision"]},{"command",command}}));
+      ok &= Check(dispatch["ok"]&&dispatch["result"]["errorCode"]=="none","protocol accepts dispatch_truck controller action");
+      ok &= Check(busy["ok"],"busy truck command is queued for authoritative tick-boundary rejection");
+      api.Step();
+      const auto busyResult=Response(host,Request("busy-poll","poll",Json{{"handle",busy["result"]["handle"]}}));
+      ok &= Check(busyResult["result"]["failure"]=="duplicate_order","busy dispatch is rejected by host poll");
+      const auto worldAfter=Response(host,Request("depot-world-after","world"))["result"]["world"];
+      ok &= Check(worldAfter["vehicles"][0]["leg"]=="to_source"&&worldAfter["vehicles"][0]["parked"]==false,"protocol snapshot exposes dispatch leg");
+      const auto noAmount=Json{{"kind","dispatch_truck"},{"vehicle",1},{"source",2},{"destination",3},{"resource","coal"}};
+      const auto defaultAmount=Response(host,Request("dispatch-default-amount","submit",Json{{"revision",worldAfter["revision"]},{"command",noAmount}}));
+      ok &= Check(defaultAmount["ok"]&&defaultAmount["result"]["errorCode"]=="none","dispatch amount is optional");
+    }
+  }
   return ok ? 0 : 1;
 }

@@ -22,6 +22,7 @@ constexpr ResourceId InvalidResourceId = UINT32_MAX;
 constexpr BuildingTypeId InvalidBuildingTypeId = UINT32_MAX;
 constexpr VehicleTypeId InvalidVehicleTypeId = UINT32_MAX;
 constexpr std::size_t MaxWorldSaveBytes = 1024 * 1024;
+constexpr std::uint32_t MaxFleetVehiclesPerDepotType = 4096;
 constexpr std::uint32_t MaxCommandHistoryRetention = 4096;
 constexpr std::uint32_t MaxWorldGridSize = INT32_MAX;
 
@@ -65,6 +66,7 @@ struct ResourceDef {
     std::uint64_t buyPrice{}, sellPrice{};
 };
 struct TradePriceDef { ResourceId resource{InvalidResourceId}; std::uint64_t buyPrice{}, sellPrice{}; };
+struct FleetDef { VehicleTypeId vehicleType{InvalidVehicleTypeId}; std::uint32_t count{}; };
 struct BuildingTypeDef {
     BuildingTypeId id{};
     std::string name;
@@ -73,6 +75,9 @@ struct BuildingTypeDef {
     std::vector<StorageDef> storage;
     std::vector<RecipeDef> recipes;
     bool tradePost{};
+    bool depot{};
+    std::vector<FleetDef> fleet;
+    std::uint32_t loadTicks{1}, unloadTicks{1};
     bool station{};
     std::uint64_t housing{};
     std::uint64_t workers{};
@@ -150,6 +155,7 @@ private:
 
 class CatalogBuilder final {
 public:
+    bool FindVehicleType(std::string_view name, VehicleTypeId &id) const noexcept;
     /** Adds a unique resource and returns its dense ID. */
     bool AddResource(std::string_view name, ResourceId *outId, CatalogErrorInfo &error);
     /** Adds a resource that is supplied through explicit utility connections and cannot be stored or hauled. */
@@ -168,6 +174,9 @@ public:
     bool SetRailOnly(VehicleTypeId vehicle, bool enabled, CatalogErrorInfo &error);
     bool AddTradePrice(const TradePriceDef &price, CatalogErrorInfo &error);
     bool SetTradePost(BuildingTypeId building, bool enabled, CatalogErrorInfo &error);
+    bool SetDepot(BuildingTypeId building, bool enabled, CatalogErrorInfo &error);
+    bool AddFleet(BuildingTypeId building, VehicleTypeId vehicleType, std::uint32_t count, CatalogErrorInfo &error);
+    bool SetHandlingTicks(BuildingTypeId building, std::uint32_t loadTicks, std::uint32_t unloadTicks, CatalogErrorInfo &error);
     bool SetStation(BuildingTypeId building, bool enabled, CatalogErrorInfo &error);
     bool SetHousing(BuildingTypeId building, std::uint64_t capacity, CatalogErrorInfo &error);
     bool SetWorkers(BuildingTypeId building, std::uint64_t requirement, CatalogErrorInfo &error);
@@ -355,6 +364,7 @@ enum class HaulState : std::uint8_t {
     Waiting,
     NoRoute
 };
+enum class VehicleLeg : std::uint8_t { None = 0, ToSource, Loading, ToDestination, Unloading, Returning };
 enum class HaulFailure : std::uint8_t {
     None = 0,
     NoRoute,
@@ -369,6 +379,9 @@ struct VehicleSnapshot {
     Cell cell{};
     std::uint64_t cargo{};
     HaulState state{HaulState::Idle};
+    BuildingId ownerDepot{};
+    VehicleLeg leg{VehicleLeg::None};
+    std::uint32_t legTicksRemaining{};
 };
 struct HaulOrderSnapshot {
     OrderId id{};
@@ -489,6 +502,8 @@ public:
     /** Queues a repeating haul order with one vehicle spawned at source access. */
     CommandId CreateHaulOrder(BuildingId source, BuildingId destination, ResourceId resource,
                               VehicleTypeId vehicleType);
+    CommandId DispatchTruck(VehicleId vehicle, BuildingId source, BuildingId destination, ResourceId resource,
+                            std::uint64_t amount = 0);
     CommandId CreateHaulOrder(BuildingId source, BuildingId destination, ResourceId resource,
                               VehicleTypeId vehicleType, HaulMode mode);
     /** Queues cancellation of an empty order and its vehicle; loaded cargo prevents cancellation. */

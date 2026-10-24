@@ -26,7 +26,7 @@ constexpr std::uint32_t MaxStepTicks = 100000;
 
 enum class Action : std::uint8_t {
     QueryWorld = 1, QueryCatalog, ExplainBuilding, Step, PlaceBuilding, RemoveBuilding,
-    BuildRoad, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, CancelHaulOrder,
+    BuildRoad, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, DispatchTruck, CancelHaulOrder,
     PollCommand, ReadEvents, RetargetHaulOrder, ExportCheckpoint, CompactCommandHistory,
     ConnectUtility, DisconnectUtility, QueryUtilityDiagnostics, TradeExport, TradeImport, PlaceConstructionSite,
     BuildRail
@@ -76,6 +76,9 @@ struct BuildingTypeInfo {
     std::vector<RecipeInfo> recipes;
     std::vector<RecipeAmountInfo> constructionMaterials;
     std::uint32_t constructionWorkTicks{};
+    bool depot{};
+    std::vector<std::pair<std::string, std::uint32_t>> fleet;
+    std::uint32_t loadTicks{1}, unloadTicks{1};
 };
 struct VehicleTypeInfo {
     economy::VehicleTypeId id{};
@@ -128,6 +131,9 @@ struct VehicleView {
     economy::Cell cell{};
     std::uint64_t cargo{};
     economy::HaulState state{economy::HaulState::Idle};
+    economy::BuildingId ownerDepot{};
+    economy::VehicleLeg leg{economy::VehicleLeg::None};
+    std::uint32_t legTicksRemaining{};
 };
 struct OrderView {
     economy::OrderId id{};
@@ -292,6 +298,8 @@ public:
     Submission CreateHaulOrder(std::uint64_t revision, economy::BuildingId source,
         economy::BuildingId destination, const std::string& resource, const std::string& vehicleType,
         economy::HaulMode mode = economy::HaulMode::Road);
+    Submission DispatchTruck(std::uint64_t revision, economy::VehicleId vehicle, economy::BuildingId source,
+        economy::BuildingId destination, const std::string& resource, std::uint64_t amount = 0);
     /** Queues cancellation after revision checks; execution rejects an order carrying cargo. */
     Submission CancelHaulOrder(std::uint64_t revision, economy::OrderId id);
     /** Queues retargeting of a haul order after checking the expected revision. */

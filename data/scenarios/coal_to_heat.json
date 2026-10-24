@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "coal_to_heat",
+  "name": "Border coal to district heat",
+  "description": "A scripted OpenRepublic logistics loop imports coal at a border post, sends one depot truck to storage, then dispatches a second depot truck to a heating plant.",
+  "catalog": "openrepublic-economy 1\nutility power\nresource grain\nresource coal\nresource heat\ntrade grain buy 1 sell 1\ntrade coal buy 1 sell 1\nbuilding border_post 1 1\n  store grain 80\n  store coal 80\n  recipe produce_export_goods every 1 out grain:4\n  tradepost\nend\nbuilding road_depot 1 1\n  depot\n  fleet truck 2\n  handling 2 1\nend\nbuilding storage 1 1\n  store coal 80\n  store heat 20\nend\nbuilding heating_plant 1 1\n  store coal 80\n  store heat 100\n  recipe generate_heat every 1 in coal:1 out heat:1\nend\nvehicle truck capacity 8 speed 1\n",
+  "roads": [
+    {"a":{"x":1,"z":2},"b":{"x":2,"z":2}}, {"a":{"x":2,"z":2},"b":{"x":3,"z":2}},
+    {"a":{"x":3,"z":2},"b":{"x":4,"z":2}}, {"a":{"x":4,"z":2},"b":{"x":5,"z":2}},
+    {"a":{"x":5,"z":2},"b":{"x":6,"z":2}}, {"a":{"x":6,"z":2},"b":{"x":7,"z":2}},
+    {"a":{"x":7,"z":2},"b":{"x":8,"z":2}}, {"a":{"x":8,"z":2},"b":{"x":9,"z":2}},
+    {"a":{"x":9,"z":2},"b":{"x":10,"z":2}}, {"a":{"x":10,"z":2},"b":{"x":11,"z":2}},
+    {"a":{"x":11,"z":2},"b":{"x":12,"z":2}}, {"a":{"x":12,"z":2},"b":{"x":13,"z":2}},
+    {"a":{"x":13,"z":2},"b":{"x":14,"z":2}}
+  ],
+  "buildings": [
+    {"type":"border_post","x":5,"z":3}, {"type":"road_depot","x":1,"z":3},
+    {"type":"storage","x":9,"z":3}, {"type":"heating_plant","x":13,"z":3}
+  ],
+  "controllerScript": [
+    {"method":"trade_export","command":{"buildingId":1,"resource":"grain","amount":"4","rateCap":"4"}},
+    {"method":"trade_import","command":{"buildingId":1,"resource":"coal","amount":"4","rateCap":"4"}},
+    {"method":"submit","command":{"kind":"dispatch_truck","vehicle":1,"source":1,"destination":3,"resource":"coal","amount":"4"}},
+    {"method":"submit","command":{"kind":"dispatch_truck","vehicle":2,"source":3,"destination":4,"resource":"coal","amount":"4"}}
+  ],
+  "score": {"metric":"heat_units"}
+}
