@@ -74,7 +74,7 @@ def load_scenario(path):
         raise ScenarioError(f"invalid scenario JSON: {error}") from error
 
     _object(scenario, "scenario", ("schemaVersion", "id", "name", "description", "roads", "buildings", "score"),
-            ("catalog", "utilityConnections"))
+            ("catalog", "utilityConnections", "controllerScript"))
     _integer(scenario["schemaVersion"], "schemaVersion", 1, 1)
     if not isinstance(scenario["id"], str) or not re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*", scenario["id"]):
         raise ScenarioError("id must be a lowercase underscore-separated identifier")
@@ -136,8 +136,15 @@ def load_scenario(path):
         raise ScenarioError(f"setup may contain at most {MAX_SETUP_COMMANDS} commands")
     _object(scenario["score"], "score", ("metric",), ("objectives",))
     metric = scenario["score"]["metric"]
-    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites", "combined_multi_objective"):
-        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, completed_construction_sites, or combined_multi_objective")
+    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites", "combined_multi_objective", "heat_units"):
+        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, completed_construction_sites, combined_multi_objective, or heat_units")
+    script = scenario.get("controllerScript", [])
+    if not isinstance(script, list) or len(script) > 32:
+        raise ScenarioError("controllerScript must contain at most 32 commands")
+    for index, entry in enumerate(script):
+        _object(entry, f"controllerScript[{index}]", ("method", "command"))
+        if entry["method"] not in ("trade_import", "trade_export", "submit") or not isinstance(entry["command"], dict):
+            raise ScenarioError(f"controllerScript[{index}] must use trade_import, trade_export or submit with a command object")
     if metric != "combined_multi_objective" and "objectives" in scenario["score"]:
         raise ScenarioError("score.objectives is only valid for combined_multi_objective")
     if metric == "utility_multi_objective" and "catalog" not in scenario:
@@ -232,6 +239,13 @@ def score_record(scenario, world, catalog, controller_ticks, summary=None):
                             for building in world["buildings"]
                             for item in building["inventory"] if item["resource"] not in raw)
     breakdown = None
+    if scenario["score"]["metric"] == "heat_units":
+        heat = sum(int(item["amount"]) for building in world["buildings"] for item in building["inventory"] if item["resource"] == "heat")
+        score_micro_units = heat * 1_000_000
+        breakdown = {"heatUnits": heat, "fleetStates": [
+            {"vehicleId": v["id"], "ownerDepotId": v.get("ownerDepotId"), "orderId": v["orderId"],
+             "leg": v.get("leg", "none"), "parked": v.get("parked", False), "cargo": v["cargo"], "cell": v["cell"]}
+            for v in world["vehicles"] if v.get("ownerDepotId") is not None]}
     if scenario["score"]["metric"] == "completed_construction_sites":
         sites = []
         for expected in scenario["buildings"]:
@@ -383,7 +397,32 @@ def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rou
         catalog = host.call("catalog")
         autopilot._check_error(catalog, "catalog")
         _seed(host, scenario)
-        with contextlib.redirect_stdout(io.StringIO()):
+        if scenario.get("controllerScript"):
+            if ticks < len(scenario["controllerScript"]):
+                raise ScenarioError("ticks must cover all scripted controller commands")
+            script_receipt = []
+            for index, entry in enumerate(scenario["controllerScript"]):
+                world_now = autopilot._world(host)
+                command = entry["command"]
+                if entry["method"] in ("trade_import", "trade_export"):
+                    payload = host.call(entry["method"], revision=world_now["revision"], **command)
+                    _check = payload.get("errorCode") == "none" and payload.get("handle")
+                    if not _check: raise RuntimeError(f"script trade_import {index} was not queued: {payload}")
+                    handle = payload["handle"]
+                else:
+                    handle = autopilot._queue_single(host, command, revision=world_now["revision"])
+                    if handle is None: raise RuntimeError(f"script command {index} was not queued")
+                autopilot._step(host, 1)
+                outcome = autopilot._poll_terminal(host, handle)
+                if outcome != "accepted": raise RuntimeError(f"script command {index} was rejected")
+                script_receipt.append({"index": index, "method": entry["method"], "state": outcome})
+            if ticks > len(script_receipt): autopilot._step(host, ticks - len(script_receipt))
+            result = {"world": autopilot._world(host), "script": script_receipt,
+                      "autopilotTotals": {"rounds": 0, "scriptedCommands": len(script_receipt)}}
+            start_tick = int(result["world"]["tick"]) - ticks
+            completion_tick = None
+        else:
+          with contextlib.redirect_stdout(io.StringIO()):
             start_tick = int(autopilot._world(host)["tick"])
             completion_tick = None
             placed = set()
@@ -455,7 +494,7 @@ def main(argv=None):
                         help="cap each round at its scheduled tick despite extra controller actions")
     args = parser.parse_args(argv)
     try:
-        scenario = load_scenario(args.scenario)
+        scenario = resolve_scenario(args.scenario)
         score = run_scenario(args.host, scenario, args.ticks, exact_ticks=args.exact_ticks, rounds=args.rounds)
     except (ScenarioError, RuntimeError, OSError, ValueError) as error:
         print(f"scenario score failed: {error}", file=sys.stderr)

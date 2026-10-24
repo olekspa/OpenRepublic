@@ -171,6 +171,16 @@ class ScenarioLoaderTests(unittest.TestCase):
 
 class ScenarioHostIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
+    def test_coal_to_heat_script_uses_two_owned_trucks_and_scores_heat(self):
+        scenario = scenario_score.resolve_scenario("coal_to_heat")
+        first = scenario_score.run_scenario(HOST_EXE, scenario, 120)
+        repeated = scenario_score.run_scenario(HOST_EXE, scenario, 120)
+        self.assertEqual(first["scoreBreakdown"]["heatUnits"], 4)
+        self.assertEqual(len(first["scoreBreakdown"]["fleetStates"]), 2)
+        self.assertTrue(all(vehicle["parked"] for vehicle in first["scoreBreakdown"]["fleetStates"]))
+        self.assertEqual(first["scoreHash"], repeated["scoreHash"])
+
+    @unittest.skipUnless(HOST_EXE, "host executable argument is required")
     def test_live_jsonl_host_runs_every_fixture_and_repeats_hash(self):
         scenarios = [scenario_score.load_scenario(path)
                      for path in sorted(scenario_score.SCENARIO_DIR.glob("*.json"))]

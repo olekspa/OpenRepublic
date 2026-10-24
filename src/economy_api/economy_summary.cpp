@@ -28,6 +28,10 @@ EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
         result.workforceEnabled = result.workforceEnabled || type.workers != 0;
     }
     result.vehicles = snapshot.vehicles.size();
+    for (const auto &vehicle : snapshot.vehicles) if (vehicle.ownerDepot) {
+        ++result.fleetVehicles;
+        if (!vehicle.order) ++result.parkedFleetVehicles; else ++result.dispatchedFleetVehicles;
+    }
     std::map<economy::ResourceId, std::uint64_t> totals;
     for (const auto& building : snapshot.buildings) {
         if (building.constructionSite) {
@@ -101,6 +105,7 @@ EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
         text << '\n' << "  " << item.resource << " at " << item.buildingType
              << "#" << item.building << ": " << item.held << "/" << item.needed;
     text << '\n' << "Vehicles: " << result.vehicles;
+    if (result.fleetVehicles) text << '\n' << "Depot fleet: " << result.parkedFleetVehicles << " parked, " << result.dispatchedFleetVehicles << " dispatched (" << result.fleetVehicles << " owned)";
     if (!result.constructionSites.empty()) text << '\n' << "Construction sites: " << result.constructionSites.size();
     result.text = text.str();
     return result;

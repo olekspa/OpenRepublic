@@ -197,7 +197,10 @@ for `buildings`, `roads`, `vehicles`, or `orders`.
   (`roadId`, `enabled`), `set_building_enabled` (`buildingId`, `enabled`),
   `create_haul_order` (`source`, `destination`, `resource`, `vehicleType`), and
   `cancel_haul_order` (`orderId`), and `retarget_haul_order` (`orderId`,
-  `destination`). Names resolve exactly through the catalog.
+  `destination`), and `dispatch_truck` (`vehicle`, `source`, `destination`,
+  `resource`, optional decimal-string `amount`). Names resolve exactly through
+  the catalog. `dispatch_truck` binds one currently owned depot truck; busy
+  trucks are rejected at command application.
   A successful submission returns an opaque decimal-string `handle` and
   `queued` state; it does not guarantee eventual command acceptance.
 - `poll`: requires decimal-string `handle`; reports command state, failure,
@@ -221,6 +224,13 @@ for `buildings`, `roads`, `vehicles`, or `orders`.
 
 The simulation is synthetic OpenRepublic content. Its recipes and outcomes are
 not evidence of original-game formulas or behavior.
+
+Depot-owned vehicles add `ownerDepotId`, `parked`, `leg`, and
+`legTicksRemaining` to their vehicle snapshot only when owned by a declared
+depot. The `cell` remains the current per-tick road cell. Summary fleet counts
+are additive and omitted unless the world has a depot fleet. Catalog syntax,
+the six leg values, native save v8, and the scripted coal-to-heat fixture are
+documented in [DEPOTS.md](DEPOTS.md).
 
 ## Cargo-preserving haul replanning
 

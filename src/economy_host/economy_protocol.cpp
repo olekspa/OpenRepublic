@@ -134,13 +134,16 @@ bool Fields(const Json &object, std::initializer_list<const char *> names, std::
   return true;
 }
 
-bool NestedFields(const Json &object, std::initializer_list<const char *> names, std::string &error) {
+bool NestedFields(const Json &object, std::initializer_list<const char *> names, std::string &error,
+                  std::initializer_list<const char *> optional = {}) {
   if (!object.is_object()) {
     error = "command must be a JSON object";
     return false;
   }
   std::set<std::string> allowed;
   for (const auto *name : names)
+    allowed.emplace(name);
+  for (const auto *name : optional)
     allowed.emplace(name);
   for (auto it = object.begin(); it != object.end(); ++it)
     if (!allowed.count(it.key())) {
@@ -422,6 +425,8 @@ std::string Action(economy_api::Action action) {
     return "set_building_enabled";
   case A::CreateHaulOrder:
     return "create_haul_order";
+  case A::DispatchTruck:
+    return "dispatch_truck";
   case A::CancelHaulOrder:
     return "cancel_haul_order";
   case A::RetargetHaulOrder:
@@ -513,6 +518,7 @@ Json Catalog(const economy_api::CatalogView &c) {
                              {"recipes", recipes}};
     if (b.constructionWorkTicks) { item["constructionMaterials"]=construction; item["constructionWorkTicks"]=b.constructionWorkTicks; }
     if (b.tradePost) item["tradePost"] = true;
+    if (b.depot) { item["depot"] = true; item["loadTicks"] = b.loadTicks; item["unloadTicks"] = b.unloadTicks; Json fleet = Json::array(); for (const auto &entry : b.fleet) fleet.push_back(Json{{"vehicleType",entry.first},{"count",entry.second}}); item["fleet"] = std::move(fleet); }
     buildings.push_back(std::move(item));
   }
   for (const auto &v : c.vehicleTypes)
@@ -556,13 +562,21 @@ Json World(const economy_api::WorldView &w) {
   }
   for (const auto &r : w.roads)
     roads.push_back(Json{{"id", r.id}, {"a", Cell(r.a)}, {"b", Cell(r.b)}, {"enabled", r.enabled}});
-  for (const auto &v : w.vehicles)
-    vehicles.push_back(Json{{"id", v.id},
+  for (const auto &v : w.vehicles) {
+    Json item{{"id", v.id},
                             {"orderId", v.order},
                             {"type", v.type},
                             {"cell", Cell(v.cell)},
                             {"cargo", std::to_string(v.cargo)},
-                            {"state", Haul(v.state)}});
+                            {"state", Haul(v.state)}};
+    if (v.ownerDepot) {
+      item["ownerDepotId"] = v.ownerDepot;
+      item["leg"] = v.leg == economy::VehicleLeg::ToSource ? "to_source" : v.leg == economy::VehicleLeg::Loading ? "loading" : v.leg == economy::VehicleLeg::ToDestination ? "to_destination" : v.leg == economy::VehicleLeg::Unloading ? "unloading" : v.leg == economy::VehicleLeg::Returning ? "returning" : "parked";
+      item["legTicksRemaining"] = v.legTicksRemaining;
+      item["parked"] = v.order == 0;
+    }
+    vehicles.push_back(std::move(item));
+  }
   for (const auto &o : w.orders)
     orders.push_back(Json{{"id", o.id},
                           {"source", o.source},
@@ -752,13 +766,21 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         for (const auto &road : q.page.roads)
           entities.push_back(
               Json{{"id", road.id}, {"a", Cell(road.a)}, {"b", Cell(road.b)}, {"enabled", road.enabled}});
-        for (const auto &vehicle : q.page.vehicles)
-          entities.push_back(Json{{"id", vehicle.id},
+        for (const auto &vehicle : q.page.vehicles) {
+          Json item{{"id", vehicle.id},
                                   {"orderId", vehicle.order},
                                   {"type", vehicle.type},
                                   {"cell", Cell(vehicle.cell)},
                                   {"cargo", std::to_string(vehicle.cargo)},
-                                  {"state", Haul(vehicle.state)}});
+                                  {"state", Haul(vehicle.state)}};
+          if (vehicle.ownerDepot) {
+            item["ownerDepotId"] = vehicle.ownerDepot;
+            item["leg"] = vehicle.leg == economy::VehicleLeg::ToSource ? "to_source" : vehicle.leg == economy::VehicleLeg::Loading ? "loading" : vehicle.leg == economy::VehicleLeg::ToDestination ? "to_destination" : vehicle.leg == economy::VehicleLeg::Unloading ? "unloading" : vehicle.leg == economy::VehicleLeg::Returning ? "returning" : "parked";
+            item["legTicksRemaining"] = vehicle.legTicksRemaining;
+            item["parked"] = vehicle.order == 0;
+          }
+          entities.push_back(std::move(item));
+        }
         for (const auto &order : q.page.orders)
           entities.push_back(Json{{"id", order.id},
                                   {"source", order.source},
@@ -808,6 +830,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                {"unservedInputs", unserved}, {"vehicles", summary.vehicles},
                {"text", summary.text}};
     if (!sites.empty()) out["constructionSites"]=std::move(sites);
+    if (summary.fleetVehicles) out["fleet"] = Json{{"total",summary.fleetVehicles},{"parked",summary.parkedFleetVehicles},{"dispatched",summary.dispatchedFleetVehicles}};
   } else if (method == "utility_diagnostics") {
     if (!Fields(req, {"revision", "offset", "limit"}, message, {"buildingId"}))
       return invalid(message);
@@ -1328,6 +1351,14 @@ std::string Dispatcher::HandleLine(std::string_view line) {
         return invalid(message);
       s = api_->CreateHaulOrder(revision, static_cast<economy::BuildingId>(id1),
                                static_cast<economy::BuildingId>(id2), resource, vehicle);
+    } else if (kind == "dispatch_truck") {
+      if (!NestedFields(c, {"kind", "vehicle", "source", "destination", "resource"}, message, {"amount"})) return invalid(message);
+      std::uint64_t amount=0;
+      if (!Unsigned(c,"vehicle",UINT32_MAX,id1,message)||!Unsigned(c,"source",UINT32_MAX,id2,message)) return invalid(message);
+      std::uint64_t destination{};
+      if (!Unsigned(c,"destination",UINT32_MAX,destination,message)||!String(c,"resource",resource,message)) return invalid(message);
+      if(c.contains("amount")&&!U64(c,"amount",amount,message))return invalid(message);
+      s=api_->DispatchTruck(revision,static_cast<economy::VehicleId>(id1),static_cast<economy::BuildingId>(id2),static_cast<economy::BuildingId>(destination),resource,amount);
     } else if (kind == "cancel_haul_order") {
       if (!NestedFields(c, {"kind", "orderId"}, message))
         return invalid(message);

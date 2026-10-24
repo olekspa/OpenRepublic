@@ -30,6 +30,9 @@ struct EconomySummary {
     std::vector<SummaryUnservedInput> unservedInputs;
     std::vector<SummaryConstructionSite> constructionSites;
     std::size_t vehicles{};
+    std::size_t fleetVehicles{};
+    std::size_t parkedFleetVehicles{};
+    std::size_t dispatchedFleetVehicles{};
     std::string text;
 };
 

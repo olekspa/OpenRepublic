@@ -65,7 +65,7 @@ WorldView MakeWorld(const economy::Catalog& c, const economy::WorldSnapshot& s) 
     }
     for (const auto& x : s.vehicles) {
         const auto* t = c.VehicleType(x.type);
-        v.vehicles.push_back({x.id, x.order, t ? t->name : "", x.cell, x.cargo, x.state});
+        v.vehicles.push_back({x.id, x.order, t ? t->name : "", x.cell, x.cargo, x.state, x.ownerDepot, x.leg, x.legTicksRemaining});
     }
     for (const auto& x : s.orders) {
         const auto* r = c.Resource(x.resource);
@@ -104,7 +104,7 @@ Capabilities EconomyApi::DiscoverCapabilities() const {
     if (permissions_.control && permissions_.query) {
         c.actions.insert(c.actions.end(), {Action::Step, Action::PlaceBuilding, Action::RemoveBuilding,
             Action::BuildRoad, Action::SetRoadEnabled, Action::SetBuildingEnabled,
-            Action::CreateHaulOrder, Action::CancelHaulOrder, Action::RetargetHaulOrder,
+            Action::CreateHaulOrder, Action::DispatchTruck, Action::CancelHaulOrder, Action::RetargetHaulOrder,
             Action::CompactCommandHistory, Action::ConnectUtility, Action::DisconnectUtility,
             Action::TradeExport, Action::TradeImport, Action::PlaceConstructionSite});
     }
@@ -198,6 +198,10 @@ CatalogView EconomyApi::DescribeCatalog() const {
             }
             x.recipes.push_back(std::move(ri));
         }
+        x.depot = b.depot;
+        x.loadTicks = b.loadTicks;
+        x.unloadTicks = b.unloadTicks;
+        for (const auto &fleet : b.fleet) { const auto *vehicle = catalog_->VehicleType(fleet.vehicleType); x.fleet.push_back({vehicle ? vehicle->name : "", fleet.count}); }
         for (const auto& a : b.constructionMaterials) { const auto* r=catalog_->Resource(a.resource); x.constructionMaterials.push_back({r?r->name:"",a.amount}); }
         v.buildingTypes.push_back(std::move(x));
     }
@@ -259,7 +263,7 @@ PageQuery EconomyApi::QueryWorld(std::uint64_t revision, const std::string& kind
         for (const auto& vehicle : snapshot.vehicles) {
             const auto* type = catalog_->VehicleType(vehicle.type);
             p.vehicles.push_back({vehicle.id, vehicle.order, type ? type->name : "", vehicle.cell,
-                                  vehicle.cargo, vehicle.state});
+                                  vehicle.cargo, vehicle.state, vehicle.ownerDepot, vehicle.leg, vehicle.legTicksRemaining});
         }
     } else if (kind == "orders") {
         p.orders.reserve(snapshot.orders.size());
@@ -455,6 +459,15 @@ Submission EconomyApi::CreateHaulOrder(std::uint64_t revision, economy::Building
     if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
         return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->CreateHaulOrder(s, d, r, v));
+}
+Submission EconomyApi::DispatchTruck(std::uint64_t revision, economy::VehicleId vehicle, economy::BuildingId source,
+    economy::BuildingId destination, const std::string& resource, std::uint64_t amount) {
+    if (!Allowed(true)) return {ErrorCode::PermissionDenied, 0, {}};
+    if (world_->Revision() != revision) return {ErrorCode::StaleRevision, 0, {}};
+    economy::ResourceId id{};
+    if (!catalog_->FindResource(resource, id)) return {ErrorCode::InvalidArgument, 0, {}};
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX) return {ErrorCode::CommandHandleExhausted, 0, {}};
+    return Submit(revision, world_->DispatchTruck(vehicle, source, destination, id, amount));
 }
 Submission EconomyApi::CancelHaulOrder(std::uint64_t revision, economy::OrderId id) {
     if (!Allowed(true)) {
