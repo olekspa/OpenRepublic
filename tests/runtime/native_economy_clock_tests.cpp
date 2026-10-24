@@ -10,7 +10,9 @@ int main() {
         if (!ok) { ++failures; std::cerr << message << '\n'; }
     };
     check(clock.Advance(0.125) == 0, "half period must wait");
+    check(clock.InterpolationAlpha() == 0.5, "half period reports half interpolation alpha");
     check(clock.Advance(0.125) == 1, "whole period must tick");
+    check(clock.InterpolationAlpha() == 0.0, "whole period tick resets interpolation alpha");
     check(clock.Advance(0.0) == 0, "zero time must wait");
     check(clock.Advance(-1.0) == 0, "negative time must wait");
     check(clock.Advance(std::numeric_limits<double>::quiet_NaN()) == 0, "NaN must wait");
