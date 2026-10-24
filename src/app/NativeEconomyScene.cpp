@@ -16,7 +16,8 @@ namespace openrepublic::preview
 		using Plan = runtime::NativeEconomyScenePlan;
 		using BuildingPrimitive = runtime::NativeBuildingPrimitive;
 		using RoadPrimitive = runtime::NativeRoadPrimitive;
-		constexpr float kTruckScale = 0.28f;
+		const float kTruckScale = static_cast<float>(runtime::NativeVehicleDisplayScale(
+			openrepublic::procgeo::VehicleLength(openrepublic::procgeo::VehicleKind::CargoTruck)));
 		constexpr float kRoadSurfaceY = 0.11f;
 
 		wi::ecs::Entity CreateVehicleNode(wi::scene::Scene& scene, wi::ecs::Entity mesh,
@@ -33,11 +34,10 @@ namespace openrepublic::preview
 
 		bool IsSmokePolicyBuilding(std::string_view name)
 		{
-			// OpenRepublic presentation policy: these authored catalog-name tokens
-			// receive a small smoke plume while any recipe is active.
+			// OpenRepublic presentation policy: authored heating-plant names smoke
+			// only while a recipe is actively counting down.
 			return name.find("heating_plant") != std::string_view::npos ||
-				name.find("heatingplant") != std::string_view::npos ||
-				name.find("bakery") != std::string_view::npos;
+				name.find("heatingplant") != std::string_view::npos;
 		}
 
 		bool ToFloat(double value, float& out) noexcept
@@ -396,11 +396,15 @@ namespace openrepublic::preview
 				openrepublic::procgeo::MakeCargoTruckBody(5), 0.5f, 0.1f);
 			wheelMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic native wheel mesh",
 				openrepublic::procgeo::MakeVehicleWheel(), 0.82f, 0.0f);
-			if (truckMesh_ == wi::ecs::INVALID_ENTITY || wheelMesh_ == wi::ecs::INVALID_ENTITY)
+			cargoMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic native coal heap mesh",
+				openrepublic::procgeo::MakeCoalHeap(), 0.09f, 0.0f);
+			if (truckMesh_ == wi::ecs::INVALID_ENTITY || wheelMesh_ == wi::ecs::INVALID_ENTITY ||
+				cargoMesh_ == wi::ecs::INVALID_ENTITY)
 			{
 				if (truckMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(truckMesh_);
 				if (wheelMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(wheelMesh_);
-				truckMesh_ = wheelMesh_ = wi::ecs::INVALID_ENTITY;
+				if (cargoMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(cargoMesh_);
+				truckMesh_ = wheelMesh_ = cargoMesh_ = wi::ecs::INVALID_ENTITY;
 				error = "Wicked Engine could not create the native procedural truck meshes";
 				return false;
 			}
@@ -417,23 +421,32 @@ namespace openrepublic::preview
 			else
 			{
 				visual.body = CreateVehicleNode(scene, truckMesh_, "OpenRepublic native truck " + std::to_string(vehicle.id));
-				visual.load = scene.Entity_CreateCube("OpenRepublic native cargo load " + std::to_string(vehicle.id));
+				visual.load = CreateVehicleNode(scene, cargoMesh_, "OpenRepublic native coal load " + std::to_string(vehicle.id));
+				visual.labelMesh = CreateProceduralMeshEntity(scene, "OpenRepublic native truck ID label mesh",
+					openrepublic::procgeo::MakeVehicleIdLabel(vehicle.id), 1.0f, 0.0f);
+				visual.label = CreateVehicleNode(scene, visual.labelMesh,
+					"OpenRepublic native truck ID " + std::to_string(vehicle.id));
 				for (wi::ecs::Entity& wheel : visual.wheels)
 					wheel = CreateVehicleNode(scene, wheelMesh_, "OpenRepublic native truck wheel " + std::to_string(vehicle.id));
 				if (visual.body == wi::ecs::INVALID_ENTITY || visual.load == wi::ecs::INVALID_ENTITY ||
+					visual.labelMesh == wi::ecs::INVALID_ENTITY || visual.label == wi::ecs::INVALID_ENTITY ||
 					std::any_of(visual.wheels.begin(), visual.wheels.end(), [](wi::ecs::Entity e) { return e == wi::ecs::INVALID_ENTITY; }))
 				{
 					if (visual.body != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.body);
 					if (visual.load != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.load);
+					if (visual.label != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.label);
+					if (visual.labelMesh != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.labelMesh);
 					for (wi::ecs::Entity wheel : visual.wheels) if (wheel != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(wheel);
 					rollback(); error = "Wicked Engine could not create a native vehicle node"; return false;
 				}
 				createdEntities.push_back(visual.body);
 				createdEntities.push_back(visual.load);
+				createdEntities.push_back(visual.label);
+				createdEntities.push_back(visual.labelMesh);
 				createdEntities.insert(createdEntities.end(), visual.wheels.begin(), visual.wheels.end());
 				if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(visual.load))
 				{
-					material->SetBaseColor(XMFLOAT4(0.48f, 0.29f, 0.13f, 1.0f));
+					material->SetBaseColor(XMFLOAT4(1, 1, 1, 1));
 					material->CreateRenderData(true);
 				}
 				visual.hasPrevious = false;
@@ -654,6 +667,8 @@ namespace openrepublic::preview
 			{
 				scene.Entity_Remove(it->second.body);
 				scene.Entity_Remove(it->second.load);
+				scene.Entity_Remove(it->second.label);
+				scene.Entity_Remove(it->second.labelMesh);
 				for (wi::ecs::Entity wheel : it->second.wheels) scene.Entity_Remove(wheel);
 				it = vehicles_.erase(it);
 			}
@@ -724,7 +739,14 @@ namespace openrepublic::preview
 			positionNode(visual.body, 0, 0, 0, XMFLOAT3(kTruckScale, kTruckScale, kTruckScale), yawRotation);
 			const float loadY = visual.loaded ? 1.55f : -10000.0f;
 			positionNode(visual.load, 0, loadY, -1.55f,
-				XMFLOAT3(0.78f * kTruckScale, 0.30f * kTruckScale, 1.1f * kTruckScale), yawRotation);
+				XMFLOAT3(kTruckScale, kTruckScale, kTruckScale), yawRotation);
+			if (wi::scene::TransformComponent* label = scene.transforms.GetComponent(visual.label))
+			{
+				label->ClearTransform(); label->Scale(XMFLOAT3(0.82f, 0.82f, 0.82f));
+				label->Translate(XMFLOAT3(static_cast<float>(motion.position.x),
+					kRoadSurfaceY + 5.0f * kTruckScale, static_cast<float>(motion.position.z)));
+				label->UpdateTransform();
+			}
 			if (wi::scene::ObjectComponent* object = scene.objects.GetComponent(visual.body))
 				object->color = visual.idle ? XMFLOAT4(0.78f, 0.78f, 0.82f, 1.0f) : XMFLOAT4(1, 1, 1, 1);
 			const float wheelOffsets[4][2] = {{-1.12f, 3.05f}, {1.12f, 3.05f}, {-1.12f, -2.62f}, {1.12f, -2.62f}};
@@ -750,6 +772,19 @@ namespace openrepublic::preview
 		const runtime::NativePoint point = transform_->CellCenter(cell);
 		float x, z;
 		if (!ToFloat(point.x, x) || !ToFloat(point.z, z)) return DirectX::XMFLOAT3(0, 0, 0);
+		return DirectX::XMFLOAT3(x, 0.15f, z);
+	}
+
+	std::optional<DirectX::XMFLOAT3> NativeEconomyScene::VehiclePosition(economy::VehicleId id, double alpha) const
+	{
+		if (!transform_) return std::nullopt;
+		const auto found = vehicles_.find(id);
+		if (found == vehicles_.end()) return std::nullopt;
+		const VehicleVisual& visual = found->second;
+		const runtime::NativeVehicleMotion motion = runtime::InterpolateNativeVehicleMotion(
+			visual.previous, visual.current, alpha, visual.yaw, *transform_);
+		float x = 0.0f, z = 0.0f;
+		if (!ToFloat(motion.position.x, x) || !ToFloat(motion.position.z, z)) return std::nullopt;
 		return DirectX::XMFLOAT3(x, 0.15f, z);
 	}
 

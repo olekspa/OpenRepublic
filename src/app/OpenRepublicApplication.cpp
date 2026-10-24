@@ -755,7 +755,7 @@ namespace openrepublic
 			{
 				nativeEconomyPresentationValid = true;
 				nmfPreviewCameraTarget = nativeEconomyScene.CameraTarget();
-				nmfPreviewCameraDistance = nativeEconomyScene.CameraDistance();
+				nmfPreviewCameraDistance = nativeEconomyScene.CameraDistance() * (nativeCoalDemo ? 0.68f : 1.0f);
 				nmfPreviewLoaded = true;
 				regionEconomyApi = std::make_unique<economy_api::EconomyApi>(
 					*nativeEconomyCheckpoint.world, economy_api::Permissions{ true, true });
@@ -1686,6 +1686,16 @@ namespace openrepublic
 					nativeFrameButton.SetPos(XMFLOAT2(708, 18));
 					nativeFrameButton.OnClick([this](const wi::gui::EventArgs&) { FrameNativeEconomyWorld(); });
 					gui.AddWidget(&nativeFrameButton);
+					nativeCameraFollowButton.Create("NativeEconomyCameraFollowButton");
+					nativeCameraFollowButton.SetText("Follow truck: off");
+					StyleButton(nativeCameraFollowButton);
+					nativeCameraFollowButton.SetSize(XMFLOAT2(132, 28));
+					nativeCameraFollowButton.OnClick([this](const wi::gui::EventArgs&) {
+						nativeCameraFollow = !nativeCameraFollow;
+						nativeCameraFollowButton.SetText(nativeCameraFollow ? "Follow truck: on" : "Follow truck: off");
+						UpdateRegionStatus();
+					});
+					gui.AddWidget(&nativeCameraFollowButton);
 					nativeStepManyButton.Create("NativeEconomyStepManyButton");
 					nativeStepManyButton.SetText("Step 240 ticks");
 					StyleButton(nativeStepManyButton);
@@ -1912,6 +1922,26 @@ namespace openrepublic
 			if (nativeEconomyCheckpointMode && nativeEconomyPresentationValid)
 				nativeEconomyScene.UpdateVehicleMotion(previewWorld,
 					nativeEconomyRunning ? nativeEconomyRunClock.InterpolationAlpha() : 1.0);
+			if (nativeEconomyCheckpointMode && nativeEconomyPresentationValid && nativeCameraFollow &&
+				regionEconomySnapshot && renderPath && renderPath->camera)
+			{
+				const auto vehicleId = nativeEconomyTools.SelectedDispatchVehicle();
+				const auto vehicle = std::find_if(regionEconomySnapshot->vehicles.begin(), regionEconomySnapshot->vehicles.end(),
+					[&](const auto& item) { return item.id == vehicleId; });
+				if (vehicle != regionEconomySnapshot->vehicles.end())
+				{
+					const double alpha = nativeEconomyRunning ? nativeEconomyRunClock.InterpolationAlpha() : 1.0;
+					const auto target = nativeEconomyScene.VehiclePosition(vehicleId, alpha)
+						.value_or(nativeEconomyScene.CellPosition(vehicle->cell));
+					const float distance = nativeEconomyScene.CameraDistance() * (nativeCoalDemo ? 0.68f : 1.0f);
+					wi::scene::TransformComponent cameraTransform;
+					cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 0.55f, target.z - distance * 0.85f));
+					cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.6f, 0, 0));
+					cameraTransform.UpdateTransform();
+					renderPath->camera->TransformCamera(cameraTransform);
+					renderPath->camera->UpdateCamera();
+				}
+			}
 			if (selectedRegionBuildingEntity != wi::ecs::INVALID_ENTITY &&
 				!GetRegionBuildingForInstance(selectedRegionBuildingEntity).has_value())
 			{
@@ -2780,10 +2810,10 @@ namespace openrepublic
 		const float width = static_cast<float>(renderPath->GetLogicalWidth());
 		float x = 18.0f, y = 18.0f;
 		for (auto* button : { &regionStepOneButton, &regionStepButton, &regionToggleButton,
-			&regionHaulSourceButton, &regionHaulButton, &nativeFrameButton, &nativeStepManyButton, &nativeRunPauseButton,
+			&regionHaulSourceButton, &regionHaulButton, &nativeFrameButton, &nativeCameraFollowButton, &nativeStepManyButton, &nativeRunPauseButton,
 			&nativeDetailsButton, &nativeOverviewButton, &nativeSaveButton })
 		{
-			if (!nativeEconomyCheckpointMode && (button == &nativeFrameButton || button == &nativeStepManyButton ||
+			if (!nativeEconomyCheckpointMode && (button == &nativeFrameButton || button == &nativeCameraFollowButton || button == &nativeStepManyButton ||
 				button == &nativeRunPauseButton || button == &nativeSaveButton)) continue;
 			if (x > 18.0f && x + 132.0f > width - 18.0f) { x = 18.0f; y += 34.0f; }
 			button->SetPos(XMFLOAT2(x, y));
@@ -3264,7 +3294,7 @@ namespace openrepublic
 			}
 		}
 		const auto target = nativeEconomyScene.CameraTarget();
-		const float distance = nativeEconomyScene.CameraDistance();
+		const float distance = nativeEconomyScene.CameraDistance() * (nativeCoalDemo ? 0.68f : 1.0f);
 		wi::scene::TransformComponent cameraTransform;
 		cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 0.55f, target.z - distance * 0.85f));
 		cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.6f, 0, 0));

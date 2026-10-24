@@ -17,6 +17,12 @@ places a border post, two-truck road depot, storage, and heating plant, and lays
 a straight road along their access cells. The bootstrap produces and exports a
 small grain batch through the economy rules to fund later coal imports. The
 world remains unsaved unless the user explicitly saves a checkpoint.
+The demo opens in a 1600 by 1000 desktop window. Its closer camera frames the
+fixture row, and **Frame world** reapplies the same framing policy after
+recentering. Use **Follow truck** to keep the selected Dispatch truck in view.
+Truck scale, wheel hubs, and the dark coal heap are OpenRepublic presentation
+choices; raised numeric markers identify trucks, and building footprint sizes
+are unchanged.
 
 ## Run the logistics loop
 
@@ -37,8 +43,10 @@ and rejection remain authoritative at economy tick boundaries. Auto-run is a
 deterministic one-command-at-a-time planner over snapshots. It does not mutate
 the world directly.
 
-`VERIFIED` source/headless coverage currently includes the built-in catalog and
-the deterministic auto-run action planner. The client target and full build
-compile, but desktop startup layout, control interaction, truck animation, and
-visible heat production have not been run or accepted. WRSR parity remains
-**UNKNOWN**.
+`VERIFIED` source/headless coverage includes the built-in catalog, deterministic
+auto-run action planner, truck scale policy, and camera-distance calculation.
+The previous live observation found the logistics loop producing heat, but also
+found trucks difficult to see at the default camera. This visual update has not
+been observed in a fresh desktop run; startup framing, follow behavior, toolbar
+reachability, truck readability, and smoke appearance still need owner
+verification. WRSR parity remains **UNKNOWN**.

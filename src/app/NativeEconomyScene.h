@@ -31,6 +31,7 @@ namespace openrepublic::preview
 
 		std::optional<economy::BuildingId> BuildingForEntity(wi::ecs::Entity entity) const;
 		DirectX::XMFLOAT3 CellPosition(economy::Cell cell) const;
+	std::optional<DirectX::XMFLOAT3> VehiclePosition(economy::VehicleId id, double alpha) const;
 		bool CellFromGroundPoint(double worldX, double worldZ, std::uint32_t gridWidth,
 			std::uint32_t gridDepth, economy::Cell& outCell) const noexcept;
 		float CameraDistance() const noexcept;
@@ -61,6 +62,8 @@ namespace openrepublic::preview
 		{
 			wi::ecs::Entity body = wi::ecs::INVALID_ENTITY;
 			wi::ecs::Entity load = wi::ecs::INVALID_ENTITY;
+			wi::ecs::Entity label = wi::ecs::INVALID_ENTITY;
+			wi::ecs::Entity labelMesh = wi::ecs::INVALID_ENTITY;
 			std::array<wi::ecs::Entity, 4> wheels{};
 			economy::Cell previous{};
 			economy::Cell current{};
@@ -81,6 +84,7 @@ namespace openrepublic::preview
 		wi::ecs::Entity groundEntity_ = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity truckMesh_ = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity wheelMesh_ = wi::ecs::INVALID_ENTITY;
+		wi::ecs::Entity cargoMesh_ = wi::ecs::INVALID_ENTITY;
 		std::optional<runtime::NativeEconomyTransform> transform_;
 		std::unordered_map<economy::BuildingId, BuildingVisual> buildings_;
 		std::unordered_map<economy::RoadId, RoadVisual> roads_;

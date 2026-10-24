@@ -56,9 +56,13 @@ int main()
 	}
 	const Mesh truckBody = MakeCargoTruckBody(5u);
 	const Mesh wheel = MakeVehicleWheel();
+	const Mesh coalHeap = MakeCoalHeap();
+	const Mesh idLabel = MakeVehicleIdLabel(23);
 	Vec3 bodyLo{}, bodyHi{}, wheelLo{}, wheelHi{};
 	check(truckBody.Valid() && truckBody.Bounds(bodyLo, bodyHi), "separate cargo-truck body mesh is valid");
 	check(wheel.Valid() && wheel.Bounds(wheelLo, wheelHi), "separate wheel mesh is valid");
+	check(coalHeap.Valid(), "separate project-authored coal heap mesh is valid");
+	check(idLabel.Valid(), "vehicle ID label mesh is valid");
 	check(bodyLo.y > 0.05f, "separate truck body omits baked ground-contact wheels");
 	check(std::abs((wheelHi.x - wheelLo.x) - 0.30f) < 1e-5f &&
 		std::abs((wheelHi.y - wheelLo.y) - 0.96f) < 1e-5f &&

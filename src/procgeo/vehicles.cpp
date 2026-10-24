@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cmath>
+#include <string>
 
 namespace openrepublic::procgeo
 {
@@ -47,6 +48,26 @@ namespace
 			const std::uint32_t b = base + 2u * static_cast<std::uint32_t>((i + 1) % segments);
 			// On the left cap the outward normal is -X; on the right it is +X.
 			mesh.indices.insert(mesh.indices.end(), { left, b, a, right, a + 1, b + 1 });
+		}
+		// A compact light-metal hub remains visible while the whole wheel rotates.
+		constexpr float hubRadius = 0.22f;
+		const std::uint32_t leftHub = static_cast<std::uint32_t>(mesh.positions.size());
+		mesh.positions.push_back({ x - width * 0.5f, y, z }); mesh.colors.push_back(kChrome);
+		const std::uint32_t rightHub = static_cast<std::uint32_t>(mesh.positions.size());
+		mesh.positions.push_back({ x + width * 0.5f, y, z }); mesh.colors.push_back(kChrome);
+		const std::uint32_t hubRing = static_cast<std::uint32_t>(mesh.positions.size());
+		for (int i = 0; i < segments; ++i)
+		{
+			const float a = 6.28318530718f * static_cast<float>(i) / static_cast<float>(segments);
+			const float yy = std::cos(a) * hubRadius, zz = std::sin(a) * hubRadius;
+			mesh.positions.push_back({ x - width * 0.5f, y + yy, z + zz }); mesh.colors.push_back(kChrome);
+			mesh.positions.push_back({ x + width * 0.5f, y + yy, z + zz }); mesh.colors.push_back(kChrome);
+		}
+		for (int i = 0; i < segments; ++i)
+		{
+			const std::uint32_t a = hubRing + 2u * static_cast<std::uint32_t>(i);
+			const std::uint32_t b = hubRing + 2u * static_cast<std::uint32_t>((i + 1) % segments);
+			mesh.indices.insert(mesh.indices.end(), { leftHub, b, a, rightHub, a + 1, b + 1 });
 		}
 	}
 
@@ -144,6 +165,47 @@ Mesh MakeVehicleWheel()
 	Mesh wheel;
 	AddWheelX(wheel, 0.0f, 0.0f, 0.0f, 0.48f, 0.30f);
 	return wheel;
+}
+
+Mesh MakeCoalHeap()
+{
+	Mesh mesh;
+	const Color3 coal{ 0.055f, 0.052f, 0.048f };
+	// Faceted project-authored load, sized to sit inside the truck bed.
+	AddBox(mesh, {0.0f, 0.04f, 0.0f}, {0.68f, 0.17f, 0.92f}, coal);
+	AddBox(mesh, {-0.24f, 0.20f, -0.12f}, {0.31f, 0.16f, 0.40f}, {0.075f, 0.070f, 0.063f});
+	AddBox(mesh, {0.28f, 0.18f, 0.22f}, {0.29f, 0.14f, 0.34f}, coal);
+	AddBox(mesh, {0.02f, 0.29f, -0.35f}, {0.24f, 0.12f, 0.28f}, {0.09f, 0.082f, 0.073f});
+	return mesh;
+}
+
+Mesh MakeVehicleIdLabel(std::uint64_t vehicleId)
+{
+	static constexpr bool segments[10][7] = {
+		{true,true,true,true,true,true,false}, {false,true,true,false,false,false,false},
+		{true,true,false,true,true,false,true}, {true,true,true,true,false,false,true},
+		{false,true,true,false,false,true,true}, {true,false,true,true,false,true,true},
+		{true,false,true,true,true,true,true}, {true,true,true,false,false,false,false},
+		{true,true,true,true,true,true,true}, {true,true,true,true,false,true,true}
+	};
+	const std::string digits = std::to_string(vehicleId);
+	Mesh mesh;
+	const Color3 ink{ 0.96f, 0.84f, 0.48f };
+	constexpr float halfWidth = 0.15f, halfBar = 0.035f, halfDepth = 0.025f;
+	const float totalWidth = static_cast<float>(digits.size()) * 0.40f;
+	for (std::size_t i = 0; i < digits.size(); ++i)
+	{
+		const int digit = digits[i] - '0';
+		const float x = -totalWidth * 0.5f + static_cast<float>(i) * 0.40f;
+		const auto bar = [&](int segment, float cx, float cy, float hx, float hy) {
+			if (segments[digit][segment]) AddBox(mesh, {x + cx, cy, 0.0f}, {hx, hy, halfDepth}, ink);
+		};
+		bar(0, 0, 0.39f, halfWidth, halfBar); bar(6, 0, 0, halfWidth, halfBar);
+		bar(3, 0, -0.39f, halfWidth, halfBar); bar(5, -0.185f, 0.20f, halfBar, 0.16f);
+		bar(1, 0.185f, 0.20f, halfBar, 0.16f); bar(4, -0.185f, -0.20f, halfBar, 0.16f);
+		bar(2, 0.185f, -0.20f, halfBar, 0.16f);
+	}
+	return mesh;
 }
 
 float VehicleLength(VehicleKind kind)

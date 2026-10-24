@@ -11,6 +11,16 @@ int main() {
         if (!ok) { ++failures; std::cerr << message << '\n'; }
     };
     runtime::NativeEconomyTransform transform{};
+    const double truckScale = runtime::NativeVehicleDisplayScale(7.8);
+    check(std::abs(truckScale * 7.8 - 3.0) < 1e-9,
+          "procedural truck length targets three quarters of a native display cell");
+    check(runtime::NativeVehicleDisplayScale(0.0) == 0.0 &&
+          runtime::NativeVehicleDisplayScale(std::numeric_limits<double>::infinity()) == 0.0,
+          "invalid vehicle lengths fail closed");
+    check(std::abs(runtime::NativeEconomyCameraDistance(80.0, 20.0, 0.68) - 81.6) < 1e-9,
+          "camera framing scale gives the demo a closer view while retaining scene-span basis");
+    check(runtime::NativeEconomyCameraDistance(1.0, 1.0, 0.0) == 0.0,
+          "invalid camera distance scale fails closed");
     const economy::Cell west{2, 3}, east{3, 3};
     const auto half = runtime::InterpolateNativeVehicleMotion(west, east, 0.5, 1.25, transform);
     const auto from = transform.CellCenter(west);
