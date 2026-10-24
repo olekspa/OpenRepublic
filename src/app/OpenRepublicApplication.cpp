@@ -2214,8 +2214,27 @@ namespace openrepublic
 				selectedRegionBuildingId = selected->id;
 				text << "\nSelected: OR-" << selected->id << " " << selected->type
 					<< " (" << (selected->enabled ? "enabled" : "disabled") << ")";
-				text << "\nStatus: " << selected->stallReason;
-				if (!selected->stallExplanation.empty()) text << " — " << selected->stallExplanation;
+				// A synthetic construction site cannot produce yet: show its site state, not the stall text.
+				const economy::BuildingSnapshot* siteSnapshot = nullptr;
+				economy::WorldSnapshot siteWorld;
+				if (nativeEconomyCheckpointMode)
+				{
+					siteWorld = nativeEconomyCheckpoint.world->Snapshot();
+					const auto foundSite = std::find_if(siteWorld.buildings.begin(), siteWorld.buildings.end(),
+						[&](const auto& b) { return b.id == selected->id; });
+					if (foundSite != siteWorld.buildings.end() && foundSite->constructionSite && foundSite->constructionState < 2)
+						siteSnapshot = &*foundSite;
+				}
+				if (siteSnapshot)
+				{
+					static const char* const kStatusStates[] = { "construction site: waiting for materials", "construction site: building" };
+					text << "\nStatus: " << kStatusStates[std::min<std::size_t>(siteSnapshot->constructionState, 1)];
+				}
+				else
+				{
+					text << "\nStatus: " << selected->stallReason;
+					if (!selected->stallExplanation.empty()) text << " — " << selected->stallExplanation;
+				}
 				if (!selected->inventory.empty())
 				{
 					const auto formatUnits = [this](std::uint64_t amount)
@@ -2261,7 +2280,7 @@ namespace openrepublic
 								text << "\n  " << (resource ? resource->name : "resource") << " " << material.held << "/" << material.required;
 							}
 						}
-						for (std::size_t i = 0; type && i < found->recipes.size() && i < type->recipes.size(); ++i)
+						for (std::size_t i = 0; type && !(found->constructionSite && found->constructionState < 2) && i < found->recipes.size() && i < type->recipes.size(); ++i)
 							text << "\n" << type->recipes[i].name << ": " << found->recipes[i].completedCycles
 								<< " cycles, " << found->recipes[i].remainingTicks << " ticks remaining";
 					}
