@@ -70,6 +70,23 @@ requested `rounds × ticks` controller ticks. A final `scenarioScore` JSON recor
 uses the scenario's declared score format. Trade scenarios include treasury in
 the breakdown only when their synthetic catalog declares trade prices.
 
+Custom-catalog scenarios pass their authored catalog to the fresh host before
+fixture setup. The combined fixtures `growth_town`, `power_and_build`, and
+`austerity` return their requested components independently in
+`scoreBreakdown`; they do not produce one scalar score because residents,
+treasury, site counts, inventory, and utility flow use different units.
+Scenario-mode tournament examples use the same `--scenario` option:
+
+```powershell
+python tools/republic_tournament.py --host build/headless/src/economy_host/Release/OpenRepublicEconomyHost.exe --manifest <manifest.json> --scenario growth_town --rounds 4 --ticks 16 --repeats 2 --transcript-dir <scratch-dir> --output-json <results.json>
+python tools/republic_tournament.py --host build/headless/src/economy_host/Release/OpenRepublicEconomyHost.exe --manifest <manifest.json> --scenario power_and_build --rounds 4 --ticks 16 --repeats 2 --transcript-dir <scratch-dir> --output-json <results.json>
+python tools/republic_tournament.py --host build/headless/src/economy_host/Release/OpenRepublicEconomyHost.exe --manifest <manifest.json> --scenario austerity --rounds 4 --ticks 16 --repeats 2 --transcript-dir <scratch-dir> --output-json <results.json>
+```
+
+The test suite exercises these tournament paths with the scripted backend and
+rule-based autopilot only. Those tests verify fixture setup, result fields and
+repeatable hashes; they do not measure a live model backend.
+
 Add `--scenario <id|path>` to `republic_tournament.py` for scenario comparisons.
 Each manifest controller receives a fresh fixture host and the table includes a
 separate rule-based autopilot baseline. Scenario rows share the fixture score
