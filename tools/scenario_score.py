@@ -134,15 +134,33 @@ def load_scenario(path):
         seen_connections.add(edge)
     if len(scenario["roads"]) + len(scenario["buildings"]) + len(connections) > MAX_SETUP_COMMANDS:
         raise ScenarioError(f"setup may contain at most {MAX_SETUP_COMMANDS} commands")
-    _object(scenario["score"], "score", ("metric",))
+    _object(scenario["score"], "score", ("metric",), ("objectives",))
     metric = scenario["score"]["metric"]
-    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites"):
-        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, or completed_construction_sites")
+    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites", "combined_multi_objective"):
+        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, completed_construction_sites, or combined_multi_objective")
+    if metric != "combined_multi_objective" and "objectives" in scenario["score"]:
+        raise ScenarioError("score.objectives is only valid for combined_multi_objective")
     if metric == "utility_multi_objective" and "catalog" not in scenario:
         raise ScenarioError("utility_multi_objective scenarios must include a synthetic catalog")
     if metric == "completed_construction_sites":
         if "catalog" not in scenario or not any(b.get("constructionSite") is True for b in scenario["buildings"]):
             raise ScenarioError("completed_construction_sites scenarios must include a catalog and at least one construction site")
+    if metric == "combined_multi_objective":
+        allowed = {"fedResidents", "completedSites", "treasury", "throughputUnits", "unmetDemandUnits", "storedNonRawUnits"}
+        objectives = scenario["score"].get("objectives")
+        if "catalog" not in scenario or not isinstance(objectives, list) or not objectives or \
+                any(not isinstance(item, str) or item not in allowed for item in objectives) or \
+                len(set(objectives)) != len(objectives):
+            raise ScenarioError("combined_multi_objective requires a catalog and a non-empty unique objectives list from the supported fields")
+        if "completedSites" in objectives and not any(b.get("constructionSite") is True for b in scenario["buildings"]):
+            raise ScenarioError("completedSites objective requires at least one construction site")
+        if "throughputUnits" in objectives or "unmetDemandUnits" in objectives:
+            if not re.search(r"(?m)^utility power$", scenario["catalog"]):
+                raise ScenarioError("power objectives require utility power in the catalog")
+        if "treasury" in objectives and not re.search(r"(?m)^trade ", scenario["catalog"]):
+            raise ScenarioError("treasury objective requires a trade price in the catalog")
+        if "fedResidents" in objectives and not re.search(r"(?m)^(food |\s+housing )", scenario["catalog"]):
+            raise ScenarioError("fedResidents objective requires a population food or housing declaration")
     return scenario
 
 
@@ -207,7 +225,7 @@ def seed_scenario(host, scenario):
     _seed(host, scenario)
 
 
-def score_record(scenario, world, catalog, controller_ticks):
+def score_record(scenario, world, catalog, controller_ticks, summary=None):
     """Build the shared deterministic scenario metric receipt for a final world."""
     raw = autopilot.raw_resources(catalog)
     score_micro_units = sum(int(item["amount"])
@@ -246,6 +264,44 @@ def score_record(scenario, world, catalog, controller_ticks):
         if any(isinstance(resource, dict) and resource.get("tradeDeclared") is True
                for resource in catalog.get("resources", [])):
             breakdown["treasury"] = int(world.get("treasury", 0))
+    if scenario["score"]["metric"] == "combined_multi_objective":
+        breakdown = {}
+        objectives = scenario["score"]["objectives"]
+        if "fedResidents" in objectives:
+            if summary is None or summary.get("population") is None:
+                raise RuntimeError("population summary is required for the fedResidents objective")
+            breakdown["fedResidents"] = int(summary["population"])
+        if "completedSites" in objectives:
+            sites = []
+            for expected in scenario["buildings"]:
+                if expected.get("constructionSite") is not True:
+                    continue
+                building = next((candidate for candidate in world["buildings"]
+                                 if candidate.get("type") == expected["type"] and
+                                 candidate.get("cell") == {"x": expected["x"], "z": expected["z"]}), None)
+                sites.append({"buildingId": int(building["id"]) if building else None,
+                              "type": expected["type"],
+                              "state": building.get("constructionState", "unknown") if building else "missing",
+                              "progress": building.get("constructionProgress", 0.0) if building else 0.0})
+            breakdown["completedSites"] = sum(1 for site in sites if site["state"] == "done")
+            breakdown["totalSites"] = len(sites)
+            breakdown["siteStates"] = sites
+        if "treasury" in objectives:
+            breakdown["treasury"] = int(world.get("treasury", 0))
+        if "storedNonRawUnits" in objectives:
+            breakdown["storedNonRawUnits"] = score_micro_units / 1_000_000
+        if "throughputUnits" in objectives or "unmetDemandUnits" in objectives:
+            diagnostics = world.get("utilityDiagnostics")
+            if diagnostics is None:
+                raise RuntimeError("utility diagnostics are required for combined power objectives")
+            networks = diagnostics.get("networks", [])
+            requested = sum(int(network["requested"]) for network in networks if network["resource"] == "power")
+            consumed = sum(int(network["consumed"]) for network in networks if network["resource"] == "power")
+            if "throughputUnits" in objectives:
+                breakdown["throughputUnits"] = consumed
+            if "unmetDemandUnits" in objectives:
+                breakdown["unmetDemandUnits"] = max(0, requested - consumed)
+        breakdown["objectives"] = objectives
     if (breakdown is None and any(isinstance(resource, dict) and resource.get("tradeDeclared") is True
                                   for resource in catalog.get("resources", []))):
         breakdown = {"treasury": int(world.get("treasury", 0))}
@@ -263,7 +319,7 @@ def score_record(scenario, world, catalog, controller_ticks):
     }
     if breakdown is not None:
         stable["scoreBreakdown"] = breakdown
-        if scenario["score"]["metric"] in ("utility_multi_objective", "completed_construction_sites"):
+        if scenario["score"]["metric"] in ("utility_multi_objective", "completed_construction_sites", "combined_multi_objective"):
             stable.pop("scoreMicroUnits")
             stable.pop("scoreUnits")
         if scenario["score"]["metric"] == "completed_construction_sites":
@@ -274,9 +330,34 @@ def score_record(scenario, world, catalog, controller_ticks):
     return {**stable, "scoreHash": digest}
 
 
+def score_context(host, scenario, world):
+    """Attach host diagnostics needed by declared objectives and return summary if requested."""
+    metric = scenario["score"]["metric"]
+    objectives = scenario["score"].get("objectives", [])
+    needs_power = metric == "utility_multi_objective" or any(
+        key in objectives for key in ("throughputUnits", "unmetDemandUnits"))
+    if needs_power:
+        diagnostics = host.call("utility_diagnostics", revision=world["revision"], offset=0, limit=128)
+        autopilot._check_error(diagnostics, "utility_diagnostics")
+        if not diagnostics.get("available"):
+            raise RuntimeError("utility diagnostics are unavailable for the final scenario tick")
+        networks = list(diagnostics.get("networks", []))
+        while len(networks) < int(diagnostics.get("total", len(networks))):
+            page = host.call("utility_diagnostics", revision=world["revision"], offset=len(networks), limit=128)
+            autopilot._check_error(page, "utility_diagnostics")
+            networks.extend(page.get("networks", []))
+        world["utilityDiagnostics"] = {"available": True, "networks": networks}
+    summary = None
+    if metric == "combined_multi_objective" and "fedResidents" in objectives:
+        summary = host.call("summary")
+        autopilot._check_error(summary, "summary")
+    return summary
+
+
 def _default_rounds(scenario, ticks):
     """Replan construction scenarios at bounded intervals as production creates stock."""
-    if scenario["score"]["metric"] != "completed_construction_sites":
+    has_sites = any(building.get("constructionSite") is True for building in scenario["buildings"])
+    if scenario["score"]["metric"] != "completed_construction_sites" and not has_sites:
         return 1
     # Keep long runs bounded while giving production-fed sites repeated advice passes.
     return next(rounds for rounds in range(min(ticks, 64), 0, -1) if ticks % rounds == 0)
@@ -309,15 +390,19 @@ def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rou
             totals = {"placements_accepted": 0, "retargets_queued": 0, "accepted_retargets": 0,
                       "rejected_retargets": 0, "creates_queued": 0, "accepted_creates": 0,
                       "rejected_creates": 0}
+            if scenario["score"]["metric"] == "combined_multi_objective":
+                totals["trade_queued"] = 0
             per_round = ticks // rounds
             for round_number in range(1, rounds + 1):
                 result = autopilot.run_round(
                     host, catalog, per_round, placed, round_number=round_number,
                     final_tick=start_tick+round_number*per_round if exact_ticks else None)
                 if (completion_tick is None and
-                        scenario["score"]["metric"] == "completed_construction_sites"):
-                    round_score = score_record(scenario, result["world"], catalog, ticks)
-                    if (round_score["scoreBreakdown"]["totalSites"] and
+                        scenario["score"]["metric"] in ("completed_construction_sites", "combined_multi_objective")):
+                    round_world = result["world"]
+                    round_summary = score_context(host, scenario, round_world)
+                    round_score = score_record(scenario, round_world, catalog, ticks, round_summary)
+                    if (round_score["scoreBreakdown"].get("totalSites", 0) and
                             round_score["scoreBreakdown"]["completedSites"] ==
                             round_score["scoreBreakdown"]["totalSites"]):
                         completion_tick = int(result["world"]["tick"])
@@ -325,20 +410,9 @@ def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rou
                     totals[field] += result[field]
             result["autopilotTotals"] = totals
         world = result["world"]
-        if scenario["score"]["metric"] == "utility_multi_objective":
-            diagnostics = host.call("utility_diagnostics", revision=world["revision"], offset=0, limit=128)
-            autopilot._check_error(diagnostics, "utility_diagnostics")
-            if not diagnostics.get("available"):
-                raise RuntimeError("utility diagnostics are unavailable for the final scenario tick")
-            networks = list(diagnostics.get("networks", []))
-            while len(networks) < int(diagnostics.get("total", len(networks))):
-                page = host.call("utility_diagnostics", revision=world["revision"],
-                                 offset=len(networks), limit=128)
-                autopilot._check_error(page, "utility_diagnostics")
-                networks.extend(page.get("networks", []))
-            world["utilityDiagnostics"] = {"available": True, "networks": networks}
-        stable = score_record(scenario, world, catalog, ticks)
-        if scenario["score"]["metric"] == "completed_construction_sites":
+        summary = score_context(host, scenario, world)
+        stable = score_record(scenario, world, catalog, ticks, summary)
+        if scenario["score"]["metric"] in ("completed_construction_sites", "combined_multi_objective") and completion_tick is not None:
             stable["scoreBreakdown"]["completionTick"] = completion_tick
         stable = {key: value for key, value in stable.items() if key != "scoreHash"}
         stable.update({

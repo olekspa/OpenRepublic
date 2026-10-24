@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """LLM strategic controller for OpenRepublicEconomyHost."""
-import argparse, hashlib, json, subprocess, sys
+import argparse, hashlib, json, pathlib, subprocess, sys, tempfile
 from llm_backends import BackendError, make_backend
 from republic_autopilot import processed_units, raw_resources, _check_error
 import scenario_score
@@ -259,8 +259,9 @@ def run(host,backend,args,replay=None,scenario=None):
         if log: log.write(line+"\n"); log.flush()
       if scenario is not None:
         world=host.call("world")["world"]
+        summary=scenario_score.score_context(host,scenario,world)
         print(json.dumps({"scenarioScore":scenario_score.score_record(
-            scenario,world,c,args.rounds*args.ticks)},sort_keys=True,separators=(",",":")))
+            scenario,world,c,args.rounds*args.ticks,summary)},sort_keys=True,separators=(",",":")))
     finally:
       if log: log.close()
 
@@ -279,11 +280,19 @@ def main():
         from llm_backends import ScriptedBackend
         with open(a.scripted_responses,encoding="utf-8-sig") as f: backend=ScriptedBackend(json.load(f))
     else: backend=make_backend(a.backend)
-    host=Host(a.host,extra)
+    catalog_temp=tempfile.TemporaryDirectory(prefix="openrepublic-llm-scenario-") if scenario and "catalog" in scenario else None
+    if catalog_temp:
+        catalog_path=pathlib.Path(catalog_temp.name)/"scenario.catalog"
+        catalog_path.write_text(scenario["catalog"],encoding="utf-8")
+        extra=[*extra,"--catalog",str(catalog_path)]
+    host=None
     try:
+      host=Host(a.host,extra)
       if scenario is not None: scenario_score.seed_scenario(host,scenario)
       run(host,None if replay is not None else backend,a,replay,scenario)
-    finally: host.close()
+    finally:
+      if host is not None: host.close()
+      if catalog_temp: catalog_temp.cleanup()
     return 0
 if __name__=="__main__":
     try: sys.exit(main())

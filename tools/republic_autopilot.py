@@ -339,6 +339,20 @@ def _trade_actions(world, catalog, direction=None):
         return []
     treasury = int(world["treasury"])
     types = {b["name"]: b for b in catalog.get("buildingTypes", [])}
+    site_missing = set()
+    site_reserved = {}
+    for site in world.get("buildings", []):
+        if site.get("constructionSite") is not True or site.get("constructionState") != "waiting_materials":
+            continue
+        site_type = types.get(site.get("type"), {})
+        held = {i.get("resource"): int(i.get("held", i.get("amount", 0)))
+                for i in site.get("constructionMaterials", site.get("inventory", []))}
+        for requirement in site_type.get("constructionMaterials", []):
+            resource = requirement.get("resource")
+            missing = max(0, int(requirement.get("amount", 0)) - held.get(resource, 0))
+            if resource and missing:
+                site_missing.add(resource)
+                site_reserved[resource] = site_reserved.get(resource, 0) + missing
     actions = []
     for building in world.get("buildings", []):
         if building.get("type") not in posts:
@@ -346,12 +360,12 @@ def _trade_actions(world, catalog, direction=None):
         definition = types.get(building["type"], {})
         slots = {s["resource"]: s for s in definition.get("storage", [])}
         inventory = {i["resource"]: int(i["amount"]) for i in building.get("inventory", [])}
-        # Export only stock beyond a 10-unit reserve. Import only an actually
-        # missing recipe input, and only when the current treasury covers it.
+        # Keep a 10-unit export reserve and any missing site materials. Import
+        # only an actually missing recipe/site input when treasury covers it.
         for resource, price in prices.items():
             stock = inventory.get(resource, 0)
             sell = int(price.get("sellPrice", 0))
-            surplus = max(0, stock - TRADE_STOCK_FLOOR)
+            surplus = max(0, stock - max(TRADE_STOCK_FLOOR, site_reserved.get(resource, 0)))
             if direction in (None, "export") and sell > 0 and surplus:
                 amount = min(surplus, TRADE_RATE_CAP)
                 actions.append(("trade_export", {"buildingId": int(building["id"]),
@@ -360,6 +374,9 @@ def _trade_actions(world, catalog, direction=None):
             continue
         needed = {i["resource"] for recipe in definition.get("recipes", [])
                   for i in recipe.get("inputs", []) if inventory.get(i["resource"], 0) == 0}
+        # A trade post may import a construction site's missing declared inputs.
+        # The existing site planner can then haul that stock to the site.
+        needed.update(site_missing)
         for resource in sorted(needed & prices.keys()):
             buy = int(prices[resource].get("buyPrice", 0))
             slot = slots.get(resource, {})

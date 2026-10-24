@@ -52,6 +52,33 @@ class ScenarioTournamentTests(unittest.TestCase):
             self.assertIn("stored non-raw units", completed.stdout)
             self.assertIn("CONCLUSIVE SAMPLE", completed.stdout)
 
+    def test_scripted_tournaments_run_combined_scenario_catalogs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            manifest = root / "manifest.json"
+            responses = root / "responses.json"
+            manifest.write_text(json.dumps({"controllers": [
+                {"name": "scripted", "kind": "llm", "backend": "scripted",
+                 "scripted_responses": str(responses)}]}), encoding="utf-8")
+            responses.write_text(json.dumps([{"actions": [], "notes": "combined fixture smoke"}]), encoding="utf-8")
+            for scenario in ("growth_town", "power_and_build", "austerity"):
+                with self.subTest(scenario=scenario):
+                    output = root / f"{scenario}.json"
+                    completed = subprocess.run([
+                        sys.executable, str(TOURNAMENT), "--host", HOST, "--manifest", str(manifest),
+                        "--scenario", scenario, "--rounds", "4", "--ticks", "4", "--repeats", "1",
+                        "--transcript-dir", str(root / "transcripts"), "--output-json", str(output)],
+                        text=True, capture_output=True, timeout=60, check=False)
+                    self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+                    result = json.loads(output.read_text(encoding="utf-8"))
+                    self.assertEqual(result["scenarioId"], scenario)
+                    self.assertEqual(result["scenarioMetric"], "combined_multi_objective")
+                    self.assertEqual({row["controller"] for row in result["results"]},
+                                     {"scripted", "autopilot-baseline"})
+                    for row in result["results"]:
+                        self.assertEqual(len(row["scoreHash"]), 64)
+                        self.assertIn("scoreBreakdown", row)
+
     def test_single_run_is_marked_non_conclusive(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "id": "power_and_build",
+  "name": "Power and build dependency",
+  "description": "OpenRepublic synthetic powered mine/smelter chain. A timber-fed power_line construction site must finish before it produces wire, which the powered smelter needs before steel output can start. The power links are explicit fixture links; the site is a synthetic production prerequisite.",
+  "catalog": "openrepublic-economy 1\nresource timber\nresource wire\nresource ore\nresource steel\nutility power\nbuilding generator 1 1\n  recipe generate every 1 out power:4\nend\nbuilding timber_farm 1 1\n  store timber 32\n  recipe harvest every 1 out timber:1\nend\nbuilding power_line 1 1\n  store timber 32\n  store wire 32\n  build timber:2 work 3\n  recipe wire every 1 out wire:1\nend\nbuilding powered_mine 1 1\n  store ore 32\n  recipe extract every 1 in power:2 out ore:1\nend\nbuilding smelter 1 1\n  store ore 32\n  store wire 32\n  store steel 32\n  recipe smelt every 1 in ore:1 wire:1 power:2 out steel:1\nend\nvehicle truck capacity 8 speed 4\n",
+  "roads": [
+    {
+      "a": {
+        "x": 1,
+        "z": 1
+      },
+      "b": {
+        "x": 2,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 2,
+        "z": 1
+      },
+      "b": {
+        "x": 3,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 3,
+        "z": 1
+      },
+      "b": {
+        "x": 4,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 4,
+        "z": 1
+      },
+      "b": {
+        "x": 5,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 5,
+        "z": 1
+      },
+      "b": {
+        "x": 6,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 6,
+        "z": 1
+      },
+      "b": {
+        "x": 7,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 7,
+        "z": 1
+      },
+      "b": {
+        "x": 8,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 8,
+        "z": 1
+      },
+      "b": {
+        "x": 9,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 9,
+        "z": 1
+      },
+      "b": {
+        "x": 10,
+        "z": 1
+      }
+    }
+  ],
+  "buildings": [
+    {
+      "type": "generator",
+      "x": 1,
+      "z": 2
+    },
+    {
+      "type": "timber_farm",
+      "x": 3,
+      "z": 2
+    },
+    {
+      "type": "power_line",
+      "x": 5,
+      "z": 2,
+      "constructionSite": true
+    },
+    {
+      "type": "powered_mine",
+      "x": 7,
+      "z": 2
+    },
+    {
+      "type": "smelter",
+      "x": 9,
+      "z": 2
+    }
+  ],
+  "score": {
+    "metric": "combined_multi_objective",
+    "objectives": [
+      "completedSites",
+      "throughputUnits",
+      "unmetDemandUnits"
+    ]
+  },
+  "utilityConnections": [
+    {
+      "resource": "power",
+      "aBuilding": 0,
+      "bBuilding": 3
+    },
+    {
+      "resource": "power",
+      "aBuilding": 0,
+      "bBuilding": 4
+    }
+  ]
+}

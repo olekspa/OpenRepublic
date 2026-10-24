@@ -2,8 +2,8 @@
 
 These fixtures exercise the OpenRepublic economy host and the rule-based
 controller in `tools/republic_autopilot.py`. They are OpenRepublic-authored
-synthetic inputs using the host's built-in synthetic catalog. They do not
-contain game data.
+synthetic inputs using the built-in catalog or a fixture-owned custom catalog.
+They do not contain game data.
 
 ## Fixtures
 
@@ -24,6 +24,9 @@ contain game data.
 | `build_a_mill` | One mill construction site with no material source | The site requires planks, but the baseline has no stocked source to haul from. |
 | `build_a_mill_with_supply` | Farm, sawmill and one mill construction site on one road | The farm produces timber, the sawmill makes planks, and the autopilot serves and completes the site. |
 | `build_two_mills_with_supply` | Farm, sawmill and two mill construction sites on one road | The same authored planks chain supplies two sites; score reports completed-site count and each site's final state. |
+| `growth_town` | Four-capacity home, farm→mill→bakery chain, grain exporter and market site | Residents consume bakery bread; grain exports fund imported planks and bricks, which the autopilot hauls to the market site. The receipt reports fed residents, completed sites and treasury separately. |
+| `power_and_build` | Generator, powered mine, smelter and timber-fed `power_line` site | The site produces wire after construction; the smelter requires wire, ore and connected power. The receipt reports site completion and final-tick utility throughput/deficit. The power links are explicit fixture connections; the `power_line` site is a synthetic production prerequisite. |
+| `austerity` | Grain trade post, local farm/mill/bakery chain and second mill site | Limited exports fund imports for both the trade post's flour recipe and site materials. At short horizons, the baseline can spend on inputs while the second mill remains waiting for materials; longer runs may eventually complete it. |
 
 The building coordinates are origins on the host grid. Each building's access
 cell is one cell north (`x`, `z - 1`); the fixtures place that cell on a road.
@@ -43,7 +46,7 @@ A scenario is one JSON object with these required fields:
 - Optional `catalog`: bounded synthetic catalog DSL text. Utility fixtures use this to define their own power generator and consumer recipes; it contains no game-derived data. Population fixtures may declare `housing`, `workers`, and optional `food` rules as documented in [POPULATION.md](POPULATION.md).
 - Optional `utilityConnections`: array of `{ "resource": "power", "aBuilding": int, "bBuilding": int }`, where endpoints are zero-based indexes into the initial `buildings` array.
 - Trade catalogs may declare per-resource prices and trade-post storage. Trade commands run through the baseline controller; treasury appears in utility score breakdowns only when a catalog declares trade prices.
-- `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, `{ "metric": "utility_multi_objective" }` for utility fixtures, or `{ "metric": "completed_construction_sites" }` for construction fixtures.
+- `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, `{ "metric": "utility_multi_objective" }` for utility fixtures, `{ "metric": "completed_construction_sites" }` for construction fixtures, or `{ "metric": "combined_multi_objective", "objectives": [...] }` for combined fixtures. Supported combined fields are `fedResidents`, `completedSites`, `treasury`, `throughputUnits`, `unmetDemandUnits`, and `storedNonRawUnits`; each remains a separate objective in the score receipt.
 
 The loader and scorer are expected to reject malformed or unsupported scenario
 input with a diagnostic rather than silently substituting values.
@@ -103,7 +106,12 @@ do not establish physical wattage, original-game topology, or parity. Neither
 score is a comprehensive play-quality or profit measure. Results depend on the
 authored catalog, simulation, autopilot, and tick horizon.
 `completed_construction_sites` counts completed authored synthetic sites; it is
-not a cost, profit, or construction-material valuation.
+not a cost, profit, or construction-material valuation. In combined receipts,
+`fedResidents` is the final synthetic population total from the host summary,
+`treasury` is the final authored balance, `throughputUnits` and
+`unmetDemandUnits` are final-tick utility values, and `storedNonRawUnits` is the
+final stored non-raw inventory total. The objectives are reported independently;
+the receipt does not collapse unlike units into an invented aggregate score.
 
 **VERIFIED (fixture authorship and declared schema):** these files are
 OpenRepublic-authored synthetic layouts, and their intended road/building
@@ -137,6 +145,22 @@ extra ticks while attempting orders or placements.
 | `powered_chain_road_and_link_gap` | Throughput / unmet; cost | 2 / 0; cost 7 | 18 |
 | `import_missing_input` | Stored non-raw; treasury | 0.000018 (18 micro-units); treasury 0 | 19 |
 | `export_surplus_for_power` | Throughput / unmet; cost; treasury | 1 / 0; cost 10; treasury 1 | 20 |
+| `growth_town` | Fed residents; completed sites; treasury | 2; 1/1; 28 | 17 |
+| `power_and_build` | Completed sites; power throughput / unmet | 1/1; 4 / 0 | 18 |
+| `austerity` | Completed sites; treasury; stored non-raw units | 0/1; 6; 0.000027 | 17 |
+
+The combined baseline results used 16 requested controller ticks,
+`--exact-ticks`, and 16 planning rounds. **OBSERVED (synthetic host, 24 October
+2026):** growth_town completed its market and exported grain to fund
+trade-material imports, but the final population total was 2 of the four
+authored housing places. The power_and_build baseline completed its power-line
+production prerequisite and ended with power throughput 4 and no eligible
+unmet demand. The austerity baseline queued trade and haul actions but left the
+second mill waiting for materials at tick 17. A separate 64-tick run completed
+the site, so this is a short-horizon budget stall rather than a permanent
+deadlock. Repeated 64-tick runs of each combined ID produced identical
+`scoreHash` and `stateHash` values. These observations apply only to the current
+OpenRepublic host, authored catalogs, rule-based controller and horizons.
 
 The last two scenarios leave their initial utility-link configuration unchanged;
 the road-and-link fixture also retains its three disconnected road segments.
@@ -150,20 +174,19 @@ repair, not general controller competence.
 
 ## LLM controllers and tournament baseline
 
-The inventory fixtures can seed `tools/llm_republic.py` and the tournament harness.
+The inventory and combined fixtures can seed `tools/llm_republic.py` and the tournament harness.
 Use the exact scenario ID (the shipped filename stem) or an existing JSON path.
 Pass `--scenario <id|path>` to `llm_republic.py`; setup consumes one tick, then
 controller runs for `rounds × ticks` ticks and emits a final `scenarioScore`
 record using the scenario's declared score format. Trade scenarios include
 treasury in the breakdown only when the synthetic catalog declares prices.
 
-The utility fixtures currently use `scenario_score.py`'s direct synthetic-catalog
-runner; LLM/tournament controller hosting is not wired for custom catalogs yet.
-
-For a tournament comparison of inventory fixtures, add `--scenario <id|path>` to
+For a tournament comparison of inventory or combined fixtures, add `--scenario <id|path>` to
 `republic_tournament.py`. Each manifest controller runs on a fresh fixture host,
 and a separate rule-based autopilot baseline is added to the same table. All
-rows use `scoreMicroUnits` as the exact value and `scoreUnits` for display.
+inventory rows use `scoreMicroUnits` as the exact value and `scoreUnits` for
+display; combined rows retain their separate `scoreBreakdown` objectives and do
+not collapse unlike units into one scalar.
 World `host_args` are disallowed in scenario mode so region/checkpoint inputs
 cannot silently alter the fixture. Reported final ticks can differ because the
 autopilot may advance extra ticks while attempting placements or trade. Local tests use
@@ -171,9 +194,9 @@ the scripted backend only; network and installed CLI backends are not invoked.
 
 # Construction site scenario baseline
 
-The scorer now makes up to 64 planning rounds by default for
-`completed_construction_sites` scenarios (other metrics retain their one-round
-default). Repeated planning is required because the first pass can correctly
+The scorer now makes up to 64 planning rounds by default for scenarios with
+construction sites (fixtures without a site retain their one-round default).
+Repeated planning is required because the first pass can correctly
 haul timber to a sawmill before that production chain has made the planks a site
 needs. The autopilot then plans later site deliveries when planks are stocked.
 This is an OpenRepublic controller policy; it does not imply WRSR behavior.

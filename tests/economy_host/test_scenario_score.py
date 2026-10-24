@@ -107,6 +107,40 @@ class ScenarioLoaderTests(unittest.TestCase):
         self.assertNotIn("treasury", first["scoreBreakdown"])
         self.assertEqual(first["scoreHash"], second["scoreHash"])
 
+    def test_combined_fixtures_load_with_declared_objectives(self):
+        expected = {
+            "growth_town": ["fedResidents", "completedSites", "treasury"],
+            "power_and_build": ["completedSites", "throughputUnits", "unmetDemandUnits"],
+            "austerity": ["completedSites", "treasury", "storedNonRawUnits"],
+        }
+        for name, objectives in expected.items():
+            scenario = scenario_score.resolve_scenario(name)
+            self.assertEqual(scenario["score"]["metric"], "combined_multi_objective")
+            self.assertEqual(scenario["score"]["objectives"], objectives)
+
+        malformed = scenario_score.resolve_scenario("growth_town")
+        malformed["score"]["objectives"] = [{"unsupported": True}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "bad-objectives.json"
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(scenario_score.ScenarioError, "objectives list"):
+                scenario_score.load_scenario(path)
+
+    def test_combined_score_receipt_is_multi_objective_and_deterministic(self):
+        scenario = scenario_score.resolve_scenario("growth_town")
+        world = {"tick": 10, "stateHash": "stable-state", "treasury": "7", "buildings": [
+            {"id": 1, "type": "market", "cell": {"x": 11, "z": 2}, "constructionSite": False,
+             "constructionState": "done", "constructionProgress": 1.0, "inventory": []}],
+            "roads": [], "orders": [], "vehicles": []}
+        summary = {"errorCode": "none", "population": "4"}
+        first = scenario_score.score_record(scenario, world, {"buildingTypes": []}, 64, summary)
+        second = scenario_score.score_record(scenario, world, {"buildingTypes": []}, 64, summary)
+        self.assertEqual(first["scoreHash"], second["scoreHash"])
+        self.assertEqual(first["scoreBreakdown"]["fedResidents"], 4)
+        self.assertEqual(first["scoreBreakdown"]["completedSites"], 1)
+        self.assertEqual(first["scoreBreakdown"]["treasury"], 7)
+        self.assertNotIn("scoreUnits", first)
+
     def test_treasury_is_reported_only_for_trade_declaring_scenarios(self):
         scenario = scenario_score.resolve_scenario("grain_export_for_power")
         world = {"tick": 4, "stateHash": "state", "treasury": "17", "buildings": [],
@@ -171,6 +205,20 @@ class ScenarioHostIntegrationTests(unittest.TestCase):
                 self.assertLessEqual(first["scoreBreakdown"]["completionTick"], first["tick"])
                 self.assertLessEqual(first["scoreBreakdown"]["completionTick"], 65)
                 self.assertEqual(first["scoreHash"], second["scoreHash"])
+
+    @unittest.skipUnless(HOST_EXE, "host executable argument is required")
+    def test_combined_scenarios_repeat_score_hash_and_attempt_their_objectives(self):
+        for name in ("growth_town", "power_and_build", "austerity"):
+            with self.subTest(scenario=name):
+                scenario = scenario_score.resolve_scenario(name)
+                first = scenario_score.run_scenario(HOST_EXE, scenario, 64, exact_ticks=True)
+                second = scenario_score.run_scenario(HOST_EXE, scenario, 64, exact_ticks=True)
+                self.assertEqual(first["scoreHash"], second["scoreHash"])
+                self.assertEqual(first["stateHash"], second["stateHash"])
+                self.assertEqual(first["scoreBreakdown"], second["scoreBreakdown"])
+                self.assertGreaterEqual(first["autopilot"]["creates_queued"], 1)
+                if name in ("growth_town", "austerity"):
+                    self.assertGreaterEqual(first["autopilot"].get("trade_queued", 0), 1)
 
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
     def test_power_objectives_report_measured_deficit_isolation_and_surplus(self):

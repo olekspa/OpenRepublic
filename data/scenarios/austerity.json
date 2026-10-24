@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "id": "austerity",
+  "name": "Austerity: imports or a second mill",
+  "description": "OpenRepublic synthetic budget tradeoff: exports earn a limited treasury, while the controller can import flour for a running bakery or buy planks and bricks to complete a second mill site. It records which objectives the rule-based baseline actually achieves.",
+  "catalog": "openrepublic-economy 1\nresource grain\ntrade grain buy 1 sell 2\nresource flour\ntrade flour buy 2 sell 1\nresource planks\ntrade planks buy 3 sell 1\nresource bricks\ntrade bricks buy 3 sell 1\nresource bread\nutility power\nbuilding grain_trade_post 1 1\n  store grain 24\n  store flour 12\n  store planks 12\n  store bricks 12\n  store bread 24\n  recipe harvest every 1 out grain:2\n  recipe bread every 1 in flour:1 out bread:1\n  tradepost\nend\nbuilding farm 1 1\n  store grain 32\n  recipe harvest every 1 out grain:2\nend\nbuilding bakery 1 1\n  store flour 24\n  store bread 24\n  recipe bake every 1 in flour:1 out bread:1\nend\nbuilding mill 1 1\n  store grain 32\n  store flour 32\n  store planks 32\n  store bricks 32\n  recipe grind every 1 in grain:1 out flour:1\n  build planks:2 bricks:2 work 4\nend\nvehicle truck capacity 10 speed 2\n",
+  "roads": [
+    {
+      "a": {
+        "x": 1,
+        "z": 1
+      },
+      "b": {
+        "x": 2,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 2,
+        "z": 1
+      },
+      "b": {
+        "x": 3,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 3,
+        "z": 1
+      },
+      "b": {
+        "x": 4,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 4,
+        "z": 1
+      },
+      "b": {
+        "x": 5,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 5,
+        "z": 1
+      },
+      "b": {
+        "x": 6,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 6,
+        "z": 1
+      },
+      "b": {
+        "x": 7,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 7,
+        "z": 1
+      },
+      "b": {
+        "x": 8,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 8,
+        "z": 1
+      },
+      "b": {
+        "x": 9,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 9,
+        "z": 1
+      },
+      "b": {
+        "x": 10,
+        "z": 1
+      }
+    }
+  ],
+  "buildings": [
+    {
+      "type": "grain_trade_post",
+      "x": 1,
+      "z": 2
+    },
+    {
+      "type": "farm",
+      "x": 3,
+      "z": 2
+    },
+    {
+      "type": "mill",
+      "x": 5,
+      "z": 2
+    },
+    {
+      "type": "bakery",
+      "x": 7,
+      "z": 2
+    },
+    {
+      "type": "mill",
+      "x": 9,
+      "z": 2,
+      "constructionSite": true
+    }
+  ],
+  "score": {
+    "metric": "combined_multi_objective",
+    "objectives": [
+      "completedSites",
+      "treasury",
+      "storedNonRawUnits"
+    ]
+  }
+}
