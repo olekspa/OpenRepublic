@@ -84,3 +84,8 @@ if(OPENREPUBLIC_ECONOMY_HOST_AVAILABLE)
     target_link_libraries(OpenRepublicEconomyScaleBench PRIVATE OpenRepublicEconomyProtocol)
     target_compile_definitions(OpenRepublicEconomyScaleBench PRIVATE OPENREPUBLIC_ECONOMY_HOST_AVAILABLE=1)
 endif()
+
+add_executable(OpenRepublicEconomyCalendarTests calendar_tests.cpp)
+target_link_libraries(OpenRepublicEconomyCalendarTests PRIVATE OpenRepublicEconomy OpenRepublicEconomyApi)
+target_compile_features(OpenRepublicEconomyCalendarTests PRIVATE cxx_std_17)
+add_test(NAME EconomyCalendar COMMAND OpenRepublicEconomyCalendarTests)

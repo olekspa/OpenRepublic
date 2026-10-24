@@ -806,7 +806,11 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                     ? Json(std::to_string(summary.workersRequired)) : Json(nullptr)},
                {"stock", stock},
                {"unservedInputs", unserved}, {"vehicles", summary.vehicles},
-               {"text", summary.text}};
+               {"text", summary.text},
+               {"calendar", summary.calendarEnabled
+                    ? Json{{"year", summary.calendarYear}, {"day", summary.calendarDay},
+                           {"month", summary.calendarMonth}, {"season", summary.calendarSeason}}
+                    : Json(nullptr)}};
     if (!sites.empty()) out["constructionSites"]=std::move(sites);
   } else if (method == "utility_diagnostics") {
     if (!Fields(req, {"revision", "offset", "limit"}, message, {"buildingId"}))
