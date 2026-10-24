@@ -2496,6 +2496,11 @@ WorldSnapshot World::Snapshot() const {
         x.constructionProgress = b.constructionSite ?
             static_cast<double>(b.constructionProgress) / constructionType->constructionWorkTicks : 1.0;
         auto *t = s.catalog->BuildingType(b.type);
+        if (b.constructionSite) {
+            for (std::size_t i = 0; i < t->constructionMaterials.size(); ++i)
+                x.constructionMaterials.push_back({t->constructionMaterials[i].resource,
+                    t->constructionMaterials[i].amount, b.constructionStore[i]});
+        }
         for (std::size_t i = 0; i < t->storage.size(); ++i)
             x.inventory.push_back({t->storage[i].resource, b.inventory[i], t->storage[i].capacity});
         for (std::size_t i = 0; i < t->recipes.size(); ++i)

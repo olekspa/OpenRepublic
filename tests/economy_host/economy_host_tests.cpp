@@ -55,6 +55,30 @@ int main() {
   ok &= Check(farmType["storage"][0]["capacity"].is_string() &&
                   farmType["recipes"][0]["outputs"][0]["amount"].is_string(),
               "catalog uint64 quantities use decimal strings");
+  {
+    economy::CatalogBuilder builder;
+    economy::Catalog siteCatalog;
+    economy::CatalogErrorInfo error;
+    economy::ResourceId planks{};
+    economy::BuildingTypeId mill{};
+    ok &= Check(builder.AddResource("planks", &planks, error) &&
+                builder.AddBuildingType("mill", 1, 1, &mill, error) &&
+                builder.SetConstruction(mill, {{planks, 2}}, 3, error) &&
+                builder.Build(siteCatalog, error), "build construction query fixture");
+    economy::World siteWorld(siteCatalog, 8, 8);
+    economy_host::Dispatcher siteHost(economy_host::Role::Controller, siteWorld);
+    const auto placedSite = siteWorld.PlaceConstructionSite(mill, {2, 2});
+    ok &= Check(static_cast<bool>(placedSite) && siteWorld.Step().accepted,
+                "create construction site query fixture");
+    const auto siteView = Response(siteHost, Request("site-world", "world"))["result"]["world"]["buildings"][0];
+    ok &= Check(siteView["constructionSite"] == true &&
+                siteView["constructionMaterials"].size() == 1 &&
+                siteView["constructionMaterials"][0]["resource"] == "planks" &&
+                siteView["constructionMaterials"][0]["required"] == "2" &&
+                siteView["constructionMaterials"][0]["held"] == "0" &&
+                siteView["constructionMaterials"][0]["missing"] == "2",
+                "world query exposes site-specific required and held materials additively");
+  }
   const auto legacySummary = Response(observer, Request("legacy-summary", "summary"));
   ok &= Check(legacySummary["ok"] && legacySummary["result"]["population"].is_null() &&
                   legacySummary["result"]["workers"].is_null() &&

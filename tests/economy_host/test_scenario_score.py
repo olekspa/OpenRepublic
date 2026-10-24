@@ -117,6 +117,23 @@ class ScenarioLoaderTests(unittest.TestCase):
         self.assertEqual(record["scoreBreakdown"]["treasury"], 17)
         self.assertIn("scoreUnits", record)
 
+    def test_construction_score_counts_completed_sites_and_hashes_final_states(self):
+        scenario = scenario_score.resolve_scenario("build_two_mills_with_supply")
+        world = {"tick": "20", "stateHash": "stable-state", "buildings": [
+            {"id": 1, "type": "farm", "cell": {"x": 1, "z": 2}, "inventory": []},
+            {"id": 2, "type": "sawmill", "cell": {"x": 3, "z": 2}, "inventory": []},
+            {"id": 3, "type": "mill", "cell": {"x": 5, "z": 2}, "constructionSite": False, "constructionState": "done", "constructionProgress": 1.0, "inventory": []},
+            {"id": 4, "type": "mill", "cell": {"x": 7, "z": 2}, "constructionSite": True, "constructionState": "building", "constructionProgress": 0.5, "inventory": []}],
+            "roads": [], "orders": [], "vehicles": []}
+        first = scenario_score.score_record(scenario, world, {"buildingTypes": []}, 16)
+        second = scenario_score.score_record(scenario, world, {"buildingTypes": []}, 16)
+        self.assertEqual(first, second)
+        self.assertEqual(first["scoreUnits"], 1)
+        self.assertEqual(first["scoreBreakdown"]["completedSites"], 1)
+        self.assertEqual(first["scoreBreakdown"]["totalSites"], 2)
+        self.assertEqual(first["scoreBreakdown"]["siteStates"][1]["state"], "building")
+        self.assertEqual(first["scoreHash"], second["scoreHash"])
+
 
 class ScenarioHostIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")

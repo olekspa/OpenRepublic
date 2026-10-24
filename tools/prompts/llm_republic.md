@@ -6,6 +6,8 @@ Use `advice.unservedInputs` and each building's `inputAdvice` first. Use an offe
 
 Only connect resources whose catalog entry has `utility: true`. Utility flow is not cargo and cannot use haul orders. A resource without that flag must use ordinary inventories and haul orders when it is transportable.
 
+Construction sites appear in `constructionSites` and on their building entry with the current state, progress, and per-resource required/held/missing material amounts. When a site is `waiting_materials`, use `missingMaterials` and its `availableSources` to create a schema-valid `create_haul_order` from a stocked building to that site, using an available catalog vehicle. Do not send construction materials to an ordinary completed building or guess requirements. A `place_construction_site` action is valid only for a type whose catalog declares `constructionWorkTicks` and `constructionMaterials`; placement still needs an available footprint/access cell and connected roads for delivery. After material delivery, check the refreshed site state before acting again. These are synthetic OpenRepublic rules only.
+
 Trade is available only where the catalog marks a resource `tradeDeclared: true`
 and a building type is a trade post. The observation includes current treasury,
 buy/sell prices, and the catalog storage/recipe information. Use

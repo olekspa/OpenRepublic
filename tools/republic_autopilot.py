@@ -240,7 +240,53 @@ def _submit_retargets(host, plan, stats, skip_orders=()):
     return handles, blocked_pairs, queued_orders
 
 
-def _create_commands(plan, blocked_pairs=()):
+def _construction_site_commands(plan, world, catalog):
+    """Suggest stocked material hauls for active sites from additive host fields."""
+    types = {b.get("name"): b for b in catalog.get("buildingTypes", [])}
+    buildings = world.get("buildings", [])
+    existing = {(int(o["source"]), int(o["destination"]), o["resource"])
+                for o in world.get("orders", [])}
+    vehicles = [v.get("name") for v in catalog.get("vehicleTypes", []) if v.get("name")]
+    if not vehicles:
+        return []
+    vehicle = "truck" if "truck" in vehicles else vehicles[0]
+    commands = []
+    for site in buildings:
+        if site.get("constructionSite") is not True or site.get("constructionState") != "waiting_materials":
+            continue
+        definition = types.get(site.get("type"), {})
+        requirements = definition.get("constructionMaterials", [])
+        held = {i.get("resource"): int(i.get("held", i.get("amount", 0)))
+                for i in site.get("constructionMaterials", site.get("inventory", []))}
+        for requirement in requirements:
+            resource = requirement.get("resource")
+            needed = int(requirement.get("amount", 0))
+            if not resource or needed <= held.get(resource, 0):
+                continue
+            options = []
+            site_cell = site.get("cell", {})
+            for source in buildings:
+                if source.get("constructionSite") is True or int(source["id"]) == int(site["id"]):
+                    continue
+                stock = next((int(item.get("amount", 0)) for item in source.get("inventory", [])
+                              if item.get("resource") == resource), 0)
+                key = (int(source["id"]), int(site["id"]), resource)
+                if stock <= 0 or key in existing:
+                    continue
+                cell = source.get("cell", {})
+                distance = abs(int(cell.get("x", 0)) - int(site_cell.get("x", 0))) + \
+                           abs(int(cell.get("z", 0)) - int(site_cell.get("z", 0)))
+                options.append((distance, int(source["id"])))
+            if options:
+                source_id = min(options)[1]
+                key = (source_id, int(site["id"]), resource)
+                existing.add(key)
+                commands.append({"source": source_id, "destination": int(site["id"]),
+                                 "resource": resource, "vehicleType": vehicle})
+    return commands
+
+
+def _create_commands(plan, blocked_pairs=(), world=None, catalog=None):
     commands = []
     seen = set()
     for need in plan["unservedInputs"]:
@@ -252,6 +298,12 @@ def _create_commands(plan, blocked_pairs=()):
         if key not in seen and key not in blocked_pairs:
             seen.add(key)
             commands.append(command)
+    if world is not None and catalog is not None:
+        for command in _construction_site_commands(plan, world, catalog):
+            key = (command["source"], command["destination"], command["resource"])
+            if key not in seen and key not in blocked_pairs:
+                seen.add(key)
+                commands.append(command)
     return commands
 
 
@@ -363,7 +415,7 @@ def run_round(host, catalog, ticks, placed, round_number=1, count_generated=Fals
         blocked_pairs.update(refreshed_pairs)
     # Retargets are queued before creates and use the adviser revision. Exclude any
     # same-tick create that would duplicate the new source/destination/resource tuple.
-    create_handles = _queue_creates(host, _create_commands(plan, blocked_pairs), stats) if final_tick is None or int(_world(host)["tick"]) < final_tick else []
+    create_handles = _queue_creates(host, _create_commands(plan, blocked_pairs, _world(host), catalog), stats) if final_tick is None or int(_world(host)["tick"]) < final_tick else []
     trade_handles = _queue_trades(host, _world(host), catalog) if final_tick is None or int(_world(host)["tick"]) < final_tick else []
     step_ticks=ticks if final_tick is None else min(ticks,max(0,final_tick-int(_world(host)["tick"])))
     if step_ticks:

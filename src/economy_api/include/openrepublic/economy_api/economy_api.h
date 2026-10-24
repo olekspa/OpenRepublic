@@ -92,6 +92,10 @@ struct InventoryItem {
     std::string resource;
     std::uint64_t amount{}, capacity{};
 };
+struct ConstructionMaterialItem {
+    std::string resource;
+    std::uint64_t required{}, held{};
+};
 struct BuildingView {
     economy::BuildingId id{};
     std::string type;
@@ -103,6 +107,7 @@ struct BuildingView {
     bool constructionSite{};
     std::string constructionState;
     double constructionProgress{};
+    std::vector<ConstructionMaterialItem> constructionMaterials;
 };
 struct RoadView {
     economy::RoadId id{};

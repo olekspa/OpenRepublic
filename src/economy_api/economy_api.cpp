@@ -42,6 +42,10 @@ BuildingView MakeBuilding(const economy::Catalog& c, const economy::BuildingSnap
         const auto* r = c.Resource(i.resource);
         v.inventory.push_back({r ? r->name : "", i.amount, i.capacity});
     }
+    for (const auto& item : b.constructionMaterials) {
+        const auto* r = c.Resource(item.resource);
+        v.constructionMaterials.push_back({r ? r->name : "", item.required, item.held});
+    }
     return v;
 }
 WorldView MakeWorld(const economy::Catalog& c, const economy::WorldSnapshot& s) {

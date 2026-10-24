@@ -160,6 +160,44 @@ class AutopilotTests(unittest.TestCase):
             ("trade_import", {"buildingId": 4, "resource": "coal", "amount": 4, "rateCap": 4}),
         ])
 
+    def test_waiting_site_gets_a_haul_from_nearest_stocked_source(self):
+        snapshot = world()
+        snapshot["buildings"] = [
+            {"id": 1, "type": "farm", "cell": {"x": 2, "z": 2}, "constructionSite": False, "stallReason": "running",
+             "inventory": [{"resource": "planks", "amount": "3"}]},
+            {"id": 2, "type": "mill", "cell": {"x": 8, "z": 2}, "constructionSite": True, "stallReason": "running",
+             "constructionState": "waiting_materials", "constructionProgress": 0.0,
+             "constructionMaterials": [{"resource": "planks", "required": "2", "held": "0", "missing": "2"}],
+             "inventory": []},
+            {"id": 3, "type": "sawmill", "cell": {"x": 4, "z": 2}, "constructionSite": False, "stallReason": "running",
+             "inventory": [{"resource": "planks", "amount": "4"}]},
+        ]
+        catalog = {"vehicleTypes": [{"name": "truck"}], "buildingTypes": [
+            {"name": "farm", "recipes": []},
+            {"name": "mill", "constructionMaterials": [{"resource": "planks", "amount": "2"}], "recipes": []},
+            {"name": "sawmill", "recipes": []}]}
+        host = FakeHost(snapshot, [{"revision": "7", "unservedInputs": []}])
+        result = self.run_round(host, catalog)
+        orders = [params["orders"] for method, params in host.calls if method == "create_haul_orders"]
+        self.assertEqual(orders, [[{"source": 3, "destination": 2, "resource": "planks", "vehicleType": "truck"}]])
+        self.assertEqual(result["creates_queued"], 1)
+
+    def test_site_haul_suppresses_existing_route_and_done_site(self):
+        snapshot = world()
+        snapshot["buildings"] = [{"id": 1, "type": "farm", "stallReason": "running", "inventory": [{"resource": "planks", "amount": "8"}]},
+                                 {"id": 2, "type": "mill", "constructionSite": True,
+                                  "constructionState": "waiting_materials", "stallReason": "running", "inventory": [],
+                                  "constructionMaterials": [{"resource": "planks", "required": "2", "held": "1"}]},
+                                 {"id": 3, "type": "mill", "constructionSite": True,
+                                  "constructionState": "done", "stallReason": "running", "inventory": []}]
+        snapshot["orders"] = [{"id": 9, "source": 1, "destination": 2, "resource": "planks", "state": "to_destination"}]
+        catalog = {"vehicleTypes": [{"name": "truck"}], "buildingTypes": [
+            {"name": "mill", "constructionMaterials": [{"resource": "planks", "amount": "2"}], "recipes": []},
+            {"name": "farm", "recipes": []}]}
+        host = FakeHost(snapshot, [{"revision": "7", "unservedInputs": []}])
+        self.run_round(host, catalog)
+        self.assertFalse(any(method == "create_haul_orders" for method, _ in host.calls))
+
     def test_host_call_uses_monotonic_ids_session_binding_and_protocol_errors(self):
         client = autopilot.Host.__new__(autopilot.Host)
         client.proc = FakeProcess([

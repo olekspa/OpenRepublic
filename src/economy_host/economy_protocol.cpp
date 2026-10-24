@@ -535,7 +535,7 @@ Json World(const economy_api::WorldView &w) {
       inventory.push_back(Json{{"resource", i.resource},
                                {"amount", std::to_string(i.amount)},
                                {"capacity", std::to_string(i.capacity)}});
-    buildings.push_back(Json{{"id", b.id},
+    Json building{{"id", b.id},
                              {"type", b.type},
                              {"cell", Cell(b.cell)},
                              {"enabled", b.enabled},
@@ -543,7 +543,16 @@ Json World(const economy_api::WorldView &w) {
                              {"stallReason", Stall(b.stallReason)},
                              {"stallExplanation", b.stallExplanation},
                              {"constructionSite",b.constructionSite}, {"constructionState",b.constructionState},
-                             {"constructionProgress",b.constructionProgress}});
+                             {"constructionProgress",b.constructionProgress}};
+    if (b.constructionSite) {
+      Json materials = Json::array();
+      for (const auto& item : b.constructionMaterials)
+        materials.push_back(Json{{"resource", item.resource}, {"required", std::to_string(item.required)},
+                                 {"held", std::to_string(item.held)},
+                                 {"missing", std::to_string(item.required - item.held)}});
+      building["constructionMaterials"] = std::move(materials);
+    }
+    buildings.push_back(std::move(building));
   }
   for (const auto &r : w.roads)
     roads.push_back(Json{{"id", r.id}, {"a", Cell(r.a)}, {"b", Cell(r.b)}, {"enabled", r.enabled}});
