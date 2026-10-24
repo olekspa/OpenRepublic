@@ -14,6 +14,7 @@
 #include "openrepublic/economy_api/economy_api.h"
 #include "openrepublic/runtime/graphics_settings.h"
 #include "openrepublic/runtime/native_economy_clock.h"
+#include "openrepublic/runtime/economy_overview.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/sim/simulation.h"
 #include "../economy_host/economy_protocol.h"
@@ -25,6 +26,7 @@
 
 #include <filesystem>
 #include <cstdint>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -148,7 +150,9 @@ namespace openrepublic
 		float nativeStatusTop = 126.0f;
 		bool nativeToolsReady = false;
 		bool nativeDetailsExpanded = false;
+		bool nativeOverviewExpanded = false;
 		wi::gui::Button nativeDetailsButton;
+		wi::gui::Button nativeOverviewButton;
 		wi::gui::Button nativeSaveButton;
 		// Lifetime order is intentional: EconomyApi references regionEconomyWorld,
 		// which references regionEconomyCatalog. Destruction runs in reverse order.
@@ -163,6 +167,7 @@ namespace openrepublic
 		std::wstring localEconomyPipeName;
 		openrepublic::compat::RegionImportReport regionEconomyImport;
 		std::optional<openrepublic::economy_api::WorldView> regionEconomySnapshot;
+		std::deque<openrepublic::economy::WorldSnapshot> nativeOverviewHistory;
 		std::vector<std::uint64_t> regionPendingCommandHandles;
 		std::vector<wi::ecs::Entity> regionTruckEntities;
 		std::string regionEconomyDescription;
