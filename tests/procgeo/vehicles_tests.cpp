@@ -54,6 +54,16 @@ int main()
 				mesh.colors[i].b != variant.colors[i].b;
 		check(changedColor, "different seeds select a different muted paint variant");
 	}
+	const Mesh truckBody = MakeCargoTruckBody(5u);
+	const Mesh wheel = MakeVehicleWheel();
+	Vec3 bodyLo{}, bodyHi{}, wheelLo{}, wheelHi{};
+	check(truckBody.Valid() && truckBody.Bounds(bodyLo, bodyHi), "separate cargo-truck body mesh is valid");
+	check(wheel.Valid() && wheel.Bounds(wheelLo, wheelHi), "separate wheel mesh is valid");
+	check(bodyLo.y > 0.05f, "separate truck body omits baked ground-contact wheels");
+	check(std::abs((wheelHi.x - wheelLo.x) - 0.30f) < 1e-5f &&
+		std::abs((wheelHi.y - wheelLo.y) - 0.96f) < 1e-5f &&
+		std::abs((wheelHi.z - wheelLo.z) - 0.96f) < 1e-5f,
+		"animated wheel mesh has an X axle and expected radius/width");
 	check(VehicleLength(VehicleKind::Car) > 3.7f && VehicleLength(VehicleKind::Car) < 4.4f,
 		"reported car length matches its scale");
 	check(VehicleLength(VehicleKind::Bus) > 7.0f && VehicleLength(VehicleKind::Bus) < 8.0f,

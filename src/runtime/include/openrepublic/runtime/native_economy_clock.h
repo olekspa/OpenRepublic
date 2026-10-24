@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <algorithm>
 #include <cstdint>
 
 namespace openrepublic::runtime {
@@ -17,6 +18,10 @@ public:
         if (remainder_ < Period) return 0;
         remainder_ -= Period;
         return 1;
+    }
+
+    double InterpolationAlpha() const noexcept {
+        return std::clamp(remainder_ / Period, 0.0, 1.0);
     }
 
 private:

@@ -6,6 +6,7 @@
 #include "openrepublic/runtime/native_economy_layout.h"
 
 #include <optional>
+#include <array>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -22,6 +23,7 @@ namespace openrepublic::preview
 			const economy::Catalog& catalog, std::vector<RegionInstance>& outInstances, std::string& error);
 		bool Sync(wi::scene::Scene& scene, const economy::WorldSnapshot& snapshot,
 			const economy::Catalog& catalog, std::vector<RegionInstance>& outInstances, std::string& error);
+		void UpdateVehicleMotion(wi::scene::Scene& scene, double alpha);
 		// Re-centers native geometry around the current snapshot. The caller can use
 		// this for an explicit framing action while leaving ordinary Sync frozen.
 		bool Rebase(wi::scene::Scene& scene, const economy::WorldSnapshot& snapshot,
@@ -55,13 +57,36 @@ namespace openrepublic::preview
 			economy::BuildingId a{}, b{};
 			double centerX{}, centerZ{}, centerY{}, halfLength{}, yaw{};
 		};
+		struct VehicleVisual
+		{
+			wi::ecs::Entity body = wi::ecs::INVALID_ENTITY;
+			wi::ecs::Entity load = wi::ecs::INVALID_ENTITY;
+			std::array<wi::ecs::Entity, 4> wheels{};
+			economy::Cell previous{};
+			economy::Cell current{};
+			float yaw{};
+			float wheelRotation{};
+			float wheelRotationBase{};
+			bool hasPrevious{};
+			bool loaded{};
+			bool idle{};
+		};
+		struct BuildingEffect
+		{
+			wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
+			bool active{};
+		};
 
 		bool initialized_ = false;
 		wi::ecs::Entity groundEntity_ = wi::ecs::INVALID_ENTITY;
+		wi::ecs::Entity truckMesh_ = wi::ecs::INVALID_ENTITY;
+		wi::ecs::Entity wheelMesh_ = wi::ecs::INVALID_ENTITY;
 		std::optional<runtime::NativeEconomyTransform> transform_;
 		std::unordered_map<economy::BuildingId, BuildingVisual> buildings_;
 		std::unordered_map<economy::RoadId, RoadVisual> roads_;
 		std::vector<UtilityVisual> utilityConnections_;
+		std::unordered_map<economy::VehicleId, VehicleVisual> vehicles_;
+		std::unordered_map<economy::BuildingId, BuildingEffect> buildingEffects_;
 		std::unordered_map<wi::ecs::Entity, economy::BuildingId> buildingByEntity_;
 		float cameraDistance_ = 20.0f;
 		DirectX::XMFLOAT3 cameraTarget_{};
