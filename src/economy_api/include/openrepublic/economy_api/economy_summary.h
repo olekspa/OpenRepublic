@@ -18,6 +18,7 @@ struct SummaryUnservedInput {
     std::uint64_t held{};
     std::uint64_t needed{};
 };
+struct SummaryConstructionSite { economy::BuildingId building{}; std::string buildingType, state; double progress{}; };
 struct EconomySummary {
     std::uint64_t tick{};
     std::uint64_t population{};
@@ -27,6 +28,7 @@ struct EconomySummary {
     bool workforceEnabled{};
     std::vector<SummaryStock> stock;
     std::vector<SummaryUnservedInput> unservedInputs;
+    std::vector<SummaryConstructionSite> constructionSites;
     std::size_t vehicles{};
     std::string text;
 };

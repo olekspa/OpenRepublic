@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "build_a_mill",
+  "name": "Build a mill",
+  "description": "OpenRepublic synthetic construction-site scenario. The mill is placed as a construction site and waits for its authored planks requirement.",
+  "catalog": "openrepublic-economy 1\nresource planks\nresource flour\nutility power\nbuilding mill 2 2\n  store flour 100\n  build planks:2 work 4\nend\nvehicle truck capacity 10 speed 1\n",
+  "roads": [],
+  "buildings": [
+    { "type": "mill", "x": 4, "z": 4, "constructionSite": true }
+  ],
+  "score": { "metric": "stored_non_raw_units" }
+}

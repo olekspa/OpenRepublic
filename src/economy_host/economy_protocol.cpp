@@ -410,6 +410,8 @@ std::string Action(economy_api::Action action) {
     return "step";
   case A::PlaceBuilding:
     return "place_building";
+  case A::PlaceConstructionSite:
+    return "place_construction_site";
   case A::RemoveBuilding:
     return "remove_building";
   case A::BuildRoad:
@@ -490,7 +492,7 @@ Json Catalog(const economy_api::CatalogView &c) {
     resources.push_back(std::move(item));
   }
   for (const auto &b : c.buildingTypes) {
-    Json storage = Json::array(), recipes = Json::array();
+    Json storage = Json::array(), recipes = Json::array(), construction = Json::array();
     for (const auto &s : b.storage)
       storage.push_back(Json{{"resource", s.resource}, {"capacity", std::to_string(s.capacity)}});
     for (const auto &r : b.recipes) {
@@ -502,12 +504,14 @@ Json Catalog(const economy_api::CatalogView &c) {
       recipes.push_back(Json{
           {"name", r.name}, {"intervalTicks", r.intervalTicks}, {"inputs", inputs}, {"outputs", outputs}});
     }
+    for (const auto &a : b.constructionMaterials) construction.push_back(Json{{"resource",a.resource},{"amount",std::to_string(a.amount)}});
     Json item{{"id", b.id},
                              {"name", b.name},
                              {"width", b.width},
                              {"depth", b.depth},
                              {"storage", storage},
                              {"recipes", recipes}};
+    if (b.constructionWorkTicks) { item["constructionMaterials"]=construction; item["constructionWorkTicks"]=b.constructionWorkTicks; }
     if (b.tradePost) item["tradePost"] = true;
     buildings.push_back(std::move(item));
   }
@@ -537,7 +541,9 @@ Json World(const economy_api::WorldView &w) {
                              {"enabled", b.enabled},
                              {"inventory", inventory},
                              {"stallReason", Stall(b.stallReason)},
-                             {"stallExplanation", b.stallExplanation}});
+                             {"stallExplanation", b.stallExplanation},
+                             {"constructionSite",b.constructionSite}, {"constructionState",b.constructionState},
+                             {"constructionProgress",b.constructionProgress}});
   }
   for (const auto &r : w.roads)
     roads.push_back(Json{{"id", r.id}, {"a", Cell(r.a)}, {"b", Cell(r.b)}, {"enabled", r.enabled}});
@@ -780,6 +786,8 @@ std::string Dispatcher::HandleLine(std::string_view line) {
       unserved.push_back(Json{{"resource", item.resource}, {"buildingType", item.buildingType},
                               {"building", item.building}, {"held", std::to_string(item.held)},
                               {"needed", std::to_string(item.needed)}});
+    Json sites=Json::array();
+    for (const auto& item:summary.constructionSites) sites.push_back(Json{{"building",item.building},{"buildingType",item.buildingType},{"state",item.state},{"progress",item.progress}});
     out = Json{{"errorCode", "none"}, {"tick", std::to_string(summary.tick)},
                {"population", summary.populationEnabled
                     ? Json(std::to_string(summary.population)) : Json(nullptr)},
@@ -790,6 +798,7 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                {"stock", stock},
                {"unservedInputs", unserved}, {"vehicles", summary.vehicles},
                {"text", summary.text}};
+    if (!sites.empty()) out["constructionSites"]=std::move(sites);
   } else if (method == "utility_diagnostics") {
     if (!Fields(req, {"revision", "offset", "limit"}, message, {"buildingId"}))
       return invalid(message);
@@ -1267,12 +1276,12 @@ std::string Dispatcher::HandleLine(std::string_view line) {
     std::uint64_t id1{}, id2{};
     std::string name, resource, vehicle;
     std::int32_t x{}, z{}, ax{}, az{}, bx{}, bz{};
-    if (kind == "place_building") {
+    if (kind == "place_building" || kind == "place_construction_site") {
       if (!NestedFields(c, {"kind", "type", "x", "z"}, message))
         return invalid(message);
       if (!String(c, "type", name, message) || !Int32(c, "x", x, message) || !Int32(c, "z", z, message))
         return invalid(message);
-      s = api_->PlaceBuilding(revision, name, {x, z});
+      s = kind == "place_building" ? api_->PlaceBuilding(revision, name, {x, z}) : api_->PlaceConstructionSite(revision, name, {x,z});
     } else if (kind == "remove_building" || kind == "set_building_enabled") {
       if (kind == "remove_building") {
         if (!NestedFields(c, {"kind", "buildingId"}, message))

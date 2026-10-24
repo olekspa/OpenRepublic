@@ -28,7 +28,7 @@ enum class Action : std::uint8_t {
     QueryWorld = 1, QueryCatalog, ExplainBuilding, Step, PlaceBuilding, RemoveBuilding,
     BuildRoad, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, CancelHaulOrder,
     PollCommand, ReadEvents, RetargetHaulOrder, ExportCheckpoint, CompactCommandHistory,
-    ConnectUtility, DisconnectUtility, QueryUtilityDiagnostics, TradeExport, TradeImport
+    ConnectUtility, DisconnectUtility, QueryUtilityDiagnostics, TradeExport, TradeImport, PlaceConstructionSite
 };
 struct Permissions {
     bool query{true};
@@ -72,6 +72,8 @@ struct BuildingTypeInfo {
     bool tradePost{};
     std::vector<StorageInfo> storage;
     std::vector<RecipeInfo> recipes;
+    std::vector<RecipeAmountInfo> constructionMaterials;
+    std::uint32_t constructionWorkTicks{};
 };
 struct VehicleTypeInfo {
     economy::VehicleTypeId id{};
@@ -98,6 +100,9 @@ struct BuildingView {
     std::vector<InventoryItem> inventory;
     economy::StallReason stallReason{economy::StallReason::Running};
     std::string stallExplanation;
+    bool constructionSite{};
+    std::string constructionState;
+    double constructionProgress{};
 };
 struct RoadView {
     economy::RoadId id{};
@@ -257,6 +262,7 @@ public:
     Explanation Explain(economy::BuildingId id) const;
     /** Queues placement by exact catalog type name if revision and permissions allow it. */
     Submission PlaceBuilding(std::uint64_t revision, const std::string& type, economy::Cell cell);
+    Submission PlaceConstructionSite(std::uint64_t revision, const std::string& type, economy::Cell cell);
     /** Queues removal of a stable building ID after checking the expected revision. */
     Submission RemoveBuilding(std::uint64_t revision, economy::BuildingId id);
     /** Queues an axis-aligned road segment after checking the expected revision. */

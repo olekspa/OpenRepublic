@@ -29,9 +29,14 @@ EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
     }
     result.vehicles = snapshot.vehicles.size();
     std::map<economy::ResourceId, std::uint64_t> totals;
-    for (const auto& building : snapshot.buildings)
+    for (const auto& building : snapshot.buildings) {
+        if (building.constructionSite) {
+            const auto* type=catalog.BuildingType(building.type);
+            result.constructionSites.push_back({building.id,type?type->name:"",building.constructionState==0?"waiting_materials":"building",building.constructionProgress});
+        }
         for (const auto& item : building.inventory)
             totals[item.resource] = SaturatingAdd(totals[item.resource], item.amount);
+    }
     for (const auto& resource : catalog.Resources()) {
         if (!resource.utility)
             result.stock.push_back({resource.name, totals[resource.id]});
@@ -96,6 +101,7 @@ EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
         text << '\n' << "  " << item.resource << " at " << item.buildingType
              << "#" << item.building << ": " << item.held << "/" << item.needed;
     text << '\n' << "Vehicles: " << result.vehicles;
+    if (!result.constructionSites.empty()) text << '\n' << "Construction sites: " << result.constructionSites.size();
     result.text = text.str();
     return result;
 }
