@@ -108,7 +108,9 @@ def load_scenario(path):
         if not building_types or not re.search(r"(?m)^utility\s+power\s*$", scenario["catalog"]):
             raise ScenarioError("catalog must declare utility power and at least one building")
     for index, building in enumerate(scenario["buildings"]):
-        _object(building, f"buildings[{index}]", ("type", "x", "z"))
+        _object(building, f"buildings[{index}]", ("type", "x", "z"), ("constructionSite",))
+        if "constructionSite" in building and not isinstance(building["constructionSite"], bool):
+            raise ScenarioError(f"buildings[{index}].constructionSite must be boolean")
         if building["type"] not in building_types:
             raise ScenarioError(f"buildings[{index}].type is not in the scenario catalog")
         _integer(building["x"], f"buildings[{index}].x", 0, 100_000)
@@ -162,7 +164,7 @@ def _seed(host, scenario):
          "bx": road["b"]["x"], "bz": road["b"]["z"]}
         for road in scenario["roads"]
     ]
-    commands.extend({"kind": "place_building", "type": building["type"],
+    commands.extend({"kind": "place_construction_site" if building.get("constructionSite") else "place_building", "type": building["type"],
                      "x": building["x"], "z": building["z"]}
                     for building in scenario["buildings"])
     revision = autopilot._world(host)["revision"]

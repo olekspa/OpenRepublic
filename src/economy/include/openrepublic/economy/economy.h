@@ -70,6 +70,8 @@ struct BuildingTypeDef {
     bool tradePost{};
     std::uint64_t housing{};
     std::uint64_t workers{};
+    std::vector<RecipeAmount> constructionMaterials;
+    std::uint32_t constructionWorkTicks{};
 };
 struct VehicleTypeDef {
     VehicleTypeId id{};
@@ -158,6 +160,8 @@ public:
     bool SetTradePost(BuildingTypeId building, bool enabled, CatalogErrorInfo &error);
     bool SetHousing(BuildingTypeId building, std::uint64_t capacity, CatalogErrorInfo &error);
     bool SetWorkers(BuildingTypeId building, std::uint64_t requirement, CatalogErrorInfo &error);
+    bool SetConstruction(BuildingTypeId building, const std::vector<RecipeAmount>& materials,
+                         std::uint32_t workTicks, CatalogErrorInfo &error);
     bool SetFood(ResourceId resource, std::uint64_t amount, std::uint32_t intervalTicks,
                  CatalogErrorInfo &error);
     /** Resolves a resource name and adds its storage slot. */
@@ -303,6 +307,9 @@ struct BuildingSnapshot {
     std::vector<InventorySnapshot> inventory;
     std::vector<RecipeProgressSnapshot> recipes;
     StallRecord stall;
+    bool constructionSite{};
+    std::uint8_t constructionState{}; // 0 waiting materials, 1 building, 2 done
+    double constructionProgress{};
 };
 struct RoadSnapshot {
     RoadId id{};
@@ -432,6 +439,7 @@ public:
      *  Footprints cannot overlap buildings, reserved access cells, or enabled/disabled roads.
      *  Access must be in bounds and outside footprints; a road there is allowed, not required. */
     CommandId PlaceBuilding(BuildingTypeId type, Cell origin);
+    CommandId PlaceConstructionSite(BuildingTypeId type, Cell origin);
     /** Queues removal and rejects buildings referenced by haul orders. */
     CommandId RemoveBuilding(BuildingId building);
     /** Queues one in-bounds axis-aligned unit-step road segment. */

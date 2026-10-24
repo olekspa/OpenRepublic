@@ -31,6 +31,11 @@ BuildingView MakeBuilding(const economy::Catalog& c, const economy::BuildingSnap
     v.type = type ? type->name : "";
     v.cell = b.origin;
     v.enabled = b.enabled;
+    v.constructionSite=b.constructionSite;
+    const auto* constructionType=c.BuildingType(b.type);
+    if (constructionType && constructionType->constructionWorkTicks)
+        v.constructionState=b.constructionState==0?"waiting_materials":(b.constructionState==1?"building":"done");
+    v.constructionProgress=b.constructionProgress;
     v.stallReason = b.stall.reason;
     v.stallExplanation = StallText(c, b.stall);
     for (const auto& i : b.inventory) {
@@ -97,7 +102,7 @@ Capabilities EconomyApi::DiscoverCapabilities() const {
             Action::BuildRoad, Action::SetRoadEnabled, Action::SetBuildingEnabled,
             Action::CreateHaulOrder, Action::CancelHaulOrder, Action::RetargetHaulOrder,
             Action::CompactCommandHistory, Action::ConnectUtility, Action::DisconnectUtility,
-            Action::TradeExport, Action::TradeImport});
+            Action::TradeExport, Action::TradeImport, Action::PlaceConstructionSite});
     }
     return c;
 }
@@ -170,7 +175,7 @@ CatalogView EconomyApi::DescribeCatalog() const {
         v.resources.push_back({r.id, r.name, r.utility, r.tradeDeclared, r.buyPrice, r.sellPrice});
     }
     for (const auto& b : catalog_->BuildingTypes()) {
-        BuildingTypeInfo x{b.id, b.name, b.width, b.depth, b.tradePost, {}, {}};
+        BuildingTypeInfo x{b.id, b.name, b.width, b.depth, b.tradePost, {}, {}, {}, b.constructionWorkTicks};
         for (const auto& s : b.storage) {
             const auto* r = catalog_->Resource(s.resource);
             x.storage.push_back({r ? r->name : "", s.capacity});
@@ -189,6 +194,7 @@ CatalogView EconomyApi::DescribeCatalog() const {
             }
             x.recipes.push_back(std::move(ri));
         }
+        for (const auto& a : b.constructionMaterials) { const auto* r=catalog_->Resource(a.resource); x.constructionMaterials.push_back({r?r->name:"",a.amount}); }
         v.buildingTypes.push_back(std::move(x));
     }
     for (const auto& t : catalog_->VehicleTypes()) {
@@ -377,6 +383,14 @@ Submission EconomyApi::PlaceBuilding(std::uint64_t revision, const std::string& 
     if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
         return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->PlaceBuilding(id, c));
+}
+Submission EconomyApi::PlaceConstructionSite(std::uint64_t revision, const std::string& type, economy::Cell c) {
+    if (!Allowed(true)) return {ErrorCode::PermissionDenied,0,{}};
+    if (world_->Revision()!=revision) return {ErrorCode::StaleRevision,0,{}};
+    economy::BuildingTypeId id{};
+    if (!catalog_->FindBuildingType(type,id) || !catalog_->BuildingType(id)->constructionWorkTicks) return {ErrorCode::InvalidArgument,0,{}};
+    if (nextHandle_==0 || nextHandle_==UINT64_MAX) return {ErrorCode::CommandHandleExhausted,0,{}};
+    return Submit(revision,world_->PlaceConstructionSite(id,c));
 }
 Submission EconomyApi::RemoveBuilding(std::uint64_t revision, economy::BuildingId id) {
     if (!Allowed(true)) {

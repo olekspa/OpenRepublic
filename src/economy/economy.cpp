@@ -158,6 +158,9 @@ struct Building {
     std::vector<std::uint64_t> completed;
     StallRecord stall;
     std::uint64_t residents{};
+    bool constructionSite{};
+    std::uint32_t constructionProgress{};
+    std::vector<std::uint64_t> constructionStore;
 };
 struct Road {
     RoadId id{};
@@ -197,7 +200,8 @@ enum class Kind : std::uint8_t {
     ConnectUtility,
     DisconnectUtility,
     TradeExport,
-    TradeImport
+    TradeImport,
+    PlaceSite = 13
 };
 struct Pending {
     CommandId id{};
@@ -470,6 +474,7 @@ bool StaffedThisTick(const State &s, const BuildingTypeDef &type, std::uint64_t 
     return phase >= type.workers - assigned;
 }
 void Production(State &s, Building &b, std::uint64_t assigned) {
+    if (b.constructionSite) return;
     const auto *t = s.catalog->BuildingType(b.type);
     b.stall = {b.id, StallReason::MissingInput, InvalidResourceId, 0};
     if (!b.enabled) {
@@ -574,7 +579,7 @@ void Apply(State &s, const Pending &p) {
         Result(s, p, true, CommandFailure::None, p.kind == Kind::TradeExport ? "trade export completed" : "trade import completed", building->id);
         return;
     }
-    if (p.kind == Kind::Place) {
+    if (p.kind == Kind::Place || p.kind == Kind::PlaceSite) {
         const auto *t = s.catalog->BuildingType(p.type);
         if (!t) {
             reject(CommandFailure::UnknownBuildingType, "unknown building type");
@@ -597,9 +602,11 @@ void Apply(State &s, const Pending &p) {
         b.inventory.assign(t->storage.size(), 0);
         b.remaining.assign(t->recipes.size(), 0);
         b.completed.assign(t->recipes.size(), 0);
+        b.constructionSite = p.kind == Kind::PlaceSite;
+        if (b.constructionSite) b.constructionStore.assign(t->constructionMaterials.size(), 0);
         b.stall = {b.id, StallReason::Running, InvalidResourceId, 0};
         s.buildings.push_back(std::move(b));
-        Result(s, p, true, CommandFailure::None, "building placed", s.buildings.back().id);
+        Result(s, p, true, CommandFailure::None, p.kind == Kind::PlaceSite ? "construction site placed" : "building placed", s.buildings.back().id);
         return;
     }
     if (p.kind == Kind::Remove) {
@@ -860,6 +867,13 @@ void Haul(State &s, Order &o) {
     const auto *dt = s.catalog->BuildingType(dst->type);
     auto si = Slot(*st, o.resource);
     auto di = Slot(*dt, o.resource);
+    std::size_t constructionSlot = dt->constructionMaterials.size();
+    if (dst->constructionSite) for (std::size_t i=0;i<dt->constructionMaterials.size();++i)
+        if (dt->constructionMaterials[i].resource == o.resource) constructionSlot=i;
+    const bool constructionDestination = dst->constructionSite && constructionSlot < dt->constructionMaterials.size();
+    if (si >= st->storage.size() || (di >= dt->storage.size() && !constructionDestination)) return;
+    const auto destinationAmount = [&]() { return constructionDestination ? dst->constructionStore[constructionSlot] : dst->inventory[di]; };
+    const auto destinationCapacity = [&]() { return constructionDestination ? dt->constructionMaterials[constructionSlot].amount : dt->storage[di].capacity; };
     if (v->state == HaulState::Idle || v->state == HaulState::Waiting || v->state == HaulState::NoRoute) {
         if (v->cargo == 0 && v->cell == src->access) {
             if (src->inventory[si] == 0) {
@@ -867,7 +881,7 @@ void Haul(State &s, Order &o) {
                 v->failure = HaulFailure::SourceEmpty;
                 return;
             }
-            auto room = dt->storage[di].capacity - dst->inventory[di];
+            auto room = destinationCapacity() - destinationAmount();
             if (!room) {
                 v->state = HaulState::Waiting;
                 v->failure = HaulFailure::DestinationFull;
@@ -894,9 +908,10 @@ void Haul(State &s, Order &o) {
         }
     }
     if (v->state == HaulState::ToDestination && Move(s, *v, dst->access)) {
-        auto room = dt->storage[di].capacity - dst->inventory[di];
+        auto room = destinationCapacity() - destinationAmount();
         auto amount = std::min(v->cargo, room);
-        dst->inventory[di] += amount;
+        if (constructionDestination) dst->constructionStore[constructionSlot] += amount;
+        else dst->inventory[di] += amount;
         v->cargo -= amount;
         if (v->cargo) {
             v->state = HaulState::Waiting;
@@ -1382,6 +1397,17 @@ UtilityDiagnostics AdvanceTick(State &s) {
     }
     for (auto &o : s.orders)
         Haul(s, o);
+    for (auto& b : s.buildings) if (b.constructionSite) {
+        const auto* type=s.catalog->BuildingType(b.type); bool ready=true;
+        for (std::size_t i=0;i<type->constructionMaterials.size();++i)
+            ready = ready && b.constructionStore[i] >= type->constructionMaterials[i].amount;
+        if (ready) {
+            if (++b.constructionProgress >= type->constructionWorkTicks) {
+                b.constructionSite=false;
+                for (std::size_t i=0;i<type->constructionMaterials.size();++i) b.constructionStore[i]=0;
+            }
+        }
+    }
     ++s.tick;
     ++s.revision;
     return receipt;
@@ -1439,6 +1465,11 @@ std::uint64_t Hash(const State &s) {
             HashU(h, x);
         for (auto x : b.completed)
             HashU(h, x);
+        if (b.constructionSite) {
+            HashS(h, "openrepublic.synthetic-construction-site.v1");
+            HashU(h, b.constructionProgress);
+            for (auto amount : b.constructionStore) HashU(h, amount);
+        }
     }
     for (const auto &r : s.roads) {
         HashU(h, r.id);
@@ -1648,6 +1679,22 @@ bool CatalogBuilder::SetWorkers(BuildingTypeId building, std::uint64_t requireme
         CatError(e, CatalogError::InvalidAmount, "workers requires a positive unique requirement"); return false;
     }
     draft_.buildingTypes_[building].workers = requirement; e = {}; return true;
+}
+bool CatalogBuilder::SetConstruction(BuildingTypeId building, const std::vector<RecipeAmount>& materials,
+                                      std::uint32_t workTicks, CatalogErrorInfo &e) {
+    if (building >= draft_.buildingTypes_.size() || !workTicks || materials.empty() ||
+        !draft_.buildingTypes_[building].constructionMaterials.empty()) {
+        CatError(e, CatalogError::InvalidAmount, "construction requires unique materials and positive work ticks"); return false;
+    }
+    std::set<ResourceId> seen;
+    for (const auto& amount : materials) {
+        if (amount.resource >= draft_.resources_.size() || draft_.resources_[amount.resource].utility ||
+            !amount.amount || !seen.insert(amount.resource).second) {
+            CatError(e, CatalogError::InvalidAmount, "construction materials require unique storable resources and positive amounts"); return false;
+        }
+    }
+    auto& type = draft_.buildingTypes_[building];
+    type.constructionMaterials = materials; type.constructionWorkTicks = workTicks; e = {}; return true;
 }
 bool CatalogBuilder::SetFood(ResourceId resource, std::uint64_t amount, std::uint32_t interval, CatalogErrorInfo &e) {
     if (resource >= draft_.resources_.size() || draft_.resources_[resource].utility || !amount || !interval ||
@@ -1913,6 +1960,18 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
                 }
                 continue;
             }
+            if (w[0] == "build" && w.size() >= 4 && w[ w.size()-2 ] == "work") {
+                std::uint32_t work{}; std::vector<RecipeAmount> materials; bool valid = Unsigned(w.back(), work);
+                for (std::size_t i=1; valid && i+2<w.size(); ++i) {
+                    std::string name; std::uint64_t amount{}; ResourceId id=InvalidResourceId;
+                    if (!AmountToken(w[i], name, amount)) { valid=false; break; }
+                    for (std::size_t k=0;k<rn.size();++k) if (rn[k]==name) id=static_cast<ResourceId>(k);
+                    if (id==InvalidResourceId) { valid=false; break; }
+                    materials.push_back({id,amount});
+                }
+                if (!valid || !b.SetConstruction(current, materials, work, ce)) { ParseErr(e, ParseErrorCode::CatalogInvalid, line, "build syntax is build <resource:amount> ... work <ticks>"); return false; }
+                continue;
+            }
             if (w[0] == "recipe" && w.size() >= 4 && w[2] == "every") {
                 std::uint32_t interval{};
                 if (!Unsigned(w[3], interval)) {
@@ -2049,6 +2108,11 @@ std::string WriteCatalogText(const Catalog &c) {
         if (b.workers) o += "  workers " + Num(b.workers) + "\n";
         for (auto s : b.storage)
             o += "  store " + c.Resource(s.resource)->name + " " + Num(s.capacity) + "\n";
+        if (b.constructionWorkTicks) {
+            o += "  build";
+            for (const auto a : b.constructionMaterials) o += " " + c.Resource(a.resource)->name + ":" + Num(a.amount);
+            o += " work " + Num(b.constructionWorkTicks) + "\n";
+        }
         if (b.tradePost) o += "  tradepost\n";
         for (const auto &r : b.recipes) {
             o += "  recipe " + r.name + " every " + Num(r.intervalTicks);
@@ -2251,6 +2315,10 @@ CommandId World::PlaceBuilding(BuildingTypeId t, Cell c) {
     p.a = c;
     return Queue(impl_->state, p);
 }
+CommandId World::PlaceConstructionSite(BuildingTypeId t, Cell c) {
+    if (!impl_->state.catalog->BuildingType(t) || !impl_->state.catalog->BuildingType(t)->constructionWorkTicks) return 0;
+    Pending p; p.kind=Kind::PlaceSite; p.type=t; p.a=c; return Queue(impl_->state, p);
+}
 CommandId World::RemoveBuilding(BuildingId b) {
     Pending p;
     p.kind = Kind::Remove;
@@ -2422,6 +2490,11 @@ WorldSnapshot World::Snapshot() const {
         x.access = b.access;
         x.enabled = b.enabled;
         x.stall = b.stall;
+        x.constructionSite = b.constructionSite;
+        x.constructionState = !b.constructionSite ? 2 : (b.constructionProgress ? 1 : 0);
+        const auto* constructionType=s.catalog->BuildingType(b.type);
+        x.constructionProgress = b.constructionSite ?
+            static_cast<double>(b.constructionProgress) / constructionType->constructionWorkTicks : 1.0;
         auto *t = s.catalog->BuildingType(b.type);
         for (std::size_t i = 0; i < t->storage.size(); ++i)
             x.inventory.push_back({t->storage[i].resource, b.inventory[i], t->storage[i].capacity});
@@ -2554,13 +2627,15 @@ std::string SaveWorld(const World &w) {
         std::any_of(s.catalog->BuildingTypes().begin(), s.catalog->BuildingTypes().end(),
                     [](const BuildingTypeDef &type) { return type.housing || type.workers; });
     const bool version5 = hasTrade;
+    const bool hasConstructionSites = std::any_of(s.buildings.begin(), s.buildings.end(), [](const Building& b) { return b.constructionSite; }) ||
+        std::any_of(s.pending.begin(), s.pending.end(), [](const Pending& p) { return p.kind == Kind::PlaceSite; });
     std::string o = std::string("OPENREPUBLIC_ECONOMY_WORLD ") +
-                    (populationDeclared ? "6\n" : (version5 ? "5\n" : (version4 ? "4\n" : (s.firstRetainedCommand == 1 ? "2\n" : "3\n"))));
+                    (hasConstructionSites ? "7\n" : (populationDeclared ? "6\n" : (version5 ? "5\n" : (version4 ? "4\n" : (s.firstRetainedCommand == 1 ? "2\n" : "3\n")))));
     o += "GRID " + Num(s.width) + " " + Num(s.depth) + "\nTICK " + Num(s.tick) + "\nREVISION " +
          Num(s.revision) + "\nNEXT " + Num(s.nextBuilding) + " " + Num(s.nextRoad) + " " + Num(s.nextOrder) +
          " " + Num(s.nextVehicle) + " " + Num(s.nextCommand) + "\n";
-    if (version5 || populationDeclared) o += "TREASURY " + Num(s.treasury) + "\n";
-    if (version4 || version5 || populationDeclared || s.firstRetainedCommand > 1) {
+    if (version5 || populationDeclared || hasConstructionSites) o += "TREASURY " + Num(s.treasury) + "\n";
+    if (version4 || version5 || populationDeclared || hasConstructionSites || s.firstRetainedCommand > 1) {
         // v3 records only the explicit retained-history boundary. v1/v2 bytes
         // remain unchanged while the entire command history is retained.
         o += "HISTORY " + Num(s.firstRetainedCommand) + "\n";
@@ -2579,6 +2654,11 @@ std::string SaveWorld(const World &w) {
             o += " " + Num(x);
         o += "\n";
         if (populationDeclared) o += "POP " + Num(b.id) + " " + Num(b.residents) + "\n";
+        if (hasConstructionSites) {
+            o += "SITE " + Num(b.id) + " " + Num(b.constructionSite) + " " + Num(b.constructionProgress) + " " + Num(b.constructionSite ? b.constructionStore.size() : 0);
+            if (b.constructionSite) for (auto amount : b.constructionStore) o += " " + Num(amount);
+            o += "\n";
+        }
         if (o.size() > MaxWorldSaveBytes)
             return {};
     }
@@ -2589,7 +2669,7 @@ std::string SaveWorld(const World &w) {
         if (o.size() > MaxWorldSaveBytes)
             return {};
     }
-    if (version4 || version5 || populationDeclared) {
+    if (version4 || version5 || populationDeclared || hasConstructionSites) {
         o += "UTILITY_CONNECTIONS " + Num(s.utilityConnections.size()) + "\n";
         for (const auto &edge : s.utilityConnections) {
             o += "U " + Num(edge.resource) + " " + Num(edge.a) + " " + Num(edge.b) + "\n";
@@ -2628,7 +2708,7 @@ std::string SaveWorld(const World &w) {
              Num(p.building) + " " + std::to_string(p.a.x) + " " + std::to_string(p.a.z) + " " +
              std::to_string(p.b.x) + " " + std::to_string(p.b.z) + " " + Num(p.road) + " " + Num(p.enabled) +
              " " + Num(p.source) + " " + Num(p.destination) + " " + Num(p.resource) + " " +
-             Num(p.vehicleType) + " " + Num(p.order) + ((version5 || populationDeclared) ? " " + Num(p.amount) + " " + Num(p.rateCap) : "") + "\n";
+             Num(p.vehicleType) + " " + Num(p.order) + ((version5 || populationDeclared || hasConstructionSites) ? " " + Num(p.amount) + " " + Num(p.rateCap) : "") + "\n";
         if (o.size() > MaxWorldSaveBytes)
             return {};
     }
@@ -2655,7 +2735,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     WorldSaveInput in(text);
     std::string tag, version;
     if (!(in >> tag >> version) || tag != "OPENREPUBLIC_ECONOMY_WORLD" ||
-        (version != "1" && version != "2" && version != "3" && version != "4" && version != "5" && version != "6")) {
+        (version != "1" && version != "2" && version != "3" && version != "4" && version != "5" && version != "6" && version != "7")) {
         ParseErr(e, ParseErrorCode::InvalidHeader, 1, "invalid world header");
         return false;
     }
@@ -2674,6 +2754,8 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     }
     World temp(c, w, d);
     State &s = temp.impl_->state;
+    const bool populationDeclaredInCatalog = c.Food().resource != InvalidResourceId ||
+        std::any_of(c.BuildingTypes().begin(), c.BuildingTypes().end(), [](const BuildingTypeDef& type) { return type.housing || type.workers; });
     std::map<BuildingId, StallRecord> utilityStalls;
     std::set<CommandId> recordedUtilityCommands;
     s.tick = tick;
@@ -2683,10 +2765,10 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     s.nextOrder = no;
     s.nextVehicle = nv;
     s.nextCommand = nc;
-    if ((version == "5" || version == "6") && (!(in >> tag >> s.treasury) || tag != "TREASURY")) {
+    if ((version == "5" || version == "6" || version == "7") && (!(in >> tag >> s.treasury) || tag != "TREASURY")) {
         ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid treasury field"); return false;
     }
-    if (version == "3" || version == "4" || version == "5" || version == "6") {
+    if (version == "3" || version == "4" || version == "5" || version == "6" || version == "7") {
         if (!(in >> tag >> s.firstRetainedCommand) || tag != "HISTORY" ||
             !s.firstRetainedCommand || s.firstRetainedCommand > nc) {
             ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid command history boundary");
@@ -2742,9 +2824,28 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid completion");
                 return false;
             }
-        if (version == "6" && (!(in >> tag >> recordId >> b.residents) || tag != "POP" || recordId != b.id ||
+        if ((version == "6" || (version == "7" && populationDeclaredInCatalog)) && (!(in >> tag >> recordId >> b.residents) || tag != "POP" || recordId != b.id ||
                                 b.residents > t->housing)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid resident state"); return false;
+        }
+        if (version == "7") {
+            b.constructionStore.assign(t->constructionMaterials.size(), 0);
+            if (!(in >> tag)) { ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "missing construction state"); return false; }
+            if (tag == "SITE") {
+                std::uint32_t isSite{}; std::uint64_t storeSize{};
+                if (!(in >> recordId >> isSite >> b.constructionProgress >> storeSize) || recordId != b.id || isSite > 1 ||
+                    (isSite && (!t->constructionWorkTicks || storeSize != t->constructionMaterials.size() || b.constructionProgress >= t->constructionWorkTicks)) ||
+                    (!isSite && (storeSize || b.constructionProgress))) {
+                    ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid construction state"); return false;
+                }
+                b.constructionSite=isSite != 0;
+                for (std::size_t i=0;i<storeSize;++i) if (!(in >> b.constructionStore[i]) ||
+                    b.constructionStore[i] > t->constructionMaterials[i].amount) {
+                    ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid construction store"); return false;
+                }
+            } else {
+                ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid construction record"); return false;
+            }
         }
         for (std::size_t i = 0; i < b.inventory.size(); ++i)
             if (b.inventory[i] > t->storage[i].capacity) {
@@ -2790,7 +2891,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         }
         s.roads.push_back(r);
     }
-    if (version == "4" || version == "5" || version == "6") {
+    if (version == "4" || version == "5" || version == "6" || version == "7") {
         if (!(in >> tag >> count) || tag != "UTILITY_CONNECTIONS" || count > text.size()) {
             ParseErr(e, ParseErrorCode::UnexpectedToken, 0, "invalid utility connection count");
             return false;
@@ -2902,8 +3003,8 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         std::uint32_t kind{};
         if (!(in >> tag >> p.id >> kind >> p.type >> p.building >> p.a.x >> p.a.z >> p.b.x >> p.b.z >>
               p.road >> p.enabled >> p.source >> p.destination >> p.resource >> p.vehicleType >> p.order) ||
-            ((version == "5" || version == "6") && !(in >> p.amount >> p.rateCap)) ||
-            tag != "Q" || kind < 1 || kind > (version == "1" ? 7u : (version == "4" ? 10u : ((version == "5" || version == "6") ? 12u : 8u))) ||
+            ((version == "5" || version == "6" || version == "7") && !(in >> p.amount >> p.rateCap)) ||
+            tag != "Q" || kind < 1 || kind > (version == "1" ? 7u : (version == "4" ? 10u : (version == "7" ? 13u : ((version == "5" || version == "6") ? 12u : 8u)))) ||
             !p.id || p.id >= nc ||
             (!s.pending.empty() && p.id <= s.pending.back().id)) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending command");
@@ -2912,14 +3013,14 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         p.kind = static_cast<Kind>(kind);
         if (p.kind == Kind::TradeExport || p.kind == Kind::TradeImport) {
             const auto *tradeResource = c.Resource(p.resource);
-            if ((version != "5" && version != "6") || !p.building || !p.amount || !p.rateCap || p.type || p.a != Cell{} ||
+            if ((version != "5" && version != "6" && version != "7") || !p.building || !p.amount || !p.rateCap || p.type || p.a != Cell{} ||
                 p.b != Cell{} || p.road || p.enabled || p.source || p.destination || p.vehicleType || p.order ||
                 !tradeResource || !tradeResource->tradeDeclared || tradeResource->utility) {
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending trade command"); return false;
             }
         }
         if (p.kind == Kind::ConnectUtility || p.kind == Kind::DisconnectUtility) {
-            if ((version != "4" && version != "5" && version != "6") || p.source > p.destination || p.type || p.building || p.a != Cell{} ||
+            if ((version != "4" && version != "5" && version != "6" && version != "7") || p.source > p.destination || p.type || p.building || p.a != Cell{} ||
                 p.b != Cell{} || p.road || p.enabled || p.vehicleType || p.order) {
                 ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid pending utility command");
                 return false;
@@ -2940,7 +3041,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         std::uint32_t st{}, fail{};
         if (!(in >> tag >> r.commandId >> st >> fail >> r.building >> r.road >> r.order) || tag != "C" ||
             st < 1 || st > 3 || fail > static_cast<std::uint32_t>(version == "1" ? CommandFailure::ParseInvalid
-                                                              : ((version == "5" || version == "6") ? CommandFailure::TradeRateExceeded
+                                                              : ((version == "5" || version == "6" || version == "7") ? CommandFailure::TradeRateExceeded
                                                                  : (version == "4" ? CommandFailure::ReferencedByUtilityConnection
                                                                                     : CommandFailure::CargoInTransit)))) {
             ParseErr(e, ParseErrorCode::CatalogInvalid, 0, "invalid command result");
@@ -2952,7 +3053,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
         if (r.commandId != expectedResultId || r.commandId >= nc || r.building >= nb ||
             r.road >= nr || r.order >= no ||
             (r.state == CommandState::Accepted ?
-                 (fail != 0 || ((version == "4" || version == "5" || version == "6") && recordedUtilityCommands.count(r.commandId)
+                 (fail != 0 || ((version == "4" || version == "5" || version == "6" || version == "7") && recordedUtilityCommands.count(r.commandId)
                                     ? outputIds != 0
                                     : outputIds != 1))
                                                : (outputIds != 0 ||
@@ -3028,7 +3129,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     }
     for (auto &b : s.buildings) {
         RefreshStall(s, b);
-        if (version == "4" || version == "5" || version == "6")
+        if (version == "4" || version == "5" || version == "6" || version == "7")
             b.stall = utilityStalls.at(b.id);
     }
     target.impl_->state = std::move(s);
