@@ -268,7 +268,7 @@ def score_record(scenario, world, catalog, controller_ticks, summary=None):
         breakdown = {
             "throughputUnits": consumed,
             "unmetDemandUnits": max(0, requested - consumed),
-            "utilityFlows": [{"resource": n["resource"], "generated": n["generated"],
+            "utilityFlows": [{"resource": n["resource"], "generated": n.get("generated"),
                               "requested": n["requested"], "consumed": n["consumed"],
                               "unmet": str(max(0, int(n["requested"]) - int(n["consumed"]))) }
                              for n in networks],
