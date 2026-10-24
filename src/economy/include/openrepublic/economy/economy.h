@@ -6,6 +6,11 @@
 #include <string_view>
 #include <vector>
 
+// windows.h maps FindResource to FindResourceW; this header owns a C++ lookup with that name.
+#ifdef FindResource
+#undef FindResource
+#endif
+
 namespace openrepublic::economy {
 
 using ResourceId = std::uint32_t;
@@ -228,6 +233,8 @@ Catalog MakeSyntheticCatalog();
 /** Like MakeSyntheticCatalog plus planks/bricks, a sawmill and a brickworks, and `build` requirements on the
  *  mill, bakery and market (OpenRepublic synthetic construction-site rules; see docs/CONSTRUCTION_SITES.md). */
 Catalog MakeSyntheticConstructionCatalog();
+/** OpenRepublic-only border coal, depot fleet, storage, and heating fixture. */
+Catalog MakeSyntheticCoalCatalog();
 
 enum class StallReason : std::uint8_t {
     Running = 0,

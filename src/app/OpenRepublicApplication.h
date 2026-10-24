@@ -15,6 +15,7 @@
 #include "openrepublic/runtime/graphics_settings.h"
 #include "openrepublic/runtime/native_economy_clock.h"
 #include "openrepublic/runtime/economy_overview.h"
+#include "openrepublic/runtime/native_coal_demo.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/sim/simulation.h"
 #include "../economy_host/economy_protocol.h"
@@ -124,6 +125,9 @@ namespace openrepublic
 		openrepublic::economy::World* ActiveOwnedEconomyWorld() noexcept;
 		const openrepublic::economy::World* ActiveOwnedEconomyWorld() const noexcept;
 		void QueueNativeOrderChange(bool retarget);
+		void QueueNativeDispatch();
+		void QueueNativeCoalImport();
+		void UpdateNativeCoalAutomation();
 		void QueueNativeUtilityConnection(bool connect);
 		void QueueNativeRoadToggle();
 		void SaveNativeCheckpoint();
@@ -141,6 +145,11 @@ namespace openrepublic
 		openrepublic::preview::NativeEconomyScene nativeEconomyScene;
 		openrepublic::preview::NativeEconomyTools nativeEconomyTools;
 		bool nativeEconomyFreshWorld = false;
+		bool nativeCoalDemo = false;
+		bool nativeCoalAutoRun = false;
+		openrepublic::economy::BuildingId coalDemoBorder{}, coalDemoDepot{}, coalDemoStorage{}, coalDemoPlant{};
+		openrepublic::economy::ResourceId coalDemoResource{};
+		openrepublic::economy::ResourceId coalDemoGrain{};
 		enum class NativeConstructionMode { None, Building, Road };
 		NativeConstructionMode nativeConstructionMode = NativeConstructionMode::None;
 		economy::BuildingTypeId nativePlacementType = economy::InvalidBuildingTypeId;

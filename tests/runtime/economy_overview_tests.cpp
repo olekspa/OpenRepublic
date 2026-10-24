@@ -53,5 +53,13 @@ int main()
 	auto noBaseline = openrepublic::runtime::BuildEconomyOverview(now, catalog);
 	Check(!noBaseline.resources.empty() && !noBaseline.resources.front().perTickDelta,
 		"rate unavailable without baseline");
+	auto coalCatalog = openrepublic::economy::MakeSyntheticCoalCatalog();
+	openrepublic::economy::WorldSnapshot heated;
+	openrepublic::economy::BuildingTypeId plantType{};
+	Check(coalCatalog.FindBuildingType("heating_plant", plantType), "coal catalog has heating plant");
+	openrepublic::economy::BuildingSnapshot plant; plant.type = plantType; plant.recipes.push_back({});
+	plant.recipes.front().completedCycles = 7; heated.buildings.push_back(plant);
+	auto heatOverview = openrepublic::runtime::BuildEconomyOverview(heated, coalCatalog);
+	Check(heatOverview.heatProduced == 7, "overview totals completed synthetic heat output");
 	std::cout << "Economy overview checks passed\n";
 }

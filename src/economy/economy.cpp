@@ -2523,6 +2523,24 @@ Catalog MakeSyntheticConstructionCatalog() {
     return out;
 }
 
+Catalog MakeSyntheticCoalCatalog() {
+    static constexpr std::string_view text =
+        "openrepublic-economy 1\n"
+        "resource grain\nresource coal\nresource heat\n"
+        "trade grain buy 1 sell 1\ntrade coal buy 1 sell 1\n"
+        "building border_post 1 1\n  store grain 80\n  store coal 80\n"
+        "  recipe produce_export_goods every 1 out grain:4\n  tradepost\nend\n"
+        "building road_depot 1 1\n  depot\n  fleet truck 2\n  handling 2 1\nend\n"
+        "building storage 1 1\n  store coal 80\n  store heat 20\nend\n"
+        "building heating_plant 1 1\n  store coal 80\n  store heat 100\n"
+        "  recipe generate_heat every 1 in coal:1 out heat:1\nend\n"
+        "vehicle truck capacity 8 speed 1\n";
+    Catalog result;
+    ParseError error;
+    if (!ParseCatalogText(text, result, error)) throw std::runtime_error("invalid built-in coal catalog: " + error.message);
+    return result;
+}
+
 struct World::Impl {
     State state;
     UtilityDiagnostics utilityDiagnostics;
