@@ -1,4 +1,4 @@
-﻿# Synthetic economy scenarios
+# Synthetic economy scenarios
 
 These fixtures exercise the OpenRepublic economy host and the rule-based
 controller in `tools/republic_autopilot.py`. They are OpenRepublic-authored
@@ -168,3 +168,31 @@ World `host_args` are disallowed in scenario mode so region/checkpoint inputs
 cannot silently alter the fixture. Reported final ticks can differ because the
 autopilot may advance extra ticks while attempting placements or trade. Local tests use
 the scripted backend only; network and installed CLI backends are not invoked.
+
+# Construction site scenario baseline
+
+The scorer now makes up to 64 planning rounds by default for
+`completed_construction_sites` scenarios (other metrics retain their one-round
+default). Repeated planning is required because the first pass can correctly
+haul timber to a sawmill before that production chain has made the planks a site
+needs. The autopilot then plans later site deliveries when planks are stocked.
+This is an OpenRepublic controller policy; it does not imply WRSR behavior.
+
+**VERIFIED (synthetic host, 24 October 2026):** both supply scenarios complete
+within a 64-controller-tick budget using the default scorer planning cadence:
+`build_a_mill_with_supply` completes 1/1 sites at tick 10 and
+`build_two_mills_with_supply` completes 2/2 sites at tick 16.
+`scoreBreakdown.completionTick` records the first planning-round boundary at
+which all fixture sites are done; with the documented 64-tick budget, each
+round advances one tick, so these are the observed completion ticks. Repeated
+runs produce identical state and score hashes. The 4,000-tick default CLI run
+also completes both scenarios; it first observes both sites complete at tick
+161, the end of its first 80-tick planning interval. That long-run receipt value
+is an observation boundary, not the exact completion tick.
+
+Reproduce the bounded baseline:
+
+```powershell
+python tools/scenario_score.py --host <OpenRepublicEconomyHost.exe> --scenario data/scenarios/build_a_mill_with_supply.json --ticks 64 --exact-ticks
+python tools/scenario_score.py --host <OpenRepublicEconomyHost.exe> --scenario data/scenarios/build_two_mills_with_supply.json --ticks 64 --exact-ticks
+```
