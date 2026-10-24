@@ -74,7 +74,7 @@ def load_scenario(path):
         raise ScenarioError(f"invalid scenario JSON: {error}") from error
 
     _object(scenario, "scenario", ("schemaVersion", "id", "name", "description", "roads", "buildings", "score"),
-            ("catalog", "utilityConnections"))
+            ("catalog", "utilityConnections", "rails"))
     _integer(scenario["schemaVersion"], "schemaVersion", 1, 1)
     if not isinstance(scenario["id"], str) or not re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*", scenario["id"]):
         raise ScenarioError("id must be a lowercase underscore-separated identifier")
@@ -83,6 +83,9 @@ def load_scenario(path):
             raise ScenarioError(f"{field} must be non-empty text of at most 512 characters")
     if not isinstance(scenario["roads"], list) or not isinstance(scenario["buildings"], list):
         raise ScenarioError("roads and buildings must be arrays")
+    rails = scenario.get("rails", [])
+    if not isinstance(rails, list):
+        raise ScenarioError("rails must be an array")
     if not scenario["buildings"]:
         raise ScenarioError("buildings must contain at least one initial building")
     if len(scenario["roads"]) + len(scenario["buildings"]) > MAX_SETUP_COMMANDS:
@@ -99,6 +102,18 @@ def load_scenario(path):
             raise ScenarioError(f"roads[{index}] must be a non-zero straight horizontal or vertical segment")
         if abs(a["x"] - b["x"]) + abs(a["z"] - b["z"]) != 1:
             raise ScenarioError(f"roads[{index}] must be one orthogonally adjacent road edge")
+
+    for index, rail in enumerate(rails):
+        rail = _object(rail, f"rails[{index}]", ("a", "b"))
+        for endpoint in ("a", "b"):
+            cell = _object(rail[endpoint], f"rails[{index}].{endpoint}", ("x", "z"))
+            _integer(cell["x"], f"rails[{index}].{endpoint}.x", -100_000, 100_000)
+            _integer(cell["z"], f"rails[{index}].{endpoint}.z", -100_000, 100_000)
+        a, b = rail["a"], rail["b"]
+        if a == b or (a["x"] != b["x"] and a["z"] != b["z"]):
+            raise ScenarioError(f"rails[{index}] must be a non-zero straight horizontal or vertical segment")
+        if abs(a["x"] - b["x"]) + abs(a["z"] - b["z"]) != 1:
+            raise ScenarioError(f"rails[{index}] must be one orthogonally adjacent rail edge")
 
     building_types = {"farm", "mill", "bakery", "market"}
     if "catalog" in scenario:
@@ -132,12 +147,27 @@ def load_scenario(path):
         if edge in seen_connections:
             raise ScenarioError(f"utilityConnections[{index}] duplicates an earlier link")
         seen_connections.add(edge)
-    if len(scenario["roads"]) + len(scenario["buildings"]) + len(connections) > MAX_SETUP_COMMANDS:
+    if len(scenario["roads"]) + len(rails) + len(scenario["buildings"]) + len(connections) > MAX_SETUP_COMMANDS:
         raise ScenarioError(f"setup may contain at most {MAX_SETUP_COMMANDS} commands")
-    _object(scenario["score"], "score", ("metric",), ("objectives",))
+    _object(scenario["score"], "score", ("metric",),
+            ("objectives", "amount", "roadSource", "roadDestination", "railSource", "railDestination"))
     metric = scenario["score"]["metric"]
-    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites", "combined_multi_objective"):
-        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, completed_construction_sites, or combined_multi_objective")
+    if metric != "rail_vs_road" and any(field in scenario["score"] for field in
+                                         ("amount", "roadSource", "roadDestination", "railSource", "railDestination")):
+        raise ScenarioError("rail_vs_road score fields require metric rail_vs_road")
+    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites", "combined_multi_objective", "rail_vs_road"):
+        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, completed_construction_sites, combined_multi_objective, or rail_vs_road")
+    if metric == "rail_vs_road":
+        _object(scenario["score"], "score", ("metric", "amount", "roadSource", "roadDestination", "railSource", "railDestination"))
+        _integer(scenario["score"]["amount"], "score.amount", 1, 1_000_000)
+        for field in ("roadSource", "roadDestination", "railSource", "railDestination"):
+            _integer(scenario["score"][field], f"score.{field}", 0, len(scenario["buildings"]) - 1)
+        if not rails:
+            raise ScenarioError("rail_vs_road requires declared rails")
+        if "catalog" not in scenario or not re.search(r"(?m)^\s+station\s*$", scenario["catalog"]):
+            raise ScenarioError("rail_vs_road requires station buildings in a synthetic catalog")
+        if not re.search(r"(?m)^vehicle\s+train\s+", scenario["catalog"]):
+            raise ScenarioError("rail_vs_road requires a train vehicle type")
     if metric != "combined_multi_objective" and "objectives" in scenario["score"]:
         raise ScenarioError("score.objectives is only valid for combined_multi_objective")
     if metric == "utility_multi_objective" and "catalog" not in scenario:
@@ -185,6 +215,10 @@ def _seed(host, scenario):
          "bx": road["b"]["x"], "bz": road["b"]["z"]}
         for road in scenario["roads"]
     ]
+    commands.extend(
+        {"kind": "build_rail", "ax": rail["a"]["x"], "az": rail["a"]["z"],
+         "bx": rail["b"]["x"], "bz": rail["b"]["z"]}
+        for rail in scenario.get("rails", []))
     commands.extend({"kind": "place_construction_site" if building.get("constructionSite") else "place_building", "type": building["type"],
                      "x": building["x"], "z": building["z"]}
                     for building in scenario["buildings"])
@@ -223,6 +257,78 @@ def _seed(host, scenario):
 def seed_scenario(host, scenario):
     """Apply the common fixture setup to an already-running fresh host."""
     _seed(host, scenario)
+
+
+def _rail_vs_road_receipt(host, scenario, ticks):
+    """Run a fixed 1000-unit fixture transfer by each declared transport mode."""
+    score = scenario["score"]
+    refs = {key: autopilot._world(host)["buildings"][score[key]] for key in
+            ("roadSource", "roadDestination", "railSource", "railDestination")}
+    handles = []
+    revision = autopilot._world(host)["revision"]
+    for key in ("roadSource", "railSource"):
+        result = host.call("submit", revision=revision, command={
+            "kind": "set_building_enabled", "building": int(refs[key]["id"]), "enabled": False})
+        if result.get("errorCode") != "none" or result.get("state") != "queued" or not result.get("handle"):
+            raise RuntimeError(f"rail_vs_road could not disable fixture producer: {result}")
+        handles.append(result["handle"])
+    autopilot._step(host, 1)
+    for handle in handles:
+        if autopilot._poll_terminal(host, handle) != "accepted":
+            raise RuntimeError("rail_vs_road producer disable command was rejected")
+
+    orders = [
+        {"source": int(refs["roadSource"]["id"]), "destination": int(refs["roadDestination"]["id"]),
+         "resource": "grain", "vehicleType": "truck", "mode": "road"},
+        {"source": int(refs["railSource"]["id"]), "destination": int(refs["railDestination"]["id"]),
+         "resource": "grain", "vehicleType": "train", "mode": "rail"},
+    ]
+    created = host.call("create_haul_orders", revision=autopilot._world(host)["revision"], orders=orders)
+    autopilot._check_error(created, "create_haul_orders")
+    accepted = [item for item in created.get("results", [])
+                if item.get("errorCode") == "none" and item.get("state") == "queued" and item.get("handle")]
+    if len(accepted) != 2:
+        raise RuntimeError(f"rail_vs_road did not queue both orders: {created}")
+    autopilot._step(host, 1)
+    for item in accepted:
+        if autopilot._poll_terminal(host, item["handle"]) != "accepted":
+            raise RuntimeError("rail_vs_road haul order was rejected")
+
+    amount = score["amount"]
+    start_tick = int(autopilot._world(host)["tick"])
+    arrivals = {"road": None, "rail": None}
+
+    def delivered(building):
+        return sum(int(item["amount"]) for item in building.get("inventory", [])
+                   if item.get("resource") == "grain")
+
+    for _ in range(ticks):
+        current = autopilot._world(host)
+        for mode, key in (("road", "roadDestination"), ("rail", "railDestination")):
+            if arrivals[mode] is None and delivered(current["buildings"][score[key]]) >= amount:
+                arrivals[mode] = int(current["tick"]) - start_tick
+        if all(value is not None for value in arrivals.values()):
+            break
+        autopilot._step(host, 1)
+    final = autopilot._world(host)
+    for mode, key in (("road", "roadDestination"), ("rail", "railDestination")):
+        if arrivals[mode] is None and delivered(final["buildings"][score[key]]) >= amount:
+            arrivals[mode] = int(final["tick"]) - start_tick
+    receipt = {
+        "scenarioId": scenario["id"], "metric": "rail_vs_road", "amount": amount,
+        "arrivalTicks": arrivals,
+        "railFaster": arrivals["rail"] is not None and arrivals["road"] is not None and
+                      arrivals["rail"] < arrivals["road"],
+        "tick": int(final["tick"]), "stateHash": final["stateHash"],
+        "scoreDefinition": "elapsed simulation ticks until each destination stores the requested grain amount",
+    }
+    stable = {"scenarioHash": hashlib.sha256(json.dumps(scenario, sort_keys=True, separators=(",", ":"),
+                                                       ensure_ascii=False).encode("utf-8")).hexdigest(), **receipt}
+    receipt["scoreHash"] = hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(",", ":"),
+                                                     ensure_ascii=False).encode("utf-8")).hexdigest()
+    if not receipt["railFaster"]:
+        raise RuntimeError(f"rail_vs_road expected rail to finish sooner; receipt={receipt}")
+    return receipt
 
 
 def score_record(scenario, world, catalog, controller_ticks, summary=None):
@@ -383,6 +489,8 @@ def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rou
         catalog = host.call("catalog")
         autopilot._check_error(catalog, "catalog")
         _seed(host, scenario)
+        if scenario["score"]["metric"] == "rail_vs_road":
+            return _rail_vs_road_receipt(host, scenario, ticks)
         with contextlib.redirect_stdout(io.StringIO()):
             start_tick = int(autopilot._world(host)["tick"])
             completion_tick = None
