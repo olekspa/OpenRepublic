@@ -454,6 +454,21 @@ source, process continuation and remaining acceptance limits.
 
 ## Native desktop construction sandbox
 
+### Economy overview panel
+
+The native economy toolbar includes an **Overview** toggle beside **Details**.
+It presents the current tick and treasury, summed stored amounts for each
+non-utility catalog resource, housing capacity and population/workforce totals
+when the catalog declares the synthetic population model, active construction
+construction-site records with state/progress, and active haul orders with cargo
+and truck IDs.
+Resource deltas are the change in aggregate stored inventory divided by the tick
+distance between retained snapshots (up to 20 observed tick intervals). This is
+a stock-change rate, not a production-only measurement; deliveries, consumption,
+trade and other inventory changes contribute. Rates are omitted until a prior
+tick snapshot is available. Population/workforce and construction figures are
+OpenRepublic snapshot/catalog values; no WRSR parity is implied.
+
 `OpenRepublic.exe --native-economy [--economy-pipe-name <name>]` starts an empty
 64x64 OpenRepublic-authored economy with the synthetic catalog and exact native-ID
 primitive scene. Run from the client build directory so copied Content is found.
