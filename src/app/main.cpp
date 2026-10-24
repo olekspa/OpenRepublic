@@ -263,6 +263,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool economyCheckpointArgumentSeen = false;
 	bool nativeEconomyArgumentSeen = false;
 	bool nativeConstructionSitesArgumentSeen = false;
+	bool nativeCoalDemoArgumentSeen = false;
 	std::string nativeEconomyArgumentError;
 	std::vector<std::wstring> economyCheckpointIncompatibleOptions;
 	std::string economyCheckpointArgumentError;
@@ -316,6 +317,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				// Opt-in synthetic catalog with planks/bricks and `build` requirements (requires --native-economy).
 				nativeConstructionSitesArgumentSeen = true;
 			}
+			else if (argument == L"--native-coal-demo") nativeCoalDemoArgumentSeen = true;
 			else if (argument == L"--scene-probe" && i + 1 < argumentCount)
 			{
 				sceneProbePath = arguments[++i];
@@ -848,6 +850,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		return LogNativeEconomyStartupError("--native-economy cannot be combined with --economy-checkpoint");
 	}
+	if (nativeCoalDemoArgumentSeen && !nativeEconomyArgumentSeen)
+		return LogNativeEconomyStartupError("--native-coal-demo requires --native-economy");
 	if ((nativeEconomyArgumentSeen || economyCheckpointArgumentSeen) && !economyCheckpointIncompatibleOptions.empty())
 	{
 		std::string conflicts = nativeEconomyArgumentSeen
@@ -897,10 +901,31 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		economyCheckpoint = std::make_unique<openrepublic::economy::RestoredCheckpoint>();
 		economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>(
-			nativeConstructionSitesArgumentSeen ? openrepublic::economy::MakeSyntheticConstructionCatalog()
-			                                    : openrepublic::economy::MakeSyntheticCatalog());
+			nativeCoalDemoArgumentSeen ? openrepublic::economy::MakeSyntheticCoalCatalog() :
+			(nativeConstructionSitesArgumentSeen ? openrepublic::economy::MakeSyntheticConstructionCatalog()
+			                                    : openrepublic::economy::MakeSyntheticCatalog()));
 		economyCheckpoint->world = std::make_unique<openrepublic::economy::World>(
 			*economyCheckpoint->catalog, 64, 64);
+		if (nativeCoalDemoArgumentSeen)
+		{
+			auto& world = *economyCheckpoint->world;
+			const auto& catalog = *economyCheckpoint->catalog;
+			for (const auto& item : std::array<std::pair<const char*, openrepublic::economy::Cell>, 4>{{
+				{"road_depot", {1,3}}, {"border_post", {5,3}}, {"storage", {9,3}}, {"heating_plant", {13,3}}}})
+			{
+				openrepublic::economy::BuildingTypeId type{};
+				if (!catalog.FindBuildingType(item.first, type) || !world.PlaceBuilding(type, item.second))
+					return LogNativeEconomyStartupError("coal demo catalog or placement setup failed");
+			}
+			for (std::int32_t x = 1; x < 14; ++x)
+				if (!world.BuildRoad({x,2}, {x+1,2})) return LogNativeEconomyStartupError("coal demo road setup failed");
+			if (world.Step().ticksAdvanced != 1 || world.Step().ticksAdvanced != 1)
+				return LogNativeEconomyStartupError("coal demo initial setup step failed");
+			openrepublic::economy::ResourceId grain{};
+			if (!catalog.FindResource("grain", grain) || !world.TradeExport(2, grain, 4, 4) ||
+				world.Step().ticksAdvanced != 1 || world.Treasury() < 4)
+				return LogNativeEconomyStartupError("coal demo could not fund synthetic coal imports");
+		}
 		openrepublic::runtime::NativeEconomyScenePlan plan;
 		std::string layoutError;
 		if (!openrepublic::runtime::BuildNativeEconomyScenePlan(economyCheckpoint->world->Snapshot(),

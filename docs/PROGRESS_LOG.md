@@ -2,6 +2,8 @@
 
 Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/New_York (EDT) with UTC in brackets. `docs/DEVELOPMENT_CHECKPOINT.md` remains the detailed handoff; this file is the short, ordered record. Append new entries at the bottom. Evidence statuses follow `AGENTS.md` (VERIFIED / OBSERVED / INFERRED / UNKNOWN).
 
+- **2026-10-24 17:30 EDT [21:30 UTC]** GAME-DEMO partial implementation: added the synthetic coal catalog, `--native-coal-demo` startup validation and authored 64×64 layout/funding bootstrap, plus a pure deterministic coal-loop action planner and initial desktop guide. Headless Release build completed with 0 compiler errors; CTest passed 63/63. Native toolbar dispatch/trade controls, app wiring for auto-run, inspector truck details, overview heat totals, and desktop build/runtime acceptance remain outstanding; no GUI was launched. WRSR parity remains UNKNOWN.
+
 ## 2026-10-21
 
 - **~21:30 EDT [01:30 UTC]** Claude takeover. Local `main` was 11 commits ahead of `origin/main` (D-005 gates publication). Baseline client CTest 15/15.
