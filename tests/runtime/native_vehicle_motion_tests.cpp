@@ -11,6 +11,20 @@ int main() {
         if (!ok) { ++failures; std::cerr << message << '\n'; }
     };
     runtime::NativeEconomyTransform transform{};
+    runtime::NativeEconomyTransform importedTransform{};
+    check(runtime::BuildImportedRegionVehicleTransform(100.0, -40.0, 4.0, importedTransform),
+          "region importer coordinates produce a vehicle display transform");
+    const auto importedCell = importedTransform.CellCenter({3, 5});
+    check(std::abs(importedCell.x - 114.0) < 1e-9 &&
+          std::abs(importedCell.z - (-18.0)) < 1e-9,
+          "region vehicle cell centers match importer origin plus half-cell mapping");
+    const runtime::NativeEconomyTransform priorTransform{7.0, 8.0};
+    importedTransform = priorTransform;
+    check(!runtime::BuildImportedRegionVehicleTransform(100.0, -40.0, 3.0, importedTransform) &&
+          importedTransform.centerCellX == 7.0 && importedTransform.centerCellZ == 8.0,
+          "unsupported importer cell scale fails without changing the output transform");
+    check(!runtime::BuildImportedRegionVehicleTransform(std::numeric_limits<double>::infinity(), 0.0,
+          4.0, importedTransform), "non-finite imported region origin fails closed");
     const double truckScale = runtime::NativeVehicleDisplayScale(7.8);
     check(std::abs(truckScale * 7.8 - 3.0) < 1e-9,
           "procedural truck length targets three quarters of a native display cell");

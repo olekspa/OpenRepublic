@@ -8,6 +8,7 @@
 
 #include <optional>
 #include <array>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -25,7 +26,10 @@ namespace openrepublic::preview
 			bool nativeTerrain = false);
 		bool Sync(wi::scene::Scene& scene, const economy::WorldSnapshot& snapshot,
 			const economy::Catalog& catalog, std::vector<RegionInstance>& outInstances, std::string& error);
-		void UpdateVehicleMotion(wi::scene::Scene& scene, double alpha);
+		bool SyncVehiclesOnly(wi::scene::Scene& scene, const economy::WorldSnapshot& snapshot,
+			const economy::Catalog& catalog, const runtime::NativeEconomyTransform& transform, std::string& error);
+		void UpdateVehicleMotion(wi::scene::Scene& scene, double alpha,
+			const std::function<double(double, double)>& groundHeight = {});
 		// Re-centers native geometry around the current snapshot. The caller can use
 		// this for an explicit framing action while leaving ordinary Sync frozen.
 		bool Rebase(wi::scene::Scene& scene, const economy::WorldSnapshot& snapshot,

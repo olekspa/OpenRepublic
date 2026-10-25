@@ -103,7 +103,7 @@ namespace openrepublic::preview
 	}
 
 	void NativeEconomyTools::Create(wi::gui::GUI& gui, const economy::Catalog& catalog, Callbacks callbacks,
-		bool nativeConstruction)
+		bool nativeConstruction, bool dispatchControls)
 	{
 		if (gui_ != nullptr)
 		{
@@ -130,6 +130,7 @@ namespace openrepublic::preview
 		gui_ = &gui;
 		callbacks_ = std::move(callbacks);
 		nativeConstruction_ = nativeConstruction;
+		dispatchControls_ = dispatchControls;
 		haulResources_.clear();
 		haveHaulResources_ = false;
 		haveOrderRefresh_ = false;
@@ -336,6 +337,24 @@ namespace openrepublic::preview
 			widget->SetVisible(true);
 			widget->SetEnabled(true);
 		}
+		const std::array<wi::gui::Widget*, 5> dispatchControlsWidgets = {
+			&dispatchVehicle_, &dispatchSource_, &dispatchDestination_, &dispatchResource_,
+			&dispatchAmount_
+		};
+		for (wi::gui::Widget* widget : dispatchControlsWidgets)
+		{
+			widget->SetVisible(dispatchControls_);
+			widget->SetEnabled(dispatchControls_);
+		}
+		for (wi::gui::Widget* widget : { static_cast<wi::gui::Widget*>(&dispatch_),
+			static_cast<wi::gui::Widget*>(&buyCoal_), static_cast<wi::gui::Widget*>(&autoRun_) })
+		{
+			const bool visible = dispatchControls_ &&
+				(widget == &dispatch_ || (widget == &buyCoal_ && static_cast<bool>(callbacks_.buyCoal)) ||
+				 (widget == &autoRun_ && static_cast<bool>(callbacks_.toggleAutoRun)));
+			widget->SetVisible(visible);
+			widget->SetEnabled(visible);
+		}
 
 		RegisterWidgets(gui);
 	}
@@ -389,12 +408,15 @@ namespace openrepublic::preview
 		};
 		const std::array<float, 5> orderWidths = { 440.0f, 180.0f, 120.0f, 0.0f, 0.0f };
 		y = layoutRow(y + kRowGap, orderWidgets, orderWidths, 3);
-		const std::array<wi::gui::Widget*, 5> dispatchWidgets = { &dispatchVehicle_, &dispatchSource_, &dispatchDestination_, &dispatchResource_, &dispatchAmount_ };
-		const std::array<float, 5> dispatchWidths = { 160.0f, 180.0f, 180.0f, 150.0f, 90.0f };
-		y = layoutRow(y + kRowGap, dispatchWidgets, dispatchWidths, 5);
-		const std::array<wi::gui::Widget*, 5> dispatchButtons = { &dispatch_, &buyCoal_, &autoRun_, nullptr, nullptr };
-		const std::array<float, 5> dispatchButtonWidths = { 110.0f, 110.0f, 200.0f, 0.0f, 0.0f };
-		y = layoutRow(y + kRowGap, dispatchButtons, dispatchButtonWidths, 3);
+		if (dispatchControls_)
+		{
+			const std::array<wi::gui::Widget*, 5> dispatchWidgets = { &dispatchVehicle_, &dispatchSource_, &dispatchDestination_, &dispatchResource_, &dispatchAmount_ };
+			const std::array<float, 5> dispatchWidths = { 160.0f, 180.0f, 180.0f, 150.0f, 90.0f };
+			y = layoutRow(y + kRowGap, dispatchWidgets, dispatchWidths, 5);
+			const std::array<wi::gui::Widget*, 5> dispatchButtons = { &dispatch_, &buyCoal_, &autoRun_, nullptr, nullptr };
+			const std::array<float, 5> dispatchButtonWidths = { 110.0f, 110.0f, 200.0f, 0.0f, 0.0f };
+			y = layoutRow(y + kRowGap, dispatchButtons, dispatchButtonWidths, 3);
+		}
 		if (hasUtilityResources_)
 		{
 			const std::array<wi::gui::Widget*, 5> utilityWidgets = {
@@ -445,7 +467,8 @@ namespace openrepublic::preview
 		haveRoadRefresh_ = true;
 	}
 
-	void NativeEconomyTools::RefreshDispatchChoices(const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog)
+	void NativeEconomyTools::RefreshDispatchChoices(const economy::WorldSnapshot& snapshot,
+		const economy::Catalog& catalog, const std::vector<economy::BuildingId>* allowedBuildings)
 	{
 		const auto selected = [](const wi::gui::ComboBox& c) -> std::uint64_t { return c.GetSelected() >= 0 ? c.GetSelectedUserdata() : 0; };
 		const auto rebuild = [](wi::gui::ComboBox& combo, const std::vector<std::pair<std::string, std::uint64_t>>& items,
@@ -470,7 +493,10 @@ namespace openrepublic::preview
 			case economy::VehicleLeg::Returning: leg="returning"; break; default: break; }
 			vehicles.emplace_back("Truck #"+std::to_string(v.id)+" | "+leg+" | cargo "+std::to_string(v.cargo),v.id);
 		}
-		for (const auto& b : snapshot.buildings) { const auto* t=catalog.BuildingType(b.type); buildings.emplace_back((t?t->name:"building")+std::string(" #")+std::to_string(b.id),b.id); }
+		for (const auto& b : snapshot.buildings) {
+			if (allowedBuildings && std::find(allowedBuildings->begin(), allowedBuildings->end(), b.id) == allowedBuildings->end()) continue;
+			const auto* t=catalog.BuildingType(b.type); buildings.emplace_back((t?t->name:"building")+std::string(" #")+std::to_string(b.id),b.id);
+		}
 		for (const auto& r : catalog.Resources()) if (!r.utility) resources.emplace_back(r.name,r.id);
 		rebuild(dispatchVehicle_,vehicles,pv,dispatchVehicleIds_); rebuild(dispatchSource_,buildings,ps,dispatchSourceIds_);
 		rebuild(dispatchDestination_,buildings,pd,dispatchDestinationIds_); rebuild(dispatchResource_,resources,pr,dispatchResourceIds_);
