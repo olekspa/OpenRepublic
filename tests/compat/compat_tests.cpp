@@ -76,19 +76,43 @@ int main() {
         write("farm.ini", "$PRODUCTION grain 24\n");
         write("bakery.ini", "$CONSUMPTION grain 12\n$PRODUCTION bread 6\n");
         write("decorative.ini", "$NAME 17\n");
+        write("unlisted_broken.ini", "$PRODUCTION grain not-a-number\n");
+        {
+            const std::string bboxBytes("airplane parking\0binary payload", 30);
+            std::ofstream bbox(root / "airplaneparking_30.bbox", std::ios::binary);
+            bbox.write(bboxBytes.data(), static_cast<std::streamsize>(bboxBytes.size()));
+        }
         compat::CatalogImportOptions options;
-        options.buildingWhitelist = {"bakery", "farm"};
+        options.buildingWhitelist = {"bakery", "farm", "storage"};
         economy::Catalog fixtureCatalog;
         compat::ImportReport fixtureReport;
         std::string fixtureError;
         const bool imported = compat::ImportCatalogFromContentDirectory(
             root.parent_path(), options, fixtureCatalog, fixtureReport, fixtureError);
         Check(imported && fixtureError.empty(), "synthetic definition directory imports");
-        Check(fixtureReport.definitionsSeen == 3 && fixtureReport.buildingsImported == 2 &&
-                  fixtureReport.buildingsSkipped == 1 &&
+        Check(fixtureReport.definitionsSeen == 4 && fixtureReport.buildingsImported == 2 &&
+                  fixtureReport.buildingsSkipped == 2 &&
+                  fixtureReport.skippedBuildings.size() == 2 &&
                   fixtureReport.skippedBuildings[0].name == "decorative" &&
-                  fixtureReport.skippedBuildings[0].reason.find("allowlist") != std::string::npos,
-              "content import reports non-whitelisted definitions as skipped");
+                  fixtureReport.skippedBuildings[1].name == "unlisted_broken" &&
+                  fixtureReport.skippedBuildings[0].reason.find("allowlist") != std::string::npos &&
+                  fixtureReport.skippedBuildings[1].reason.find("not read") != std::string::npos,
+              "content import reports valid and malformed non-allowlisted INIs as skipped");
+        Check(std::none_of(fixtureReport.skippedBuildings.begin(),
+                           fixtureReport.skippedBuildings.end(), [](const auto &skipped) {
+                               return skipped.name == "airplaneparking_30";
+                           }),
+              "content import ignores binary bbox files");
+        const std::string importLog = compat::DescribeImport(fixtureReport);
+        Check(importLog.find("unlisted_broken") != std::string::npos &&
+                  importLog.find("airplaneparking_30") == std::string::npos,
+              "catalog summary logs skipped INIs and omits bbox files");
+        Check(std::any_of(fixtureReport.warnings.begin(), fixtureReport.warnings.end(),
+                          [](const auto &warning) {
+                              return warning.find("allowlisted building definition file not found: 'storage'") !=
+                                  std::string::npos;
+                          }),
+              "catalog summary identifies absent allowlisted stems");
         const auto *farm = fixtureCatalog.BuildingTypes().empty()
             ? nullptr : &fixtureCatalog.BuildingTypes().front();
         Check(farm != nullptr && farm->name == "bakery" && farm->width == 4 && farm->depth == 4,
