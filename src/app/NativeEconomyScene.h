@@ -8,6 +8,7 @@
 #include "openrepublic/procgeo/vehicles.h"
 #include "openrepublic/runtime/synthetic_terrain.h"
 #include "openrepublic/runtime/native_traffic_polish.h"
+#include "openrepublic/runtime/native_rail_geometry.h"
 
 #include <optional>
 #include <array>
@@ -66,6 +67,7 @@ namespace openrepublic::preview
 			double centerX{}, centerZ{}, width{}, depth{};
 			bool enabled{};
 		};
+		struct RailVisual { wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY; economy::Cell a{}, b{}; };
 		struct UtilityVisual
 		{
 			wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
@@ -84,6 +86,8 @@ namespace openrepublic::preview
 			wi::ecs::Entity label = wi::ecs::INVALID_ENTITY;
 			wi::ecs::Entity labelMesh = wi::ecs::INVALID_ENTITY;
 			std::array<wi::ecs::Entity, 4> wheels{};
+			std::array<wi::ecs::Entity, 2> wagons{};
+			std::array<wi::ecs::Entity, 2> wagonMeshes{};
 			economy::Cell previous{};
 			economy::Cell current{};
 			float yaw{};
@@ -116,6 +120,7 @@ namespace openrepublic::preview
 		std::optional<runtime::NativeEconomyTransform> transform_;
 		std::unordered_map<economy::BuildingId, BuildingVisual> buildings_;
 		std::unordered_map<economy::RoadId, RoadVisual> roads_;
+		std::unordered_map<economy::RailId, RailVisual> rails_;
 		std::vector<UtilityVisual> utilityConnections_;
 		std::unordered_map<economy::VehicleId, VehicleVisual> vehicles_;
 		std::vector<AmbientVehicleVisual> ambientVehicles_;
