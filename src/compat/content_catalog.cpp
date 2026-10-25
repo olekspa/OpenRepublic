@@ -78,21 +78,27 @@ bool ImportCatalogFromContentDirectory(const std::filesystem::path &inputRoot,
         const auto status = iterator->symlink_status(ec);
         if (ec)
             return Fail(error, "could not inspect an entry in the building definitions directory: " + ec.message());
-        if (std::filesystem::is_regular_file(status)) {
+        if (std::filesystem::is_regular_file(status) && iterator->path().extension() == ".ini") {
             if (files.size() == kMaxDefinitionFiles)
-                return Fail(error, "building definitions directory exceeds the 8192 file limit");
+                return Fail(error, "building definitions directory exceeds the 8192 .ini file limit");
             files.push_back(iterator->path());
         }
     }
     std::sort(files.begin(), files.end());
     if (files.empty())
-        return Fail(error, "building definitions directory contains no regular files");
+        return Fail(error, "building definitions directory contains no regular .ini files");
 
     std::map<std::string, content::BuildingDefinition> parsed;
+    std::vector<SkippedBuilding> outsideAllowlist;
     for (const auto &path : files) {
         const std::string name = path.stem().u8string();
         if (name.empty())
             return Fail(error, "building definition file has an empty filename stem");
+        if (!options.buildingWhitelist.empty() && !options.buildingWhitelist.count(name)) {
+            outsideAllowlist.push_back(
+                {name, "building is outside the configured exact-name allowlist; file was not read"});
+            continue;
+        }
         if (parsed.count(name))
             return Fail(error, "building definition directory contains duplicate filename stems");
         std::string text;
@@ -109,6 +115,18 @@ bool ImportCatalogFromContentDirectory(const std::filesystem::path &inputRoot,
         error = report.error;
         return false;
     }
+    report.definitionsSeen = files.size();
+    report.buildingsSkipped += outsideAllowlist.size();
+    report.skippedBuildings.insert(report.skippedBuildings.end(), outsideAllowlist.begin(),
+                                   outsideAllowlist.end());
+    std::sort(report.skippedBuildings.begin(), report.skippedBuildings.end(),
+              [](const SkippedBuilding &left, const SkippedBuilding &right) {
+                  return left.name < right.name;
+              });
+    for (const auto &name : options.buildingWhitelist)
+        if (!parsed.count(name))
+            report.warnings.push_back("allowlisted building definition file not found: '" +
+                                      name + "'");
     return true;
 }
 
