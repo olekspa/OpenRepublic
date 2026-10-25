@@ -62,6 +62,7 @@ namespace openrepublic
 		void SetSyntheticRegionFixture();
 		void SetEconomyCheckpoint(openrepublic::economy::RestoredCheckpoint checkpoint, bool freshWorld = false);
 		void SetAmbientTraffic(bool enabled) noexcept { nativeEconomyScene.SetAmbientTraffic(enabled); }
+		void SetNativeTrafficPolish(bool enabled) noexcept { nativeEconomyScene.SetTrafficPolish(enabled); }
 		void SetDarkSceneLighting(bool dark) noexcept { nativeEconomyScene.SetDarkLighting(dark); }
 		void SetNativeTerrainEnabled(bool enabled);
 		void SetNativeObjectives(openrepublic::runtime::NativeObjectiveSet objectiveSet);

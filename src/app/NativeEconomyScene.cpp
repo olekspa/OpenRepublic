@@ -1068,6 +1068,39 @@ namespace openrepublic::preview
 		const std::function<double(double, double)>& groundHeight)
 	{
 		if (!transform_) return;
+		std::vector<runtime::TrafficIntersectionSample> trafficSamples;
+		std::vector<runtime::TrafficFollowingSample> followingSamples;
+		trafficSamples.reserve(vehicles_.size());
+		followingSamples.reserve(vehicles_.size());
+		for (const auto& entry : vehicles_)
+		{
+			const auto sample = runtime::InterpolateNativeVehicleMotion(entry.second.previous,
+				entry.second.current, alpha, entry.second.yaw, *transform_);
+			trafficSamples.push_back({ entry.first, sample.position });
+			const auto a = entry.second.previous;
+			const auto b = entry.second.current;
+			const int dx = b.x - a.x, dz = b.z - a.z;
+			if (std::abs(dx) + std::abs(dz) != 1) continue;
+			const auto packed = [](economy::Cell cell) {
+				return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(cell.x)) << 32) |
+					static_cast<std::uint32_t>(cell.z);
+			};
+			std::uint64_t pa = packed(a), pb = packed(b);
+			int direction = 1;
+			if (pb < pa) { std::swap(pa, pb); direction = -1; }
+			const std::uint64_t segmentId = (pa * 0x9E3779B97F4A7C15ull) ^ pb;
+			const runtime::NativePoint start = transform_->CellCenter(direction > 0 ? a : b);
+			const runtime::NativePoint end = transform_->CellCenter(direction > 0 ? b : a);
+			const double segmentLength = std::hypot(end.x - start.x, end.z - start.z);
+			const double distance = std::clamp(std::hypot(sample.position.x - start.x, sample.position.z - start.z), 0.0, segmentLength);
+			const float scale = static_cast<float>(runtime::NativeVehicleDisplayScale(
+				openrepublic::procgeo::VehicleLength(entry.second.kind)));
+			followingSamples.push_back({ entry.first, segmentId, 1, distance, 4.0,
+				std::max(0.5, 3.0 * static_cast<double>(scale)) });
+		}
+		const auto following = runtime::ResolveTrafficFollowing(followingSamples, 0.25, 1.0);
+		std::unordered_map<economy::VehicleId, runtime::TrafficFollowingResult> followingById;
+		for (const auto& result : following) followingById.emplace(result.vehicleId, result);
 		for (auto& entry : vehicles_)
 		{
 			VehicleVisual& visual = entry.second;
@@ -1075,21 +1108,47 @@ namespace openrepublic::preview
 				openrepublic::procgeo::VehicleLength(visual.kind)));
 			const runtime::NativeVehicleMotion motion = runtime::InterpolateNativeVehicleMotion(
 				visual.previous, visual.current, alpha, visual.yaw, *transform_, 0.48 * modelScale);
-			if (motion.moving) visual.yaw = static_cast<float>(motion.yawRadians);
+			runtime::NativePoint polishedPosition = motion.position;
+			double polishedYaw = motion.yawRadians;
+			if (trafficPolishEnabled_ && motion.moving)
+			{
+				const runtime::NativePoint tangent{ std::sin(motion.yawRadians), std::cos(motion.yawRadians) };
+				polishedPosition = runtime::OffsetToRightLane(motion.position, tangent, 0.12);
+				const auto queued = followingById.find(entry.first);
+				if (queued != followingById.end())
+				{
+					const auto a = visual.previous;
+					const auto b = visual.current;
+					const auto start = transform_->CellCenter((b.x < a.x || b.z < a.z) ? b : a);
+					const double currentDistance = std::hypot(motion.position.x - start.x, motion.position.z - start.z);
+					const double delta = queued->second.queuedPosition - currentDistance;
+					polishedPosition.x += tangent.x * delta;
+					polishedPosition.z += tangent.z * delta;
+				}
+				polishedYaw = runtime::LimitTrafficHeading(visual.yaw, motion.yawRadians, 0.20);
+				const auto yielding = runtime::ResolveTrafficIntersectionYield(entry.first, motion.position,
+					trafficSamples, 0.35, 3);
+				if (yielding.shouldWait)
+				{
+					polishedPosition = transform_->CellCenter(visual.previous);
+					polishedYaw = visual.yaw;
+				}
+			}
+			if (motion.moving) visual.yaw = static_cast<float>(polishedYaw);
 			visual.wheelRotation = visual.wheelRotationBase + static_cast<float>(motion.wheelRotationRadians);
 			XMFLOAT4 yawRotation;
 			XMStoreFloat4(&yawRotation, XMQuaternionRotationAxis(XMVectorSet(0, 1, 0, 0), visual.yaw));
-			const double sampledHeight = groundHeight ? groundHeight(motion.position.x, motion.position.z) :
-				GroundHeight(motion.position.x, motion.position.z);
+			const double sampledHeight = groundHeight ? groundHeight(polishedPosition.x, polishedPosition.z) :
+				GroundHeight(polishedPosition.x, polishedPosition.z);
 			const float groundY = static_cast<float>(std::isfinite(sampledHeight) ? sampledHeight : 0.0) + kRoadSurfaceY;
 			const auto positionNode = [&](wi::ecs::Entity entity, float localX, float localY, float localZ,
 				const XMFLOAT3& scale, const XMFLOAT4& rotation)
 			{
 				wi::scene::TransformComponent* node = scene.transforms.GetComponent(entity);
 				if (!node) return;
-				const float x = static_cast<float>(motion.position.x) +
+				const float x = static_cast<float>(polishedPosition.x) +
 					(std::cos(visual.yaw) * localX + std::sin(visual.yaw) * localZ) * modelScale;
-				const float z = static_cast<float>(motion.position.z) +
+				const float z = static_cast<float>(polishedPosition.z) +
 					(-std::sin(visual.yaw) * localX + std::cos(visual.yaw) * localZ) * modelScale;
 				node->ClearTransform(); node->Scale(scale); node->Rotate(rotation);
 				node->Translate(XMFLOAT3(x, groundY + localY * modelScale, z)); node->UpdateTransform();
@@ -1112,8 +1171,8 @@ namespace openrepublic::preview
 			if (wi::scene::TransformComponent* label = scene.transforms.GetComponent(visual.label))
 			{
 				label->ClearTransform(); label->Scale(XMFLOAT3(0.82f, 0.82f, 0.82f));
-				label->Translate(XMFLOAT3(static_cast<float>(motion.position.x),
-					groundY + 5.0f * modelScale, static_cast<float>(motion.position.z)));
+				label->Translate(XMFLOAT3(static_cast<float>(polishedPosition.x),
+					groundY + 5.0f * modelScale, static_cast<float>(polishedPosition.z)));
 				label->UpdateTransform();
 			}
 			if (wi::scene::ObjectComponent* object = scene.objects.GetComponent(visual.body))
