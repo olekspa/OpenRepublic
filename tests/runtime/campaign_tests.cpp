@@ -78,6 +78,9 @@ int main() {
     Check(RecordCampaignCompletion(campaign, progress, "town", 390) &&
           progress.missions[1].second.bestScore == 420, "later lower scores preserve best score");
     Check(!RecordCampaignCompletion(campaign, progress, "missing", 999), "unknown mission cannot alter progress");
+    Check(DefaultCampaignProgressPath("first") != DefaultCampaignProgressPath("second") &&
+          DefaultCampaignProgressPath("../bad").empty(),
+          "default progress paths are per-campaign and reject unsafe IDs");
 
     const auto progressPath = root / "user-data" / "campaign-progress.dat";
     Check(SaveCampaignProgressAtomic(progressPath, campaign, progress, error), "atomically save progress under user data");

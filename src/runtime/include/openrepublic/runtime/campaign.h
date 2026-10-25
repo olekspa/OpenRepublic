@@ -57,6 +57,6 @@ bool RecordCampaignCompletion(const CampaignDefinition& campaign,
                               CampaignProgress& progress,
                               std::string_view missionId,
                               std::uint64_t score);
-std::filesystem::path DefaultCampaignProgressPath();
+std::filesystem::path DefaultCampaignProgressPath(std::string_view campaignId);
 
 } // namespace openrepublic::runtime

@@ -267,8 +267,9 @@ bool RecordCampaignCompletion(const CampaignDefinition& campaign, CampaignProgre
     return true;
 }
 
-std::filesystem::path DefaultCampaignProgressPath() {
-    return DefaultSaveDirectory() / "campaign-progress.dat";
+std::filesystem::path DefaultCampaignProgressPath(std::string_view campaignId) {
+    if (!SafeId(campaignId)) return {};
+    return DefaultSaveDirectory() / ("campaign-" + std::string(campaignId) + "-progress.dat");
 }
 
 } // namespace openrepublic::runtime
