@@ -18,6 +18,7 @@
 #include "openrepublic/runtime/economy_overview.h"
 #include "openrepublic/runtime/native_coal_demo.h"
 #include "openrepublic/runtime/native_objectives.h"
+#include "openrepublic/runtime/objective_planner.h"
 #include "openrepublic/runtime/campaign.h"
 #include "openrepublic/runtime/save_slots.h"
 #include "openrepublic/runtime/native_construction.h"
@@ -152,6 +153,7 @@ namespace openrepublic
 		void QueueNativeDispatch();
 		void QueueNativeCoalImport();
 		void UpdateNativeCoalAutomation();
+		void UpdateNativeObjectivePlanner();
 		void RestartNativeObjectives();
 		void QueueNativeUtilityConnection(bool connect);
 		void QueueNativeRoadToggle();

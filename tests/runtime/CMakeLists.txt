@@ -107,3 +107,8 @@ add_executable(OpenRepublicUiScriptTests ui_script_tests.cpp)
 target_link_libraries(OpenRepublicUiScriptTests PRIVATE OpenRepublicRuntime)
 target_compile_features(OpenRepublicUiScriptTests PRIVATE cxx_std_17)
 add_test(NAME RuntimeUiScript COMMAND OpenRepublicUiScriptTests)
+
+add_executable(OpenRepublicObjectivePlannerTests objective_planner_tests.cpp)
+target_link_libraries(OpenRepublicObjectivePlannerTests PRIVATE OpenRepublicRuntime)
+target_compile_features(OpenRepublicObjectivePlannerTests PRIVATE cxx_std_17)
+add_test(NAME RuntimeObjectivePlanner COMMAND OpenRepublicObjectivePlannerTests)
