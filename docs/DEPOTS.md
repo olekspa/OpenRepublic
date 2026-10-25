@@ -68,6 +68,29 @@ returns the same additive fields. The `summary` fleet object reports total,
 parked, and dispatched owned trucks, and its text adds a fleet line only when a
 fleet exists.
 
+## Opt-in fleet in an imported map region
+
+`--region-synthetic-fleet N` adds an OpenRepublic-authored 1x1 depot with `N`
+default trucks to app-owned `--map-region` economy mode. `N` is bounded from 1
+to 16. The depot is placed beside a free imported road cell nearest the region
+grid center. The ordinary region dispatch controls can then dispatch its owned
+trucks between imported economy buildings. This option requires
+`--map-package`, `--map-region`, and `--content-root`; it is unavailable in
+external-host, synthetic-fixture, capture, and native-sandbox modes.
+
+Example:
+
+```powershell
+OpenRepublic.exe --content-root <local-content-root> --map-package <local-map-package> `
+  --map-region --region-synthetic-fleet 2 --showcase-look enhanced
+```
+
+The added depot and fleet are synthetic OpenRepublic content. No imported map
+building is classified as a depot, and truck capacity, routing, handling, and
+dispatch behavior remain OpenRepublic rules. WRSR depot, vehicle, and fleet
+semantics remain **UNKNOWN**. The generated depot uses the region economy's
+cell/road adapter and does not alter the source package.
+
 ## Trade posts and heating
 
 An existing trade post can import a catalog priced resource through the

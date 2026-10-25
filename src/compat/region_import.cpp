@@ -256,6 +256,85 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
     return true;
 }
 
+bool PlaceSyntheticRegionFleetDepot(economy::World &world,
+                                    economy::BuildingTypeId depotType,
+                                    economy::BuildingId &outDepot,
+                                    std::string &error) {
+    error.clear();
+    outDepot = 0;
+    const auto &catalog = world.GetCatalog();
+    const auto *depotDefinition = catalog.BuildingType(depotType);
+    if (!depotDefinition || !depotDefinition->depot || depotDefinition->fleet.empty() ||
+        depotDefinition->width != 1 || depotDefinition->depth != 1) {
+        error = "synthetic region depot type is missing its 1x1 depot fleet declaration";
+        return false;
+    }
+
+    const economy::WorldSnapshot snapshot = world.Snapshot();
+    std::set<std::pair<std::int32_t, std::int32_t>> roadCells;
+    for (const auto &road : snapshot.roads) {
+        roadCells.emplace(road.a.x, road.a.z);
+        roadCells.emplace(road.b.x, road.b.z);
+    }
+    if (roadCells.empty()) {
+        error = "synthetic region fleet needs at least one imported road cell";
+        return false;
+    }
+
+    std::set<std::pair<std::int32_t, std::int32_t>> blockedCells;
+    for (const auto &building : snapshot.buildings) {
+        const auto *type = catalog.BuildingType(building.type);
+        if (!type) continue;
+        for (std::uint32_t dz = 0; dz < type->depth; ++dz)
+            for (std::uint32_t dx = 0; dx < type->width; ++dx)
+                blockedCells.emplace(building.origin.x + static_cast<std::int32_t>(dx),
+                                     building.origin.z + static_cast<std::int32_t>(dz));
+        blockedCells.emplace(building.access.x, building.access.z);
+    }
+    std::vector<std::pair<std::int32_t, std::int32_t>> orderedRoadCells(roadCells.begin(), roadCells.end());
+    std::sort(orderedRoadCells.begin(), orderedRoadCells.end(), [&](const auto &lhs, const auto &rhs) {
+        const auto distance = [&](const auto &cell) {
+            const std::int64_t dx = static_cast<std::int64_t>(cell.first) - snapshot.gridWidth / 2;
+            const std::int64_t dz = static_cast<std::int64_t>(cell.second) - snapshot.gridDepth / 2;
+            return dx * dx + dz * dz;
+        };
+        const auto lhsDistance = distance(lhs);
+        const auto rhsDistance = distance(rhs);
+        return lhsDistance != rhsDistance ? lhsDistance < rhsDistance : lhs < rhs;
+    });
+
+    for (const auto &road : orderedRoadCells) {
+        const economy::Cell access{road.first, road.second};
+        const economy::Cell origin{road.first, road.second + 1};
+        if (origin.x < 0 || origin.z < 0 ||
+            static_cast<std::uint32_t>(origin.x) >= snapshot.gridWidth ||
+            static_cast<std::uint32_t>(origin.z) >= snapshot.gridDepth ||
+            roadCells.count({origin.x, origin.z}) != 0)
+            continue;
+        if (blockedCells.count({origin.x, origin.z}) != 0 ||
+            blockedCells.count({access.x, access.z}) != 0)
+            continue;
+
+        const economy::CommandId command = world.PlaceBuilding(depotType, origin);
+        if (!command) continue;
+        const auto step = world.Step(1);
+        if (!step.accepted) {
+            error = "economy rejected the synthetic depot placement step";
+            return false;
+        }
+        economy::CommandResult result;
+        result = world.GetCommandResult(command);
+        if (result.state != economy::CommandState::Accepted || !result.building) {
+            error = "no road-adjacent cell accepted the synthetic depot placement";
+            return false;
+        }
+        outDepot = result.building;
+        return true;
+    }
+    error = "no free cell beside an imported road can host the synthetic fleet depot";
+    return false;
+}
+
 std::string DescribeRegionImport(const RegionImportReport &report) {
     std::ostringstream output;
     output.imbue(std::locale::classic());
