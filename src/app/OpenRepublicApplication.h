@@ -16,6 +16,7 @@
 #include "openrepublic/runtime/native_economy_clock.h"
 #include "openrepublic/runtime/economy_overview.h"
 #include "openrepublic/runtime/native_coal_demo.h"
+#include "openrepublic/runtime/save_slots.h"
 #include "openrepublic/runtime/native_construction.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/sim/simulation.h"
@@ -27,6 +28,7 @@
 #endif
 
 #include <filesystem>
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <limits>
@@ -74,6 +76,7 @@ namespace openrepublic
 			std::string error = {});
 		void Initialize() override;
 		void Update(float dt) override;
+		bool ConfirmQuit();
 
 	private:
 		void SelectBuilding(wi::ecs::Entity selected);
@@ -133,6 +136,11 @@ namespace openrepublic
 		void QueueNativeUtilityConnection(bool connect);
 		void QueueNativeRoadToggle();
 		void SaveNativeCheckpoint();
+		void LoadNativeSaveSlot(std::size_t index);
+		void StartNativeNewGame(const wchar_t* arguments);
+		void RefreshNativeSaveSlots();
+		bool LaunchNativeSession(const std::wstring& arguments);
+		void UpdateNativeAutosave();
 		void LayoutNativeControls();
 		void ToggleNativeRunPause();
 		bool TrackNativeSubmission(const economy_api::Submission& submitted, const std::string& action);
@@ -165,6 +173,19 @@ namespace openrepublic
 		wi::gui::Button nativeDetailsButton;
 		wi::gui::Button nativeOverviewButton;
 		wi::gui::Button nativeSaveButton;
+		wi::gui::Button nativeQuitButton;
+		wi::gui::Button nativeGameMenuButton;
+		std::array<wi::gui::Button, 3> nativeNewGameButtons;
+		std::array<wi::gui::Button, 8> nativeSaveSlotButtons;
+		std::array<wi::gui::Button, 2> nativeSavePageButtons;
+		std::vector<runtime::SaveSlotInfo> nativeSaveSlots;
+		std::size_t nativeSaveSlotOffset = 0;
+		std::filesystem::path nativeSaveDirectory;
+		bool nativeGameMenuExpanded = false;
+		bool nativeAllowClose = false;
+		std::uint64_t nativeSavedRevision = 0;
+		std::uint64_t nextNativeAutosaveTick = 2400;
+		std::size_t nextNativeAutosaveSlot = 0;
 		// Lifetime order is intentional: EconomyApi references regionEconomyWorld,
 		// which references regionEconomyCatalog. Destruction runs in reverse order.
 		openrepublic::economy::Catalog regionEconomyCatalog;

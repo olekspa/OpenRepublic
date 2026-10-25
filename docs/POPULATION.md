@@ -2,6 +2,10 @@
 
 **Status:** OpenRepublic-authored synthetic economy rules. **WRSR parity: UNKNOWN.**
 
+The opt-in `citizens` extension adds synthetic needs, happiness, immigration,
+emigration, and happiness-scaled worker availability. See
+[CITIZENS.md](CITIZENS.md) for its declarations and equations.
+
 This optional model gives catalog authors a small population and staffing system.
 It does not claim to reproduce original-game population, food, work, migration,
 or production behavior. Catalogs that declare none of these rules retain the

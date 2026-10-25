@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "thriving_town",
+  "name": "Thriving town",
+  "description": "OpenRepublic synthetic citizen needs: a market distributes bakery food, and a connected boiler supplies housing heat. Score is happy residents.",
+  "catalog": "openrepublic-economy 1\nresource grain\nresource flour\nresource bread\nfood bread 1 every 2\nutility heat\ncitizens\nbuilding home 1 1\n  housing 12\n  recipe warmth every 1 in heat:1\nend\nbuilding farm 1 1\n  store grain 64\n  recipe harvest every 1 out grain:4\nend\nbuilding mill 1 1\n  store grain 64\n  store flour 64\n  recipe grind every 1 in grain:2 out flour:2\nend\nbuilding bakery 1 1\n  store flour 64\n  store bread 64\n  recipe bake every 1 in flour:2 out bread:2\nend\nbuilding market 1 1\n  store bread 64\nend\nbuilding boiler 1 1\n  recipe heat every 1 out heat:2\nend\nvehicle truck capacity 8 speed 2\n",
+  "roads": [
+    {"a":{"x":1,"z":1},"b":{"x":2,"z":1}}, {"a":{"x":2,"z":1},"b":{"x":3,"z":1}},
+    {"a":{"x":3,"z":1},"b":{"x":4,"z":1}}, {"a":{"x":4,"z":1},"b":{"x":5,"z":1}},
+    {"a":{"x":5,"z":1},"b":{"x":6,"z":1}}, {"a":{"x":6,"z":1},"b":{"x":7,"z":1}},
+    {"a":{"x":7,"z":1},"b":{"x":8,"z":1}}, {"a":{"x":8,"z":1},"b":{"x":9,"z":1}},
+    {"a":{"x":9,"z":1},"b":{"x":10,"z":1}}, {"a":{"x":10,"z":1},"b":{"x":11,"z":1}}
+  ],
+  "buildings": [
+    {"type":"home","x":1,"z":2}, {"type":"farm","x":3,"z":2},
+    {"type":"mill","x":5,"z":2}, {"type":"bakery","x":7,"z":2},
+    {"type":"market","x":9,"z":2}, {"type":"boiler","x":11,"z":2}
+  ],
+  "utilityConnections": [{"resource":"heat","aBuilding":0,"bBuilding":5}],
+  "score": {"metric":"happy_residents"}
+}
