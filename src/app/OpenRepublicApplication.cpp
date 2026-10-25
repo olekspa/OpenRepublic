@@ -1720,6 +1720,24 @@ namespace openrepublic
 				gui.AddWidget(&regionHaulButton);
 				if (nativeEconomyCheckpointMode)
 				{
+					nativeEconomyHud.Create(gui, [this]() {
+						nativeHudOverview = !nativeHudOverview;
+						nativeEconomyHud.SetOverviewActive(nativeHudOverview);
+						if (!nativeHudOverview) { FrameNativeEconomyWorld(); return; }
+						FrameNativeEconomyWorld();
+						if (!renderPath || !renderPath->camera) return;
+						const auto target = nativeEconomyScene.CameraTarget();
+						const float distance = nativeEconomyScene.CameraDistance() * (nativeCoalDemo ? 0.68f : 1.0f);
+						wi::scene::TransformComponent cameraTransform;
+						cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 1.25f, target.z));
+						cameraTransform.RotateRollPitchYaw(XMFLOAT3(1.5707963f, 0, 0));
+						cameraTransform.UpdateTransform();
+						renderPath->camera->TransformCamera(cameraTransform);
+						renderPath->camera->zNearP = std::max(0.01f, distance / 100000.0f);
+						renderPath->camera->zFarP = std::max(1000.0f, distance * 4.0f);
+						renderPath->camera->UpdateCamera();
+						cameraSpeedScale = std::max(1.0f, distance / 15.0f);
+					});
 					nativeFrameButton.Create("NativeEconomyFrameWorldButton");
 					nativeFrameButton.SetText("Frame world");
 					StyleButton(nativeFrameButton);
@@ -2107,6 +2125,38 @@ namespace openrepublic
 		const bool guiHasFocus = nativeControlsHaveFocus || statusScrollActive ||
 			(renderPath->GetGUI().HasFocus() && !pointerOnStatusLabel);
 		if (nativeEconomyCheckpointMode) UpdateNativeConstructionPreview(!guiHasFocus);
+		if (nativeEconomyCheckpointMode && nativeEconomyPresentationValid && nativeEconomyCheckpoint.world && nativeEconomyCheckpoint.catalog)
+		{
+			if (!nativeHudSnapshot) nativeHudSnapshot = nativeEconomyCheckpoint.world->Snapshot();
+			nativeEconomyHud.Layout(static_cast<float>(renderPath->GetLogicalWidth()), static_cast<float>(renderPath->GetLogicalHeight()), nativeStatusTop + 4.0f);
+			std::string hoverText;
+			if (!guiHasFocus && renderPath->camera)
+			{
+				const wi::primitive::Ray ray = wi::renderer::GetPickRay(static_cast<long>(pointer.x), static_cast<long>(pointer.y), *renderPath, *renderPath->camera);
+				const auto hit = previewWorld.Intersects(ray);
+				const auto buildingId = nativeEconomyScene.BuildingForEntity(hit.entity);
+				if (buildingId)
+				{
+					const auto found = std::find_if(nativeHudSnapshot->buildings.begin(), nativeHudSnapshot->buildings.end(), [&](const auto& value) { return value.id == *buildingId; });
+					if (found != nativeHudSnapshot->buildings.end())
+					{
+						const auto* type = nativeEconomyCheckpoint.catalog->BuildingType(found->type);
+						std::ostringstream tip;
+						tip << (type ? type->name : "Building") << " OR-" << found->id << " | " << (found->enabled ? "enabled" : "disabled");
+						if (found->constructionSite) tip << " | construction " << static_cast<int>(std::clamp(found->constructionProgress, 0.0, 1.0) * 100.0 + 0.5) << "%";
+						if (found->stall.reason != economy::StallReason::Running) tip << " | stall " << static_cast<unsigned>(found->stall.reason);
+						for (const auto& stock : found->inventory)
+						{
+							const auto* resource = nativeEconomyCheckpoint.catalog->Resource(stock.resource);
+						if (resource) tip << "\n" << resource->name << " " << stock.amount << "/" << stock.capacity;
+						}
+						hoverText = tip.str();
+					}
+				}
+			}
+			nativeEconomyHud.Update(*nativeHudSnapshot, *nativeEconomyCheckpoint.catalog,
+				nativeEconomyRunning, nativeEconomySpeed, nativeEconomyCheckpoint.world->QueryUtilityDiagnostics(), hoverText);
+		}
 		if (!guiHasFocus && wi::input::Press(wi::input::KEYBOARD_BUTTON_ESCAPE))
 		{
 			if (mapRegionPreview)
@@ -2397,6 +2447,7 @@ namespace openrepublic
 		if (nativeToolsReady && overviewWorld)
 		{
 			const auto current = overviewWorld->Snapshot();
+			if (nativeEconomyCheckpointMode) nativeHudSnapshot = current;
 			if (!nativeOverviewHistory.empty() && current.tick < nativeOverviewHistory.back().tick)
 				nativeOverviewHistory.clear();
 			if (nativeOverviewHistory.empty() || current.tick > nativeOverviewHistory.back().tick)

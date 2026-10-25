@@ -2,3 +2,4 @@
 target_include_directories(OpenRepublicRuntime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_compile_features(OpenRepublicRuntime PUBLIC cxx_std_17)
 target_link_libraries(OpenRepublicRuntime PUBLIC OpenRepublicEconomy)
+target_sources(OpenRepublicRuntime PRIVATE native_economy_hud.cpp)
