@@ -3,7 +3,7 @@
   "title": "Trade and depot logistics",
   "objectives": [
     {
-      "id": "delivery",
+      "id": "import_coal_reserve",
       "title": "Import a coal reserve",
       "hint": "Earn treasury by exporting grain, then import coal through the border post.",
       "metric": "inventory_at_least",
