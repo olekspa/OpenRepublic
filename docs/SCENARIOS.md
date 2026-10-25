@@ -30,6 +30,7 @@ They do not contain game data.
 | `coal_to_heat` | Grain export post, coal-import trade post, depot with two owned trucks, coal storage and heating plant | The rule-based baseline exports for treasury, imports coal for the plant's missing recipe input, then dispatches a parked depot truck from stocked inventory and replans as trucks return. Scores stored heat units. |
 | `rail_vs_road` | Independent 20-edge road and rail routes, two producer/destination pairs, and one train | The scorer moves 1,000 grain units by truck and train, records destination arrival ticks, and requires the rail run to finish first. See [RAIL.md](RAIL.md) for synthetic-rule boundaries and the explicit-transfer limitation. |
 | `water_for_brewery` | Water tower linked to two breweries | The tower generates 4 water units per tick for 6 units of brewery demand; stable recipe order lets the first brewery consume 3 while the second remains short, exposing both throughput and unmet demand. |
+| `commuter_town` | Distant home and mine, two bus stops, one four-seat bus | Opt-in synthetic transit route connects the home and workplace; the combined score reports fed residents and assigned/required workers. |
 
 The building coordinates are origins on the host grid. Each building's access
 cell is one cell north (`x`, `z - 1`); the fixtures place that cell on a road.

@@ -2,6 +2,12 @@
 
 Latest consolidated status and handoff: [HANDOFF_2026-10-24.md](HANDOFF_2026-10-24.md).
 
+**Synthetic passenger transit:** opt-in road bus routes, commute-distance gating,
+bus stop dwell/load/unload ticks, workforce assignment, and native v10 transit
+state are implemented in the economy. The controller API and JSONL command are
+additive; `commuter_town` is an authored score fixture. WRSR passenger and
+commuting parity remain **UNKNOWN**; see [TRANSIT.md](TRANSIT.md).
+
 **Native desktop save slots:** named user-data saves, bounded metadata listing,
 three rotating simulation-time autosaves, new-game catalog choices, and a
 load/quit flow are documented in [DESKTOP_SAVES.md](DESKTOP_SAVES.md). The

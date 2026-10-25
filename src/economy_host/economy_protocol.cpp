@@ -436,6 +436,8 @@ std::string Action(economy_api::Action action) {
     return "build_road";
   case A::BuildRail:
     return "build_rail";
+  case A::CreateTransitRoute:
+    return "create_transit_route";
   case A::SetRoadEnabled:
     return "set_road_enabled";
   case A::SetBuildingEnabled:
@@ -553,7 +555,7 @@ Json Catalog(const economy_api::CatalogView &c) {
 }
 Json World(const economy_api::WorldView &w) {
   Json buildings = Json::array(), roads = Json::array(), rails = Json::array(), vehicles = Json::array(), orders = Json::array();
-  Json utilityConnections = Json::array();
+  Json utilityConnections = Json::array(), transitRoutes = Json::array();
   for (const auto &b : w.buildings) {
     Json inventory = Json::array();
     for (const auto &i : b.inventory)
@@ -612,11 +614,19 @@ Json World(const economy_api::WorldView &w) {
                           {"vehicleCell", Cell(o.vehicleCell)}});
   for (const auto &u : w.utilityConnections)
     utilityConnections.push_back(Json{{"resource", u.resource}, {"a", u.a}, {"b", u.b}});
+  for (const auto &route : w.transitRoutes) {
+    Json stops = Json::array();
+    for (const auto stop : route.orderedStops) stops.push_back(stop);
+    transitRoutes.push_back(Json{{"stops", stops}, {"busType", route.busType},
+      {"stopIndex", route.stopIndex}, {"passengers", std::to_string(route.passengers)},
+      {"seats", std::to_string(route.seats)}, {"phase", route.phase},
+      {"dwellRemaining", route.dwellRemaining}, {"busCell", Cell(route.busCell)}});
+  }
   Json result{{"apiVersion", w.apiVersion},     {"revision", std::to_string(w.revision)},
               {"tick", std::to_string(w.tick)}, {"stateHash", std::to_string(w.stateHash)},
               {"buildings", buildings},         {"roads", roads}, {"rails", rails},
               {"vehicles", vehicles},           {"orders", orders},
-              {"utilityConnections", utilityConnections},
+              {"utilityConnections", utilityConnections}, {"transitRoutes", transitRoutes},
               {"commandHistory", CommandHistory(w.commandHistory)}};
   if (w.tradeEnabled) result["treasury"] = std::to_string(w.treasury);
   return result;
@@ -1387,6 +1397,20 @@ std::string Dispatcher::HandleLine(std::string_view line) {
           !Int32(c, "bz", bz, message))
         return invalid(message);
       s = api_->BuildRail(revision, {ax, az}, {bx, bz});
+    } else if (kind == "create_transit_route") {
+      if (!NestedFields(c, {"kind", "stops", "busType"}, message)) return invalid(message);
+      if (!String(c, "busType", vehicle, message) || !c["stops"].is_array() ||
+          c["stops"].size() < 2 || c["stops"].size() > 256) return invalid("stops must contain 2 to 256 building IDs");
+      std::vector<economy::BuildingId> stops;
+      stops.reserve(c["stops"].size());
+      for (const auto& stop : c["stops"]) {
+        if (!stop.is_number_unsigned() && !(stop.is_number_integer() && stop.get<std::int64_t>() >= 0))
+          return invalid("each stop must be an unsigned building ID");
+        const auto id = stop.get<std::uint64_t>();
+        if (id > UINT32_MAX) return invalid("stop building ID exceeds uint32 range");
+        stops.push_back(static_cast<economy::BuildingId>(id));
+      }
+      s = api_->CreateTransitRoute(revision, stops, vehicle);
     } else if (kind == "set_road_enabled") {
       if (!NestedFields(c, {"kind", "roadId", "enabled"}, message))
         return invalid(message);
