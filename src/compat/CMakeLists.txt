@@ -1,5 +1,6 @@
 add_library(OpenRepublicCompat STATIC
     catalog_import.cpp
+    content_catalog.cpp
     region_import.cpp
     region_roads.cpp
     storage_profile.cpp

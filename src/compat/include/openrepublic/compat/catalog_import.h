@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <string>
@@ -32,6 +33,9 @@ struct CatalogImportOptions {
     // the catalog receives a synthetic depot type that owns this many default
     // trucks. This does not classify any imported building as a depot.
     std::uint32_t syntheticRegionFleetCount = 0;
+    // Optional exact-name allowlist. Definitions outside the list are reported
+    // as skipped; an empty set preserves the historical import-all behavior.
+    std::set<std::string> buildingWhitelist;
 };
 
 struct SkippedBuilding {
@@ -78,5 +82,12 @@ bool ImportCatalogFromDefinitions(
 
 // Formats a deterministic summary, including the evidence status of assumptions.
 std::string DescribeImport(const ImportReport &report);
+
+// Loads definition files from a content root, media_soviet root, buildings_types
+// directory, or direct definition directory, then converts them transactionally.
+bool ImportCatalogFromContentDirectory(const std::filesystem::path &inputRoot,
+                                      const CatalogImportOptions &options,
+                                      economy::Catalog &out, ImportReport &report,
+                                      std::string &error);
 
 } // namespace openrepublic::compat
