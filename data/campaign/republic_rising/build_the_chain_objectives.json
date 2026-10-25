@@ -1,0 +1,14 @@
+{
+  "id": "build_the_chain",
+  "title": "Build the mill chain",
+  "objectives": [
+    {
+      "id": "two_sites",
+      "title": "Complete two mill sites",
+      "hint": "Grow the timber and planks chain, haul supplies, and finish both construction sites.",
+      "metric": "construction_sites_complete",
+      "building_type": "mill",
+      "target": 2
+    }
+  ]
+}

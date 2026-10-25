@@ -487,6 +487,18 @@ namespace openrepublic
 		nativeObjectiveSet = std::move(objectiveSet);
 	}
 
+	void OpenRepublicApplication::SetCampaignProgress(runtime::CampaignDefinition campaign,
+		runtime::CampaignProgress progress, std::string missionId,
+		std::filesystem::path progressPath, std::uint64_t score)
+	{
+		nativeCampaign = std::move(campaign);
+		nativeCampaignProgress = std::move(progress);
+		nativeCampaignMissionId = std::move(missionId);
+		nativeCampaignProgressPath = std::move(progressPath);
+		nativeCampaignParScore = score;
+		nativeCampaignCompletionHandled = false;
+	}
+
 	void OpenRepublicApplication::SetNativeTerrainEnabled(bool enabled)
 	{
 		nativeTerrainEnabled = enabled;
@@ -1870,6 +1882,8 @@ namespace openrepublic
 					nativeEconomyTools.Create(gui, nativeEconomyCheckpoint.world->GetCatalog(), {
 						[this] { BeginNativeBuildingPlacement(); },
 						[this] { BeginNativeRoadPlacement(); },
+						[this] { BeginNativeStationPlacement(); },
+						[this] { QueueNativeRailBuild(); },
 						[this] { CancelNativeConstruction(); },
 						[this] { QueueNativeRemoval(); },
 						[this] { QueueNativeOrderChange(true); },
@@ -1878,8 +1892,9 @@ namespace openrepublic
 						[this] { QueueNativeUtilityConnection(true); },
 						[this] { QueueNativeUtilityConnection(false); },
 						[this] { UpdateRegionStatus(); },
-						[this] { QueueNativeDispatch(); }, [this] { QueueNativeCoalImport(); },
-						[this] { nativeCoalAutoRun = !nativeCoalAutoRun; UpdateRegionStatus(); } });
+						[this] { QueueNativeDispatch(); }, [this] { QueueNativeTrainDispatch(); },
+						[this] { QueueNativeCoalImport(); },
+						[this] { nativeCoalAutoRun = !nativeCoalAutoRun; UpdateRegionStatus(); } }, true, true, nativeRailEnabled);
 					nativeToolsReady = true;
 					RefreshNativeHaulChoices();
 					nativeEconomyTools.SetAutoRun(nativeCoalAutoRun);
@@ -1909,13 +1924,13 @@ namespace openrepublic
 					});
 					gui.AddWidget(&nativeOverviewButton);
 					nativeEconomyTools.Create(gui, regionEconomyWorld->GetCatalog(), {
-						{}, {}, {}, {},
+						{}, {}, {}, {}, {}, {},
 						[this] { QueueNativeOrderChange(true); },
 						[this] { QueueNativeOrderChange(false); }, {},
 						[this] { QueueNativeUtilityConnection(true); },
 						[this] { QueueNativeUtilityConnection(false); },
 						[this] { UpdateRegionStatus(); },
-						[this] { QueueNativeDispatch(); } }, false,
+						[this] { QueueNativeDispatch(); }, {}, {}, {} }, false,
 						regionCatalogImportOptions.syntheticRegionFleetCount > 0);
 					nativeToolsReady = true;
 					RefreshNativeHaulChoices();
@@ -2851,6 +2866,20 @@ namespace openrepublic
 		{
 			const auto progress = runtime::EvaluateNativeObjectives(*nativeObjectiveSet,
 				nativeEconomyCheckpoint.world->Snapshot(), *nativeEconomyCheckpoint.catalog);
+			if (progress.finished && nativeCampaign && nativeCampaignProgress && !nativeCampaignCompletionHandled)
+			{
+				nativeCampaignCompletionHandled = true;
+				std::string progressError;
+				if (runtime::RecordCampaignCompletion(*nativeCampaign, *nativeCampaignProgress,
+					nativeCampaignMissionId, nativeCampaignParScore) &&
+					runtime::SaveCampaignProgressAtomic(nativeCampaignProgressPath, *nativeCampaign,
+						*nativeCampaignProgress, progressError))
+					uiNotice = "Campaign mission completed. Progress saved.";
+				else
+					uiNotice = progressError.empty()
+						? "Campaign mission completed, but progress could not be recorded."
+						: "Campaign mission completed, but progress could not be saved: " + progressError;
+			}
 			std::ostringstream checklist;
 			checklist << nativeObjectiveSet->title << "  " << progress.completedCount << "/"
 				<< nativeObjectiveSet->objectives.size() << " complete\n[";
@@ -3482,6 +3511,70 @@ namespace openrepublic
 		UpdateRegionStatus();
 	}
 
+	void OpenRepublicApplication::QueueNativeTrainDispatch()
+	{
+		auto* world = ActiveOwnedEconomyWorld();
+		if (!world || !regionEconomyApi || !CanQueueNativeCommand()) return;
+		const auto train = nativeEconomyTools.SelectedTrainType();
+		const auto source = nativeEconomyTools.SelectedTrainSource();
+		const auto destination = nativeEconomyTools.SelectedTrainDestination();
+		const auto* resource = world->GetCatalog().Resource(nativeEconomyTools.SelectedTrainResource());
+		const auto* type = world->GetCatalog().VehicleType(train);
+		if (!type || !type->railOnly || !source || !destination || source == destination || !resource || resource->utility)
+		{
+			uiNotice = "Choose a rail train, two different stations, and a storable resource.";
+			UpdateRegionStatus(); return;
+		}
+		const auto snapshot = world->Snapshot();
+		TrackNativeSubmission(regionEconomyApi->CreateHaulOrder(snapshot.revision, source, destination,
+			resource->name, type->name, economy::HaulMode::Rail),
+			"synthetic train dispatch from station #" + std::to_string(source) + " to #" + std::to_string(destination));
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::QueueNativeRailBuild()
+	{
+		auto* world = ActiveOwnedEconomyWorld();
+		if (!world || !regionEconomyApi || !nativeRailEnabled || !CanQueueNativeCommand()) return;
+		const auto sourceId = nativeEconomyTools.SelectedTrainSource();
+		const auto destinationId = nativeEconomyTools.SelectedTrainDestination();
+		const auto snapshot = world->Snapshot();
+		const auto stationCell = [&](economy::BuildingId id, economy::Cell& cell) {
+			const auto found = std::find_if(snapshot.buildings.begin(), snapshot.buildings.end(),
+				[id](const auto& building) { return building.id == id; });
+			if (found == snapshot.buildings.end()) return false;
+			const auto* type = world->GetCatalog().BuildingType(found->type);
+			if (!type || !type->station) return false;
+			cell = found->access; return true;
+		};
+		economy::Cell start{}, finish{};
+		if (!sourceId || !destinationId || sourceId == destinationId || !stationCell(sourceId, start) || !stationCell(destinationId, finish))
+		{
+			uiNotice = "Choose two different placed stations in the train row before building rail.";
+			UpdateRegionStatus(); return;
+		}
+		const auto dx = static_cast<std::int64_t>(finish.x) - start.x;
+		const auto dz = static_cast<std::int64_t>(finish.z) - start.z;
+		const auto length = std::abs(dx) + std::abs(dz);
+		if ((dx != 0 && dz != 0) || length == 0 || length > 64 ||
+			static_cast<std::size_t>(length) > kMaxPendingRegionCommands - regionPendingCommandHandles.size())
+		{
+			uiNotice = "Rail endpoints must lie on one row or column, within 64 cells and the pending command budget.";
+			UpdateRegionStatus(); return;
+		}
+		std::size_t queued = 0;
+		auto cell = start;
+		for (std::int64_t i = 0; i < length; ++i)
+		{
+			const economy::Cell next{ cell.x + (dx > 0 ? 1 : dx < 0 ? -1 : 0), cell.z + (dz > 0 ? 1 : dz < 0 ? -1 : 0) };
+			if (!TrackNativeSubmission(regionEconomyApi->BuildRail(snapshot.revision, cell, next), "rail segment")) break;
+			++queued; cell = next;
+		}
+		uiNotice = "Queued " + std::to_string(queued) + "/" + std::to_string(length) +
+			" synthetic rail segments between the selected station access cells.";
+		UpdateRegionStatus();
+	}
+
 	void OpenRepublicApplication::QueueNativeCoalImport()
 	{
 		auto* world = ActiveOwnedEconomyWorld();
@@ -3558,6 +3651,21 @@ namespace openrepublic
 		nativeConstructionMode = NativeConstructionMode::Road;
 		nativeRoadStart.reset();
 		uiNotice = "Click the first road cell, then another on the same row or column. Maximum 64 unit segments.";
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::BeginNativeStationPlacement()
+	{
+		if (!nativeRailEnabled || !CanQueueNativeCommand()) return;
+		if (!nativeEconomyCheckpoint.world->GetCatalog().FindBuildingType("rail_station", nativePlacementType))
+		{
+			uiNotice = "The selected catalog does not declare the synthetic rail_station type.";
+			UpdateRegionStatus(); return;
+		}
+		ClearNativeConstructionPreview();
+		nativeConstructionMode = NativeConstructionMode::Building;
+		nativeRoadStart.reset();
+		uiNotice = "Choose a clear ground cell for a synthetic rail station. WRSR parity UNKNOWN.";
 		UpdateRegionStatus();
 	}
 

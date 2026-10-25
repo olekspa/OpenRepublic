@@ -1,0 +1,1 @@
+Two new utility networks are ready for commissioning. Supply water to the waterworks and electricity to the parts factory; both networks are synthetic OpenRepublic rules.

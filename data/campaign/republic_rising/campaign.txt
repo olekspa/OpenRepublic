@@ -1,0 +1,8 @@
+OPENREPUBLIC_CAMPAIGN 1
+id=republic_rising
+title=Republic Rising
+mission=coal_to_heat|Coal to heat|coal_to_heat.txt|coal_to_heat.json|coal_to_heat_objectives.json|1500|0
+mission=build_the_chain|Build the mill chain|build_the_chain.txt|build_the_chain.json|build_the_chain_objectives.json|64|0
+mission=growing_town|Grow a fed town|growing_town.txt|growing_town.json|growing_town_objectives.json|500|0
+mission=power_and_water|Power and water utilities|power_and_water.txt|power_and_water.json|power_and_water_objectives.json|100|0
+mission=trade_and_logistics|Trade and depot logistics|trade_and_logistics.txt|trade_and_logistics.json|trade_and_logistics_objectives.json|1500|0
