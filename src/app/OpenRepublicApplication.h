@@ -21,6 +21,7 @@
 #include "openrepublic/runtime/campaign.h"
 #include "openrepublic/runtime/save_slots.h"
 #include "openrepublic/runtime/native_construction.h"
+#include "openrepublic/runtime/ui_script.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/sim/simulation.h"
 #include "../economy_host/economy_protocol.h"
@@ -38,6 +39,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -68,6 +70,8 @@ namespace openrepublic
 		void SetNativeTerrainEnabled(bool enabled);
 		void SetNativeRailEnabled(bool enabled) noexcept { nativeRailEnabled = enabled; }
 		void SetNativeObjectives(openrepublic::runtime::NativeObjectiveSet objectiveSet);
+		void SetAutoplay(std::uint32_t ticksPerFrame);
+		void SetUiScript(openrepublic::runtime::UiScript script);
 		void SetCampaignProgress(openrepublic::runtime::CampaignDefinition campaign,
 			openrepublic::runtime::CampaignProgress progress, std::string missionId,
 			std::filesystem::path progressPath, std::uint64_t score);
@@ -159,6 +163,7 @@ namespace openrepublic
 		void UpdateNativeAutosave();
 		void LayoutNativeControls();
 		void ToggleNativeRunPause();
+		bool InvokeUiButton(std::string_view label);
 		bool TrackNativeSubmission(const economy_api::Submission& submitted, const std::string& action);
 		bool CanQueueNativeCommand();
 
@@ -174,6 +179,11 @@ namespace openrepublic
 		bool nativeEconomyFreshWorld = false;
 		bool nativeCoalDemo = false;
 		bool nativeCoalAutoRun = false;
+		bool autoplayRequested = false;
+		bool autoplayActive = false;
+		std::uint32_t uiScriptFrame = 0;
+		std::size_t nextUiScriptAction = 0;
+		openrepublic::runtime::UiScript uiScript;
 		std::optional<openrepublic::runtime::NativeObjectiveSet> nativeObjectiveSet;
 		std::string nativeObjectiveBaseline;
 		std::optional<openrepublic::runtime::CampaignDefinition> nativeCampaign;

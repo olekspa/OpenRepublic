@@ -488,6 +488,21 @@ namespace openrepublic
 		nativeObjectiveSet = std::move(objectiveSet);
 	}
 
+	void OpenRepublicApplication::SetAutoplay(std::uint32_t ticksPerFrame)
+	{
+		if (ticksPerFrame == 0 || ticksPerFrame > 10000) return;
+		nativeEconomySpeed = ticksPerFrame;
+		autoplayRequested = true;
+		nativeCoalAutoRun = true;
+	}
+
+	void OpenRepublicApplication::SetUiScript(runtime::UiScript script)
+	{
+		uiScript = std::move(script);
+		nextUiScriptAction = 0;
+		uiScriptFrame = 0;
+	}
+
 	void OpenRepublicApplication::SetCampaignProgress(runtime::CampaignDefinition campaign,
 		runtime::CampaignProgress progress, std::string missionId,
 		std::filesystem::path progressPath, std::uint64_t score)
@@ -816,7 +831,7 @@ namespace openrepublic
 			{
 				nativeEconomyPresentationValid = true;
 				nmfPreviewCameraTarget = nativeEconomyScene.CameraTarget();
-				nmfPreviewCameraDistance = nativeEconomyScene.CameraDistance() * 1.2f;
+				nmfPreviewCameraDistance = nativeEconomyScene.CameraDistance() * 0.8f;
 				nmfPreviewLoaded = true;
 				regionEconomyApi = std::make_unique<economy_api::EconomyApi>(
 					*nativeEconomyCheckpoint.world, economy_api::Permissions{ true, true });
@@ -1787,28 +1802,20 @@ namespace openrepublic
 					nativeRunPauseButton.SetText("Run");
 					StyleButton(nativeRunPauseButton);
 					nativeRunPauseButton.SetSize(XMFLOAT2(132, 28));
-					nativeRunPauseButton.OnClick([this](const wi::gui::EventArgs&) { ToggleNativeRunPause(); });
+					nativeRunPauseButton.OnClick([this](const wi::gui::EventArgs&) { InvokeUiButton(nativeEconomyRunning ? "Pause" : "Run"); });
 					gui.AddWidget(&nativeRunPauseButton);
 					nativeDetailsButton.Create("NativeEconomyDetailsButton");
 					nativeDetailsButton.SetText("Details");
 					StyleButton(nativeDetailsButton);
 					nativeDetailsButton.SetSize(XMFLOAT2(132, 28));
-					nativeDetailsButton.OnClick([this](const wi::gui::EventArgs&) {
-						nativeDetailsExpanded = !nativeDetailsExpanded;
-						nativeDetailsButton.SetText(nativeDetailsExpanded ? "Compact" : "Details");
-						UpdateRegionStatus();
-					});
+					nativeDetailsButton.OnClick([this](const wi::gui::EventArgs&) { InvokeUiButton(nativeDetailsExpanded ? "Compact" : "Details"); });
 					gui.AddWidget(&nativeDetailsButton);
 					nativeOverviewButton.Create("NativeEconomyOverviewButton");
 					nativeOverviewButton.SetText("Overview");
 					nativeOverviewButton.SetTooltip("Show economy totals and recent stock changes.");
 					StyleButton(nativeOverviewButton);
 					nativeOverviewButton.SetSize(XMFLOAT2(132, 28));
-					nativeOverviewButton.OnClick([this](const wi::gui::EventArgs&) {
-						nativeOverviewExpanded = !nativeOverviewExpanded;
-						nativeOverviewButton.SetText(nativeOverviewExpanded ? "Hide overview" : "Overview");
-						UpdateRegionStatus();
-					});
+					nativeOverviewButton.OnClick([this](const wi::gui::EventArgs&) { InvokeUiButton(nativeOverviewExpanded ? "Hide overview" : "Overview"); });
 					gui.AddWidget(&nativeOverviewButton);
 					nativeSaveButton.Create("NativeEconomySaveCheckpointButton");
 					nativeSaveButton.SetText("Save game slot");
@@ -1845,11 +1852,7 @@ namespace openrepublic
 					nativeGameMenuButton.SetText("Game");
 					StyleButton(nativeGameMenuButton);
 					nativeGameMenuButton.SetSize(XMFLOAT2(132, 28));
-					nativeGameMenuButton.OnClick([this](const wi::gui::EventArgs&) {
-						nativeGameMenuExpanded = !nativeGameMenuExpanded;
-						if (nativeGameMenuExpanded) RefreshNativeSaveSlots();
-						UpdateRegionStatus();
-					});
+					nativeGameMenuButton.OnClick([this](const wi::gui::EventArgs&) { InvokeUiButton("Game"); });
 					gui.AddWidget(&nativeGameMenuButton);
 					const std::array<const char*, 3> newGameLabels{{"New sandbox", "New coal demo", "New construction game"}};
 					const std::array<const wchar_t*, 3> newGameArguments{{L"--native-economy", L"--native-economy --native-coal-demo", L"--native-economy --native-construction-sites"}};
@@ -1949,11 +1952,7 @@ namespace openrepublic
 				StyleButton(nativeToolsButton);
 				nativeToolsButton.SetSize(XMFLOAT2(132, 28));
 				nativeToolsButton.SetTooltip("Show or hide construction, haul, dispatch and utility controls.");
-				nativeToolsButton.OnClick([this](const wi::gui::EventArgs&) {
-					nativeEconomyTools.SetExpanded(!nativeEconomyTools.IsExpanded());
-					nativeToolsButton.SetText(nativeEconomyTools.IsExpanded() ? "Hide tools" : "Tools");
-					LayoutNativeControls();
-				});
+				nativeToolsButton.OnClick([this](const wi::gui::EventArgs&) { InvokeUiButton(nativeEconomyTools.IsExpanded() ? "Hide tools" : "Tools"); });
 				gui.AddWidget(&nativeToolsButton);
 			}
 			simulationStatus.SetPos(XMFLOAT2(18, 54));
@@ -1981,6 +1980,32 @@ namespace openrepublic
 		const bool nativeInputWasActive = nativeToolsReady &&
 			(nativeEconomyTools.HasActiveInput() || (renderPath && renderPath->GetGUI().IsTyping()));
 		wi::Application::Update(dt);
+		if (autoplayRequested && nativeEconomyCheckpointMode && nativeEconomyPresentationValid && !nativeEconomyRunning)
+		{
+			autoplayRequested = false;
+			autoplayActive = true;
+			nativeEconomyTools.SetAutoRun(true);
+			if (nativeCoalDemo) nativeCoalAutoRun = true;
+			ToggleNativeRunPause();
+		}
+		while (nextUiScriptAction < uiScript.actions.size() && uiScript.actions[nextUiScriptAction].frame <= uiScriptFrame)
+		{
+			const auto& action = uiScript.actions[nextUiScriptAction++];
+			if (action.action == "button")
+			{
+				if (!InvokeUiButton(action.label)) wilog("[OpenRepublic] UI script: unsupported button label '%s'", action.label.c_str());
+			}
+			else if (action.action == "screenshot")
+			{
+				const std::string path = std::filesystem::path(action.path).string();
+				const auto backBuffer = wi::graphics::GetDevice()->GetBackBuffer(&swapChain);
+				const bool saved = wi::helper::saveTextureToFile(backBuffer, path);
+				if (saved) wilog("[OpenRepublic] UI script screenshot: %s", path.c_str());
+				if (!saved) { wilog("[OpenRepublic] UI script screenshot failed: %s", path.c_str()); PostQuitMessage(2); }
+			}
+		}
+		if (!uiScript.actions.empty() && nextUiScriptAction == uiScript.actions.size()) PostQuitMessage(0);
+		++uiScriptFrame;
 		if (nmfCaptureMode)
 		{
 			return;
@@ -2047,6 +2072,7 @@ namespace openrepublic
 		PumpLocalEconomyRequests();
 		if (nativeEconomyCheckpointMode && nativeEconomyRunning)
 		{
+			const bool runClockStep = nativeEconomyRunClock.Advance(static_cast<double>(dt)) != 0;
 			if (!nativeEconomyPresentationValid || !regionEconomyApi)
 			{
 				nativeEconomyRunning = false;
@@ -2054,7 +2080,7 @@ namespace openrepublic
 				nativeRunPauseButton.SetText("Run");
 				uiNotice = "Run paused because the native scene or EconomyApi is unavailable; Frame world before continuing.";
 			}
-			else if (nativeEconomyRunClock.Advance(static_cast<double>(dt)) != 0)
+			else if (autoplayActive || runClockStep)
 			{
 				const bool stepSucceeded = QueueRegionStep(nativeEconomySpeed, true);
 				if (!stepSucceeded || !nativeEconomyPresentationValid)
@@ -3254,6 +3280,38 @@ namespace openrepublic
 		UpdateRegionStatus();
 	}
 
+	bool OpenRepublicApplication::InvokeUiButton(std::string_view label)
+	{
+		// These calls share the state-changing handlers used by the GUI callbacks.
+		if (label == "Run" || label == "Pause") { ToggleNativeRunPause(); return true; }
+		if (label == "Tools" || label == "Hide tools") {
+			nativeEconomyTools.SetExpanded(!nativeEconomyTools.IsExpanded());
+			nativeToolsButton.SetText(nativeEconomyTools.IsExpanded() ? "Hide tools" : "Tools");
+			LayoutNativeControls(); return true;
+		}
+		if (label == "Game") {
+			nativeGameMenuExpanded = !nativeGameMenuExpanded;
+			if (nativeGameMenuExpanded) RefreshNativeSaveSlots();
+			UpdateRegionStatus(); return true;
+		}
+		if (label == "Details" || label == "Compact") {
+			nativeDetailsExpanded = !nativeDetailsExpanded;
+			nativeDetailsButton.SetText(nativeDetailsExpanded ? "Compact" : "Details");
+			UpdateRegionStatus(); return true;
+		}
+		if (label == "Overview" || label == "Hide overview") {
+			nativeOverviewExpanded = !nativeOverviewExpanded;
+			nativeOverviewButton.SetText(nativeOverviewExpanded ? "Hide overview" : "Overview");
+			UpdateRegionStatus(); return true;
+		}
+		if (label == "Auto-run logistics" || label == "Auto-run logistics: off" || label == "Auto-run logistics: on") {
+			nativeCoalAutoRun = !nativeCoalAutoRun;
+			nativeEconomyTools.SetAutoRun(nativeCoalAutoRun);
+			UpdateRegionStatus(); return true;
+		}
+		return false;
+	}
+
 	void OpenRepublicApplication::RefreshNativeHaulChoices()
 	{
 		auto* world = ActiveOwnedEconomyWorld();
@@ -3958,7 +4016,7 @@ namespace openrepublic
 			}
 		}
 		const auto target = nativeEconomyScene.CameraTarget();
-		const float distance = nativeEconomyScene.CameraDistance() * 1.2f;
+		const float distance = nativeEconomyScene.CameraDistance() * 0.8f;
 		wi::scene::TransformComponent cameraTransform;
 		cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 0.55f, target.z - distance * 0.85f));
 		cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.6f, 0, 0));

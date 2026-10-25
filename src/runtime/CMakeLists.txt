@@ -1,4 +1,4 @@
-add_library(OpenRepublicRuntime graphics_settings.cpp native_economy_layout.cpp native_toolbar_layout.cpp native_rail_geometry.cpp native_rail_catalog.cpp native_economy_tools.cpp native_construction.cpp checkpoint_file.cpp save_slots.cpp economy_overview.cpp native_coal_demo.cpp synthetic_terrain.cpp native_objectives.cpp ambient_traffic.cpp native_traffic_polish.cpp play_options.cpp campaign.cpp)
+add_library(OpenRepublicRuntime graphics_settings.cpp native_economy_layout.cpp native_toolbar_layout.cpp native_rail_geometry.cpp native_rail_catalog.cpp native_economy_tools.cpp native_construction.cpp checkpoint_file.cpp save_slots.cpp economy_overview.cpp native_coal_demo.cpp synthetic_terrain.cpp native_objectives.cpp ambient_traffic.cpp native_traffic_polish.cpp play_options.cpp campaign.cpp ui_script.cpp)
 target_include_directories(OpenRepublicRuntime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_compile_features(OpenRepublicRuntime PUBLIC cxx_std_17)
 target_link_libraries(OpenRepublicRuntime PUBLIC OpenRepublicEconomy)

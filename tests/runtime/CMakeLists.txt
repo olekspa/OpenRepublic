@@ -102,3 +102,8 @@ add_executable(OpenRepublicCampaignTests campaign_tests.cpp)
 target_link_libraries(OpenRepublicCampaignTests PRIVATE OpenRepublicRuntime)
 target_compile_features(OpenRepublicCampaignTests PRIVATE cxx_std_17)
 add_test(NAME RuntimeCampaign COMMAND OpenRepublicCampaignTests)
+
+add_executable(OpenRepublicUiScriptTests ui_script_tests.cpp)
+target_link_libraries(OpenRepublicUiScriptTests PRIVATE OpenRepublicRuntime)
+target_compile_features(OpenRepublicUiScriptTests PRIVATE cxx_std_17)
+add_test(NAME RuntimeUiScript COMMAND OpenRepublicUiScriptTests)

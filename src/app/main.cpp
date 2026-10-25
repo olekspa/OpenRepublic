@@ -10,6 +10,7 @@
 #include "openrepublic/runtime/native_objectives.h"
 #include "openrepublic/runtime/play_options.h"
 #include "openrepublic/runtime/campaign.h"
+#include "openrepublic/runtime/ui_script.h"
 #include "json.hpp"
 
 #include <windows.h>
@@ -413,6 +414,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::string terrainProbeTransformError;
 	std::string nmfCaptureArgumentError;
 	bool terrainTransformArgumentSeen = false;
+	bool autoplayArgumentSeen = false;
+	std::uint32_t autoplaySpeed = 1;
+	std::filesystem::path uiScriptPath, screenshotPath;
+	std::uint32_t screenshotAfterFrames = 1;
 	if (arguments != nullptr)
 	{
 		for (int i = 1; i < argumentCount; ++i)
@@ -453,6 +458,27 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 					continue;
 				}
 				nativeEconomyArgumentSeen = true;
+			}
+			else if (argument == L"--autoplay") autoplayArgumentSeen = true;
+			else if (argument == L"--autoplay-speed")
+			{
+				if (i + 1 >= argumentCount) nativeEconomyArgumentError = "--autoplay-speed requires an integer from 1 to 10000";
+				else { wchar_t* end=nullptr; const auto value=std::wcstoul(arguments[++i], &end, 10); if(!end || *end || value<1 || value>10000) nativeEconomyArgumentError="--autoplay-speed requires an integer from 1 to 10000"; else autoplaySpeed=static_cast<std::uint32_t>(value); }
+			}
+			else if (argument == L"--ui-script")
+			{
+				if (i + 1 >= argumentCount || std::wstring_view(arguments[i+1]).rfind(L"--",0)==0) nativeEconomyArgumentError="--ui-script requires a JSON file";
+				else uiScriptPath=arguments[++i];
+			}
+			else if (argument == L"--screenshot")
+			{
+				if (i + 1 >= argumentCount || std::wstring_view(arguments[i+1]).rfind(L"--",0)==0) nativeEconomyArgumentError="--screenshot requires a PNG path";
+				else screenshotPath=arguments[++i];
+			}
+			else if (argument == L"--screenshot-after-frames")
+			{
+				if (i + 1 >= argumentCount) nativeEconomyArgumentError="--screenshot-after-frames requires a positive frame count";
+				else { wchar_t* end=nullptr; const auto value=std::wcstoul(arguments[++i], &end, 10); if(!end || *end || value<1 || value>1000000) nativeEconomyArgumentError="--screenshot-after-frames requires a positive frame count"; else screenshotAfterFrames=static_cast<std::uint32_t>(value); }
 			}
 			else if (argument == L"--native-construction-sites")
 			{
@@ -1093,6 +1119,46 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		return LogNativeEconomyStartupError(nativeEconomyArgumentError);
 	}
+	if (autoplayArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
+		return LogNativeEconomyStartupError("--autoplay requires --native-economy, --economy-checkpoint, or --play");
+	if (!screenshotPath.empty() && screenshotPath.extension() != L".png")
+		return LogNativeEconomyStartupError("--screenshot currently requires a .png path");
+	openrepublic::runtime::UiScript uiScript;
+	if (!uiScriptPath.empty())
+	{
+		std::error_code pathError;
+		const auto size = std::filesystem::file_size(uiScriptPath, pathError);
+		if (pathError || size > 1024 * 1024) return LogNativeEconomyStartupError("--ui-script is unavailable or exceeds 1 MiB");
+		std::ifstream scriptFile(uiScriptPath, std::ios::binary);
+		std::string scriptText((std::istreambuf_iterator<char>(scriptFile)), {});
+		std::string scriptError;
+		if (!scriptFile || !openrepublic::runtime::ParseUiScript(scriptText, uiScript, scriptError))
+			return LogNativeEconomyStartupError("invalid --ui-script: " + (scriptError.empty() ? std::string("could not read file") : scriptError));
+	}
+	if (!screenshotPath.empty())
+		uiScript.actions.push_back({ screenshotAfterFrames, "screenshot", {}, screenshotPath.string() });
+	std::stable_sort(uiScript.actions.begin(), uiScript.actions.end(), [](const auto& a, const auto& b) {
+		return a.frame < b.frame;
+	});
+	std::vector<std::filesystem::path> screenshotOutputs;
+	for (const auto& action : uiScript.actions)
+	{
+		if (action.action != "screenshot") continue;
+		const std::filesystem::path output(action.path);
+		const auto normalized = output.lexically_normal();
+		if (std::find(screenshotOutputs.begin(), screenshotOutputs.end(), normalized) != screenshotOutputs.end())
+			return LogNativeEconomyStartupError("UI screenshot output paths must be distinct");
+		screenshotOutputs.push_back(normalized);
+		std::error_code outputError;
+		if (std::filesystem::exists(output, outputError) || outputError)
+			return LogNativeEconomyStartupError("UI screenshot refuses to overwrite an existing or inaccessible output");
+		if (!output.parent_path().empty())
+		{
+			std::filesystem::create_directories(output.parent_path(), outputError);
+			if (outputError) return LogNativeEconomyStartupError("could not create UI screenshot output directory");
+		}
+	}
+	if (autoplayArgumentSeen && !playOptions.selected) nativeEconomyArgumentSeen = true;
 	if (nativeEconomyArgumentSeen && economyCheckpointArgumentSeen)
 	{
 		return LogNativeEconomyStartupError("--native-economy cannot be combined with --economy-checkpoint");
@@ -1718,6 +1784,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		application.SetNativeTerrainEnabled(nativeTerrainArgumentSeen);
 		application.SetNativeRailEnabled(nativeRailArgumentSeen);
 	}
+	if (autoplayArgumentSeen) application.SetAutoplay(autoplaySpeed);
+	if (!uiScript.actions.empty()) application.SetUiScript(std::move(uiScript));
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));
 	application.SetNmfProbePath(std::move(nmfProbePath));

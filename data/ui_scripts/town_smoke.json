@@ -1,0 +1,13 @@
+{
+  "actions": [
+    { "frame": 1, "action": "button", "label": "Tools" },
+    { "frame": 2, "action": "button", "label": "Game" },
+    { "frame": 3, "action": "button", "label": "Overview" },
+    { "frame": 4, "action": "screenshot", "path": "autoplay-town-start.png" },
+    { "frame": 120, "action": "screenshot", "path": "autoplay-town-middle.png" },
+    { "frame": 121, "action": "button", "label": "Overview" },
+    { "frame": 122, "action": "button", "label": "Game" },
+    { "frame": 242, "action": "screenshot", "path": "autoplay-town-end.png" }
+  ]
+}
+
