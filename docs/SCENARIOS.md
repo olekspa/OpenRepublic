@@ -25,9 +25,11 @@ They do not contain game data.
 | `build_a_mill_with_supply` | Farm, sawmill and one mill construction site on one road | The farm produces timber, the sawmill makes planks, and the autopilot serves and completes the site. |
 | `build_two_mills_with_supply` | Farm, sawmill and two mill construction sites on one road | The same authored planks chain supplies two sites; score reports completed-site count and each site's final state. |
 | `growth_town` | Four-capacity home, farm→mill→bakery chain, grain exporter and market site | Residents consume bakery bread; grain exports fund imported planks and bricks, which the autopilot hauls to the market site. The receipt reports fed residents, completed sites and treasury separately. |
+| `thriving_town` | Opt-in citizens, home, farm/mill/bakery, food market and heated boiler | The synthetic needs model scores happy residents supported by food and connected heat. See [CITIZENS.md](CITIZENS.md); WRSR parity is UNKNOWN. |
 | `power_and_build` | Generator, powered mine, smelter and timber-fed `power_line` site | The site produces wire after construction; the smelter requires wire, ore and connected power. The receipt reports site completion and final-tick utility throughput/deficit. The power links are explicit fixture connections; the `power_line` site is a synthetic production prerequisite. |
 | `austerity` | Grain trade post, local farm/mill/bakery chain and second mill site | Limited exports fund imports for both the trade post's flour recipe and site materials. At short horizons, the baseline can spend on inputs while the second mill remains waiting for materials; longer runs may eventually complete it. |
 | `coal_to_heat` | Grain export post, coal-import trade post, depot with two owned trucks, coal storage and heating plant | The rule-based baseline exports for treasury, imports coal for the plant's missing recipe input, then dispatches a parked depot truck from stocked inventory and replans as trucks return. Scores stored heat units. |
+| `coal_to_heat_logistics` | Same trade/depot/plant loop with an expanded 2,000-unit heat store | At a 1,500-tick horizon, the bounded baseline cadence scores 148 heat units; per-tick replanning dispatches returned trucks sooner and scores 272. See the logistics challenge receipt below. |
 | `rail_vs_road` | Independent 20-edge road and rail routes, two producer/destination pairs, and one train | The scorer moves 1,000 grain units by truck and train, records destination arrival ticks, and requires the rail run to finish first. See [RAIL.md](RAIL.md) for synthetic-rule boundaries and the explicit-transfer limitation. |
 | `water_for_brewery` | Water tower linked to two breweries | The tower generates 4 water units per tick for 6 units of brewery demand; stable recipe order lets the first brewery consume 3 while the second remains short, exposing both throughput and unmet demand. |
 
@@ -189,16 +191,51 @@ baseline results, not WRSR results.
 | `power_and_build` | Completed sites; power throughput / unmet | 1/1; 4 / 0 | 18 |
 | `austerity` | Completed sites; treasury; stored non-raw units | 0/1; 6; 0.000027 | 17 |
 | `coal_to_heat` | Stored heat units at 600 / 1500 requested ticks | 98 / 100 | 601 / 1501 |
+| `coal_to_heat_logistics` | Stored heat units at 1500 requested ticks; baseline / per-tick replanning | 148 / 272 | 1501 / 1501 |
 
 The 600-tick observations update the earlier short-horizon results:
 `austerity` eventually completes its second mill, while `growth_town` still
 feeds only 2 of 4 housing places. `power_and_build` completes its site but its
 final tick has no power flow. Utility scores are final-tick measurements, so a
 zero can reflect an idle, blocked, or exhausted chain at that horizon; it is
-not a cumulative production total. A bounded integration test loads all 24
+not a cumulative production total. A bounded integration test loads all 25
 shipped scenario files, runs each twice, and checks that their score hashes
 repeat. These observations apply only to the current OpenRepublic host,
 authored catalogs, rule-based controller and horizons.
+
+## Depot logistics cadence challenge
+
+**OBSERVED (Windows Release `OpenRepublicEconomyHost`, built from the
+`build/openrepublic-vs2022` checkout; the `src/economy/economy.cpp` and
+`src/economy_host/main.cpp` source hashes match this worktree):** the original
+`coal_to_heat` run at 600 requested ticks ends at tick 601 with 98 heat in the
+heating plant's authored 100-unit heat store, 2 coal at the border post,
+treasury 2,254, and both depot trucks parked and empty. At 1,500 requested
+ticks the score reaches 100, which is the heating-plant inventory capacity.
+The `heat_units` scorer sums heat inventories and has no 100-unit scoring cap;
+the scenario catalog supplies the binding cap.
+
+The expanded-capacity `coal_to_heat_logistics` fixture removes that early
+inventory cap while keeping the authored trade loop, truck capacity and route.
+At the same 1,500 requested ticks, the existing default cadence chooses 60
+planning rounds and scores 148 heat units. Passing `--rounds 1500` replans each
+tick and scores 272, with 56 accepted depot dispatches. This supports the
+controller-tooling explanation: at a long horizon, the default's bounded
+planning cadence can leave returned trucks parked between planning rounds.
+The cadence comparison uses identical economy inputs; it does not change the
+economy implementation or existing catalog hashes. The responsive run is an
+explicit scorer option, not the default controller policy.
+
+Reproduce the comparison with the Windows Release host:
+
+```powershell
+python tools/scenario_score.py --host build/openrepublic-vs2022/src/economy_host/Release/OpenRepublicEconomyHost.exe --scenario data/scenarios/coal_to_heat_logistics.json --ticks 1500 --exact-ticks
+python tools/scenario_score.py --host build/openrepublic-vs2022/src/economy_host/Release/OpenRepublicEconomyHost.exe --scenario data/scenarios/coal_to_heat_logistics.json --ticks 1500 --rounds 1500 --exact-ticks
+```
+
+These results describe OpenRepublic synthetic recipes, stores, trade, depots,
+and scorer settings. Heating, coal supply, trade, truck capacity and logistics
+parity with WRSR remain **UNKNOWN**.
 
 The earlier `water_for_brewery` fixture had one brewery with a 24-unit beer
 store. The explicit water link and recipe were present, but the brewery's

@@ -144,6 +144,17 @@ class ScenarioLoaderTests(unittest.TestCase):
             with self.assertRaisesRegex(scenario_score.ScenarioError, "adjacent rail edge"):
                 scenario_score.load_scenario(path)
 
+    def test_thriving_town_uses_opt_in_happy_residents_score(self):
+        scenario = scenario_score.resolve_scenario("thriving_town")
+        self.assertEqual(scenario["score"]["metric"], "happy_residents")
+        self.assertIn("citizens\n", scenario["catalog"])
+        summary = {"happyResidents": "3", "happiness": 75, "population": "4"}
+        world = {"tick": 12, "stateHash": "synthetic", "buildings": [],
+                 "roads": [], "orders": [], "vehicles": []}
+        score = scenario_score.score_record(scenario, world, {"resources": [], "buildingTypes": []}, 10, summary)
+        self.assertEqual(score["scoreBreakdown"]["happyResidents"], 3)
+        self.assertEqual(score["scoreBreakdown"]["happiness"], 75)
+
     def test_combined_score_receipt_is_multi_objective_and_deterministic(self):
         scenario = scenario_score.resolve_scenario("growth_town")
         world = {"tick": 10, "stateHash": "stable-state", "treasury": "7", "buildings": [
@@ -231,6 +242,26 @@ class ScenarioHostIntegrationTests(unittest.TestCase):
         self.assertEqual(len(first["scoreBreakdown"]["fleetStates"]), 2)
         self.assertEqual(scenario_score._default_rounds(scenario, 600), 60)
         self.assertEqual(scenario_score._default_rounds(scenario, 1500), 60)
+
+    @unittest.skipUnless(HOST_EXE, "host executable argument is required")
+    def test_coal_to_heat_logistics_challenge_rewards_responsive_dispatch_cadence(self):
+        scenario = scenario_score.resolve_scenario("coal_to_heat_logistics")
+        ticks = 1500
+        baseline = scenario_score.run_scenario(
+            HOST_EXE, scenario, ticks, exact_ticks=True)
+        responsive = scenario_score.run_scenario(
+            HOST_EXE, scenario, ticks, exact_ticks=True, rounds=ticks)
+
+        # At this horizon the default bounds depot scenarios to 60 planning
+        # rounds. Per-tick replanning lets the same controller send returned
+        # trucks sooner without changing the economy or its catalog.
+        self.assertEqual(scenario_score._default_rounds(scenario, ticks), 60)
+        self.assertEqual(baseline["scoreBreakdown"]["heatUnits"], 148)
+        self.assertEqual(responsive["tick"], baseline["tick"])
+        self.assertGreaterEqual(
+            responsive["scoreBreakdown"]["heatUnits"],
+            baseline["scoreBreakdown"]["heatUnits"] + 100)
+        self.assertEqual(responsive["autopilot"]["accepted_depot_dispatches"], 56)
 
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
     def test_live_jsonl_host_runs_every_fixture_and_repeats_hash(self):

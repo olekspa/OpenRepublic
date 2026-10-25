@@ -22,9 +22,12 @@ namespace openrepublic::runtime
 		result.tick = current.tick;
 		result.treasury = current.treasury;
 		result.population = current.population;
+		result.happyResidents = current.happyResidents;
+		result.happiness = current.happiness;
+		result.citizensAvailable = catalog.CitizensEnabled();
 		result.workersAssigned = current.workersAssigned;
 		result.workersRequired = current.workersRequired;
-		result.populationAvailable = catalog.Food().resource != economy::InvalidResourceId ||
+		result.populationAvailable = catalog.CitizensEnabled() || catalog.Food().resource != economy::InvalidResourceId ||
 			std::any_of(catalog.BuildingTypes().begin(), catalog.BuildingTypes().end(), [](const auto& type) {
 				return type.housing != 0 || type.workers != 0;
 			});

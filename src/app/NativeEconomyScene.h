@@ -6,6 +6,7 @@
 #include "openrepublic/runtime/native_economy_layout.h"
 #include "openrepublic/runtime/ambient_traffic.h"
 #include "openrepublic/procgeo/vehicles.h"
+#include "openrepublic/runtime/synthetic_terrain.h"
 
 #include <optional>
 #include <array>
@@ -22,7 +23,8 @@ namespace openrepublic::preview
 	{
 	public:
 		bool Initialize(wi::scene::Scene& scene, const economy::WorldSnapshot& snapshot,
-			const economy::Catalog& catalog, std::vector<RegionInstance>& outInstances, std::string& error);
+			const economy::Catalog& catalog, std::vector<RegionInstance>& outInstances, std::string& error,
+			bool nativeTerrain = false);
 		bool Sync(wi::scene::Scene& scene, const economy::WorldSnapshot& snapshot,
 			const economy::Catalog& catalog, std::vector<RegionInstance>& outInstances, std::string& error);
 		void UpdateVehicleMotion(wi::scene::Scene& scene, double alpha);
@@ -38,6 +40,8 @@ namespace openrepublic::preview
 	std::optional<DirectX::XMFLOAT3> VehiclePosition(economy::VehicleId id, double alpha) const;
 		bool CellFromGroundPoint(double worldX, double worldZ, std::uint32_t gridWidth,
 			std::uint32_t gridDepth, economy::Cell& outCell) const noexcept;
+		double GroundHeight(double worldX, double worldZ) const noexcept;
+		bool CanPlaceFootprint(economy::Cell cell, std::uint32_t width, std::uint32_t depth) const noexcept;
 		float CameraDistance() const noexcept;
 		DirectX::XMFLOAT3 CameraTarget() const noexcept;
 		wi::ecs::Entity GroundEntity() const noexcept { return groundEntity_; }
@@ -46,6 +50,7 @@ namespace openrepublic::preview
 		struct BuildingVisual
 		{
 			wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
+			wi::ecs::Entity pad = wi::ecs::INVALID_ENTITY;
 			economy::BuildingTypeId typeId{};
 			double centerX{}, centerZ{}, width{}, depth{}, height{};
 		};
@@ -91,6 +96,9 @@ namespace openrepublic::preview
 		struct AmbientVehicleVisual { wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY; };
 
 		bool initialized_ = false;
+		bool terrainEnabled_ = false;
+		wi::ecs::Entity waterEntity_ = wi::ecs::INVALID_ENTITY;
+		openrepublic::runtime::SyntheticTerrain terrain_;
 		wi::ecs::Entity groundEntity_ = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity wheelMesh_ = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity cargoMesh_ = wi::ecs::INVALID_ENTITY;

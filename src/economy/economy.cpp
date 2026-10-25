@@ -504,10 +504,55 @@ void Produce(Building &b, const BuildingTypeDef &t, const RecipeDef &r, std::uin
         b.inventory[Slot(t, a.resource)] += ApplySeasonPercent(a.amount, percent);
 }
 std::uint64_t SaturatingAdd(std::uint64_t a, std::uint64_t b);
+std::uint32_t CitizenHappiness(const State &s) {
+    if (!s.catalog->CitizensEnabled()) return 100;
+    std::uint64_t total = 0, weighted = 0, weightTotal = 0;
+    std::uint64_t foodStock = 0;
+    const auto food = s.catalog->Food();
+    for (const auto &building : s.buildings) {
+        const auto *type = s.catalog->BuildingType(building.type);
+        total = SaturatingAdd(total, building.residents);
+        if (food.resource != InvalidResourceId) {
+            const auto slot = Slot(*type, food.resource);
+            if (slot < type->storage.size()) foodStock = SaturatingAdd(foodStock, building.inventory[slot]);
+        }
+    }
+    const bool needsFood = food.resource != InvalidResourceId;
+    const bool needsHeat = [&] { for (const auto &r : s.catalog->Resources()) if (r.utility && r.name == "heat") return true; return false; }();
+    const bool needsWater = [&] { for (const auto &r : s.catalog->Resources()) if (r.utility && r.name == "water") return true; return false; }();
+    const std::uint64_t needs = static_cast<std::uint64_t>(needsFood) + needsHeat + needsWater;
+    if (!needs) return 100;
+    for (const auto &building : s.buildings) {
+        const auto *type = s.catalog->BuildingType(building.type);
+        if (!type->housing) continue;
+        const auto weight = total ? building.residents : type->housing;
+        if (!weight) continue;
+        std::uint32_t score = needsFood ? (total || foodStock >= food.amount ? 100 : 0) : 0;
+        const auto served = [&](std::string_view name) {
+            ResourceId resource = InvalidResourceId;
+            if (!s.catalog->FindResource(name, resource)) return false;
+            const bool consumed = std::any_of(type->recipes.begin(), type->recipes.end(), [&](const RecipeDef &recipe) {
+                return std::any_of(recipe.inputs.begin(), recipe.inputs.end(), [resource](const RecipeAmount &input) {
+                    return input.resource == resource;
+                });
+            });
+            return consumed && building.stall.resource != resource &&
+                building.stall.reason != StallReason::MissingHeating && building.stall.reason != StallReason::MissingWater;
+        };
+        if (needsHeat) score += served("heat") ? 100 : 0;
+        if (needsWater) score += served("water") ? 100 : 0;
+        const auto share = score / needs;
+        const auto contribution = share && weight > UINT64_MAX / share ? UINT64_MAX : weight * share;
+        weighted = SaturatingAdd(weighted, contribution);
+        weightTotal = SaturatingAdd(weightTotal, weight);
+    }
+    return weightTotal ? static_cast<std::uint32_t>(weighted / weightTotal) : 100;
+}
 std::vector<std::uint64_t> AssignedWorkers(const State &s) {
     std::uint64_t residents = 0;
-    for (const auto &building : s.buildings)
-        residents = SaturatingAdd(residents, building.residents);
+    for (const auto &building : s.buildings) residents = SaturatingAdd(residents, building.residents);
+    const auto happiness = s.catalog->CitizensEnabled() ? CitizenHappiness(s) : 100;
+    residents = residents / 100 * happiness + (residents % 100) * happiness / 100;
 
     std::vector<std::uint64_t> assigned(s.buildings.size());
     std::uint64_t assignedBefore = 0;
@@ -1547,7 +1592,21 @@ UtilityDiagnostics AdvanceTick(State &s) {
             const auto slot = Slot(*type, food.resource);
             if (slot < type->storage.size()) stocked = SaturatingAdd(stocked, building.inventory[slot]);
         }
-        const auto residents = std::min(capacity, stocked / food.amount);
+        auto residents = std::min(capacity, stocked / food.amount);
+        if (s.catalog->CitizensEnabled()) {
+            std::uint64_t current = 0;
+            for (const auto &building : s.buildings) current = SaturatingAdd(current, building.residents);
+            const auto happiness = CitizenHappiness(s);
+            if (residents < current) {
+                // Immediate food shortfall caps the population the stores can support.
+            } else if (happiness <= 50 && current) {
+                residents = current - 1;
+            } else if (residents > current && happiness >= 75) {
+                residents = current == 0 ? 1 : current + 1;
+            } else {
+                residents = current;
+            }
+        }
         std::uint64_t remaining = residents * food.amount;
         for (auto &building : s.buildings) {
             const auto *type = s.catalog->BuildingType(building.type);
@@ -1586,7 +1645,7 @@ UtilityDiagnostics AdvanceTick(State &s) {
     for (auto &building : s.buildings) {
         const auto *type = s.catalog->BuildingType(building.type);
         if (type->housing && (building.stall.reason == StallReason::MissingHeating ||
-                              building.stall.reason == StallReason::MissingWater))
+                              building.stall.reason == StallReason::MissingWater) && !s.catalog->CitizensEnabled())
             building.residents = 0;
     }
     for (auto &o : s.orders)
@@ -1641,11 +1700,12 @@ std::uint64_t Hash(const State &s) {
         for (const auto &type : s.catalog->BuildingTypes()) for (const auto &recipe : type.recipes)
             for (auto percent : recipe.seasonalOutputPercent) HashU(h, percent);
     }
-    const bool populationDeclared = s.catalog->Food().resource != InvalidResourceId ||
+    const bool populationDeclared = s.catalog->CitizensEnabled() || s.catalog->Food().resource != InvalidResourceId ||
         std::any_of(s.catalog->BuildingTypes().begin(), s.catalog->BuildingTypes().end(),
                     [](const BuildingTypeDef &type) { return type.housing || type.workers; });
     if (populationDeclared) {
         HashS(h, "openrepublic.synthetic-population-workforce.v1");
+        if (s.catalog->CitizensEnabled()) HashS(h, "openrepublic.synthetic-citizens.v1");
         for (const auto &building : s.buildings) HashU(h, building.residents);
     }
     const bool tradeDeclared = std::any_of(s.catalog->Resources().begin(), s.catalog->Resources().end(),
@@ -1815,6 +1875,7 @@ const std::vector<VehicleTypeDef> &Catalog::VehicleTypes() const noexcept {
     return vehicleTypes_;
 }
 const FoodDef &Catalog::Food() const noexcept { return food_; }
+bool Catalog::CitizensEnabled() const noexcept { return citizensEnabled_; }
 const CalendarDef &Catalog::Calendar() const noexcept { return calendar_; }
 bool Catalog::FindResource(std::string_view n, ResourceId &i) const noexcept {
     for (const auto &x : resources_)
@@ -1963,6 +2024,10 @@ bool CatalogBuilder::SetFood(ResourceId resource, std::uint64_t amount, std::uin
         CatError(e, CatalogError::InvalidAmount, "food requires one non-utility resource and positive rate"); return false;
     }
     draft_.food_ = {resource, amount, interval}; e = {}; return true;
+}
+bool CatalogBuilder::EnableCitizens(CatalogErrorInfo &e) {
+    if (draft_.citizensEnabled_) { CatError(e, CatalogError::InvalidAmount, "citizens may only be declared once"); return false; }
+    draft_.citizensEnabled_ = true; e = {}; return true;
 }
 bool CatalogBuilder::AddBuildingType(std::string_view n, std::uint32_t w, std::uint32_t d,
                                      BuildingTypeId *out, CatalogErrorInfo &e) {
@@ -2355,6 +2420,10 @@ bool ParseCatalogText(std::string_view text, Catalog &out, ParseError &e) {
             }
             continue;
         }
+        if (w[0] == "citizens" && w.size() == 1) {
+            if (!b.EnableCitizens(ce)) { ParseErr(e, ParseErrorCode::CatalogInvalid, line, ce.message); return false; }
+            continue;
+        }
         if (w[0] == "trade" && w.size() == 6 && w[2] == "buy" && w[4] == "sell") {
             std::uint64_t buy{}, sell{}; ResourceId id = InvalidResourceId;
             for (std::size_t k = 0; k < rn.size(); ++k) if (rn[k] == w[1]) { id = static_cast<ResourceId>(k); break; }
@@ -2413,6 +2482,7 @@ std::string WriteCatalogText(const Catalog &c) {
     if (c.Food().resource != InvalidResourceId)
         o += "food " + c.Resource(c.Food().resource)->name + " " + Num(c.Food().amount) +
              " every " + Num(c.Food().intervalTicks) + "\n";
+    if (c.CitizensEnabled()) o += "citizens\n";
     for (const auto &b : c.BuildingTypes()) {
         o += "building " + b.name + " " + Num(b.width) + " " + Num(b.depth) + "\n";
         if (b.housing) o += "  housing " + Num(b.housing) + "\n";
@@ -2585,7 +2655,8 @@ bool World::ReplaceCatalog(const Catalog &next, std::string &error) {
     bool same = or_.size() == nr.size() && ob.size() == nb.size() && ov.size() == nv.size();
     // Population opt-ins and the food resource are structure, just like recipe
     // resource bindings. Numeric requirements/rates may still be tuned.
-    same = same && old.Food().resource == next.Food().resource;
+    same = same && old.Food().resource == next.Food().resource &&
+           old.CitizensEnabled() == next.CitizensEnabled();
     for (std::size_t i = 0; same && i < or_.size(); ++i)
         same = or_[i].name == nr[i].name && or_[i].utility == nr[i].utility &&
                or_[i].tradeDeclared == nr[i].tradeDeclared;
@@ -2865,6 +2936,8 @@ WorldSnapshot World::Snapshot() const {
     o.treasury = s.treasury;
     for (const auto &building : s.buildings)
         o.population = SaturatingAdd(o.population, building.residents);
+    o.happiness = CitizenHappiness(s);
+    o.happyResidents = o.population / 100 * o.happiness + (o.population % 100) * o.happiness / 100;
     for (std::size_t i = 0; i < s.buildings.size(); ++i) {
         const auto &building = s.buildings[i];
         const auto *type = s.catalog->BuildingType(building.type);
@@ -3027,7 +3100,7 @@ std::string SaveWorld(const World &w) {
         [](const Pending &p) { return p.kind == Kind::TradeExport || p.kind == Kind::TradeImport; });
     const bool version4 = !s.utilityConnections.empty() || hasPendingUtility || !s.utilityCommands.empty() ||
                           hasUtilityFailure || hasUtilityRecipes;
-    const bool populationDeclared = s.catalog->Food().resource != InvalidResourceId ||
+    const bool populationDeclared = s.catalog->CitizensEnabled() || s.catalog->Food().resource != InvalidResourceId ||
         std::any_of(s.catalog->BuildingTypes().begin(), s.catalog->BuildingTypes().end(),
                     [](const BuildingTypeDef &type) { return type.housing || type.workers; });
     const bool version5 = hasTrade;
@@ -3177,7 +3250,7 @@ bool LoadWorld(std::string_view text, const Catalog &c, World &target, ParseErro
     }
     World temp(c, w, d);
     State &s = temp.impl_->state;
-    const bool populationDeclaredInCatalog = c.Food().resource != InvalidResourceId ||
+    const bool populationDeclaredInCatalog = c.CitizensEnabled() || c.Food().resource != InvalidResourceId ||
         std::any_of(c.BuildingTypes().begin(), c.BuildingTypes().end(), [](const BuildingTypeDef& type) { return type.housing || type.workers; });
     std::map<BuildingId, StallRecord> utilityStalls;
     std::set<CommandId> recordedUtilityCommands;
