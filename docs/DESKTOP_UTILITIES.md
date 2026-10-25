@@ -25,9 +25,14 @@ or after catalog replacement, advance one tick; unavailable measurements are
 reported as such. These are component totals from the OpenRepublic synthetic
 simulation, not per-building physical readings.
 
-Startup sets the process working directory before engine initialization. The
-pure resolver selects the nearest executable ancestor containing a recognized
-Wicked Engine `shaders` resource directory, then falls back to the executable
-directory when no resource tree is found. Unit coverage exercises ancestor
-selection and fallback; launching from an unrelated directory remains a
-separate desktop runtime check.
+Startup sets the process working directory in the MSVC CRT's early C initializer
+slot, before C++ global constructors run. Setting it only in `wWinMain` was too
+late: a CWD-dependent startup path reached Wicked Engine's DX12 pipeline-state
+creation before the window entry point. The pure resolver selects the nearest
+executable ancestor containing a recognized Wicked Engine `shaders` resource
+directory, then falls back to the executable directory if no resource tree is
+found. The resolver has unit coverage for ancestor selection and fallback.
+**Observed startup check:** the Release client remained alive for 20 seconds
+from both `Documents` and `C:\` with `--native-economy` and `--play coal`; each
+process was terminated afterward. This checks startup survival, not rendered
+frame quality or WRSR parity.
