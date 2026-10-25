@@ -1,0 +1,15 @@
+{
+    "actions":  [
+                    {
+                        "frame":  300,
+                        "action":  "screenshot",
+                        "path":  "campaign_build_the_chain_smoke-final.png"
+                    },
+                    {
+                        "frame":  301,
+                        "action":  "assert_text",
+                        "widget":  "NativeObjectivesChecklist",
+                        "text":  "1/1 complete"
+                    }
+                ]
+}

@@ -94,6 +94,15 @@ struct NativeEconomyScenePlan {
     double cameraDistance{};
 };
 
+/** Pure camera framing rectangle derived from the complete native snapshot. */
+struct NativeEconomyFrameBounds {
+    double minX{}, minZ{}, maxX{}, maxZ{}, cameraDistance{};
+};
+bool BuildNativeEconomyFrameBounds(const economy::WorldSnapshot& snapshot,
+                                   const economy::Catalog& catalog,
+                                   NativeEconomyFrameBounds& outBounds,
+                                   std::string& error);
+
 /** Builds a complete presentation plan transactionally.
  *  If fixedTransform is null, the transform is centered on all occupied geometry
  *  (building footprints/access cells, roads, and vehicle cells), or on the first

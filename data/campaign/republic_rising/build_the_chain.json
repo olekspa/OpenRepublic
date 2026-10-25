@@ -3,7 +3,7 @@
   "id": "build_the_chain",
   "name": "Build the mill chain",
   "description": "Grow a timber and planks supply chain, then deliver materials and work to complete two mill construction sites.",
-  "catalog": "openrepublic-economy 1\nresource timber\nresource planks\nutility power\nbuilding farm 1 1\n  store timber 100\n  recipe harvest every 1 out timber:2\nend\nbuilding sawmill 1 1\n  store timber 100\n  store planks 100\n  recipe saw every 1 in timber:1 out planks:1\nend\nbuilding mill 2 2\n  store planks 100\n  build planks:2 work 4\nend\nvehicle truck capacity 10 speed 1\n",
+  "catalog": "openrepublic-economy 1\nresource timber\nresource planks\nutility power\nbuilding farm 1 1\n  store timber 100\n  recipe harvest every 1 out timber:2\nend\nbuilding sawmill 1 1\n  store timber 100\n  store planks 100\n  recipe saw every 1 in timber:1 out planks:1\nend\nbuilding mill 2 2\n  store planks 100\n  build planks:2 work 4\nend\nbuilding road_depot 1 1\n  depot\n  fleet truck 2\n  handling 1 1\nend\nvehicle truck capacity 10 speed 1\n",
   "roads": [
     {
       "a": {
@@ -74,6 +74,14 @@
         "x": 8,
         "z": 1
       }
+    },
+    {
+      "a": { "x": 8, "z": 1 },
+      "b": { "x": 9, "z": 1 }
+    },
+    {
+      "a": { "x": 9, "z": 1 },
+      "b": { "x": 10, "z": 1 }
     }
   ],
   "buildings": [
@@ -98,6 +106,11 @@
       "x": 7,
       "z": 2,
       "constructionSite": true
+    },
+    {
+      "type": "road_depot",
+      "x": 9,
+      "z": 2
     }
   ],
   "score": {

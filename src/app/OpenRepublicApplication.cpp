@@ -833,6 +833,9 @@ namespace openrepublic
 				nmfPreviewCameraTarget = nativeEconomyScene.CameraTarget();
 				nmfPreviewCameraDistance = nativeEconomyScene.CameraDistance() * 0.8f;
 				nmfPreviewLoaded = true;
+				runtime::NativeEconomyFrameBounds initialFrame;
+				if (runtime::BuildNativeEconomyFrameBounds(snapshot, *nativeEconomyCheckpoint.catalog,
+					initialFrame, error)) nativeCameraFrameBounds = initialFrame;
 				regionEconomyApi = std::make_unique<economy_api::EconomyApi>(
 					*nativeEconomyCheckpoint.world, economy_api::Permissions{ true, true });
 				regionEconomyDescription = nativeEconomyFreshWorld
@@ -1989,12 +1992,14 @@ namespace openrepublic
 			ToggleNativeRunPause();
 		}
 		if (autoplayActive) UpdateNativeObjectivePlanner();
+		bool uiScriptActionFailed = false;
 		while (nextUiScriptAction < uiScript.actions.size() && uiScript.actions[nextUiScriptAction].frame <= uiScriptFrame)
 		{
 			const auto& action = uiScript.actions[nextUiScriptAction++];
+			bool actionOk = true;
 			if (action.action == "button")
 			{
-				if (!InvokeUiButton(action.label)) wilog("[OpenRepublic] UI script: unsupported button label '%s'", action.label.c_str());
+				actionOk = InvokeUiButton(action.label);
 			}
 			else if (action.action == "screenshot")
 			{
@@ -2002,10 +2007,89 @@ namespace openrepublic
 				const auto backBuffer = wi::graphics::GetDevice()->GetBackBuffer(&swapChain);
 				const bool saved = wi::helper::saveTextureToFile(backBuffer, path);
 				if (saved) wilog("[OpenRepublic] UI script screenshot: %s", path.c_str());
-				if (!saved) { wilog("[OpenRepublic] UI script screenshot failed: %s", path.c_str()); PostQuitMessage(2); }
+				actionOk = saved;
+			}
+			else if (action.action == "select")
+			{
+				auto* widget = renderPath ? renderPath->GetGUI().GetWidget(action.label) : nullptr;
+				auto* combo = dynamic_cast<wi::gui::ComboBox*>(widget);
+				actionOk = combo != nullptr;
+				if (combo)
+				{
+					actionOk = false;
+					for (std::size_t i = 0; i < combo->GetItemCount(); ++i)
+						if (combo->GetItemText(static_cast<int>(i)) == action.entry)
+						{ combo->SetSelected(static_cast<int>(i)); actionOk = true; break; }
+				}
+			}
+			else if (action.action == "place_building")
+			{
+				economy::BuildingTypeId typeId{};
+				const bool foundType = nativeEconomyCheckpoint.catalog &&
+					nativeEconomyCheckpoint.catalog->FindBuildingType(action.type, typeId);
+				const auto* type = foundType ? nativeEconomyCheckpoint.catalog->BuildingType(typeId) : nullptr;
+				actionOk = type != nullptr && nativeEconomyCheckpointMode;
+				if (actionOk)
+				{
+					nativePlacementType = type->id;
+					nativeConstructionMode = NativeConstructionMode::Building;
+					QueueNativeConstruction({ action.x, action.z });
+					actionOk = !regionPendingCommandHandles.empty();
+				}
+			}
+			else if (action.action == "build_road")
+			{
+				actionOk = nativeEconomyCheckpointMode && regionEconomyApi &&
+					(action.x == action.x2 || action.z == action.z2);
+				if (actionOk)
+				{
+					const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
+					const auto dx = action.x2 > action.x ? 1 : action.x2 < action.x ? -1 : 0;
+					const auto dz = action.z2 > action.z ? 1 : action.z2 < action.z ? -1 : 0;
+					auto cell = economy::Cell{ action.x, action.z };
+					while (cell.x != action.x2 || cell.z != action.z2)
+					{
+						const economy::Cell next{ cell.x + dx, cell.z + dz };
+						if (!TrackNativeSubmission(regionEconomyApi->BuildRoad(snapshot.revision, cell, next), "UI script road")) { actionOk = false; break; }
+						cell = next;
+					}
+				}
+			}
+			else if (action.action == "click_cell")
+			{
+				actionOk = nativeEconomyCheckpointMode;
+				if (actionOk && nativeConstructionMode != NativeConstructionMode::None)
+				{
+					QueueNativeConstruction({ action.x, action.z });
+					actionOk = !regionPendingCommandHandles.empty();
+				}
+				else if (actionOk)
+				{
+					const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
+					const auto found = std::find_if(snapshot.buildings.begin(), snapshot.buildings.end(), [&](const auto& b) {
+						return b.origin == economy::Cell{ action.x, action.z } || b.access == economy::Cell{ action.x, action.z };
+					});
+					if (found == snapshot.buildings.end()) actionOk = false;
+					else { selectedRegionBuildingId = found->id; selectedRegionBuildingEntity = wi::ecs::INVALID_ENTITY; UpdateRegionStatus(); }
+				}
+			}
+			else if (action.action == "wait_ticks")
+				actionOk = QueueRegionStep(static_cast<std::uint32_t>(std::min<std::uint64_t>(action.ticks, 100000)), true);
+			else if (action.action == "assert_text")
+			{
+			const auto* widget = renderPath ? renderPath->GetGUI().GetWidget(action.widget) : nullptr;
+				actionOk = widget != nullptr && widget->GetText().find(action.text) != std::string::npos;
+				if (!actionOk) wilog("[OpenRepublic] UI script assertion failed: widget '%s' does not contain '%s'",
+					action.widget.c_str(), action.text.c_str());
+			}
+			if (!actionOk)
+			{
+				uiScriptActionFailed = true;
+				wilog("[OpenRepublic] UI script action failed: %s", action.action.c_str());
+				PostQuitMessage(action.action == "assert_text" ? 3 : 2);
 			}
 		}
-		if (!uiScript.actions.empty() && nextUiScriptAction == uiScript.actions.size()) PostQuitMessage(0);
+		if (!uiScriptActionFailed && !uiScript.actions.empty() && nextUiScriptAction == uiScript.actions.size()) PostQuitMessage(0);
 		++uiScriptFrame;
 		if (nmfCaptureMode)
 		{
@@ -2964,7 +3048,37 @@ namespace openrepublic
 		if (nativeEconomyCheckpointMode)
 		{
 			std::string error;
-			if (!nativeEconomyScene.Sync(previewWorld, nativeEconomyCheckpoint.world->Snapshot(),
+			const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
+			runtime::NativeEconomyFrameBounds frame;
+			const bool haveFrame = runtime::BuildNativeEconomyFrameBounds(snapshot,
+				*nativeEconomyCheckpoint.catalog, frame, error);
+			const bool grew = haveFrame && (!nativeCameraFrameBounds || frame.minX < nativeCameraFrameBounds->minX ||
+				frame.minZ < nativeCameraFrameBounds->minZ || frame.maxX > nativeCameraFrameBounds->maxX ||
+				frame.maxZ > nativeCameraFrameBounds->maxZ);
+			if (grew && nativeEconomyScene.Rebase(previewWorld, snapshot,
+				*nativeEconomyCheckpoint.catalog, regionInstances, error))
+			{
+				nativeCameraFrameBounds = frame;
+				const auto target = nativeEconomyScene.CameraTarget();
+				const float distance = nativeEconomyScene.CameraDistance() * 0.8f;
+				wi::scene::TransformComponent cameraTransform;
+				cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 0.55f, target.z - distance * 0.85f));
+				cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.6f, 0, 0));
+				cameraTransform.UpdateTransform();
+				renderPath->camera->TransformCamera(cameraTransform);
+				renderPath->camera->zNearP = std::max(0.01f, distance / 100000.0f);
+				renderPath->camera->zFarP = std::max(1000.0f, distance * 4.0f);
+				renderPath->camera->UpdateCamera();
+				cameraSpeedScale = std::max(1.0f, distance / 15.0f);
+				nativeEconomyPresentationValid = true;
+			}
+			else if (grew)
+			{
+				uiNotice = "Native economy scene reframe failed: " + error;
+				nativeEconomyPresentationValid = false;
+				return;
+			}
+			else if (!nativeEconomyScene.Sync(previewWorld, snapshot,
 				*nativeEconomyCheckpoint.catalog, regionInstances, error))
 			{
 				uiNotice = "Native economy scene update failed: " + error;
@@ -3718,9 +3832,21 @@ namespace openrepublic
 		case runtime::PlannerCommandKind::PlaceConstructionSite:
 			submitted = regionEconomyApi->PlaceConstructionSite(snapshot.revision, command->buildingType, command->a); break;
 		case runtime::PlannerCommandKind::BuildRoad:
-			submitted = regionEconomyApi->BuildRoad(snapshot.revision, command->a, command->b); break;
+			for (const auto& edge : command->roads)
+				if (!TrackNativeSubmission(regionEconomyApi->BuildRoad(snapshot.revision, edge.first, edge.second), "autoplay objective planner road")) return;
+			if (command->roads.empty()) submitted = regionEconomyApi->BuildRoad(snapshot.revision, command->a, command->b);
+			break;
+		case runtime::PlannerCommandKind::TradeImport:
+			submitted = regionEconomyApi->TradeImport(snapshot.revision, command->building, command->resource, command->amount, command->amount); break;
+		case runtime::PlannerCommandKind::TradeExport:
+			submitted = regionEconomyApi->TradeExport(snapshot.revision, command->building, command->resource, command->amount, command->amount); break;
+		case runtime::PlannerCommandKind::DispatchTruck:
+			submitted = regionEconomyApi->DispatchTruck(snapshot.revision, command->vehicle, command->source,
+				command->destination, command->resource, command->amount); break;
+		case runtime::PlannerCommandKind::ConnectUtility:
+			submitted = regionEconomyApi->ConnectUtility(snapshot.revision, command->resource, command->source, command->destination); break;
 		}
-		TrackNativeSubmission(submitted, "autoplay objective planner: " + command->buildingType);
+		if (submitted.handle != 0) TrackNativeSubmission(submitted, "autoplay objective planner: " + command->buildingType);
 	}
 
 	bool OpenRepublicApplication::CanQueueNativeCommand()
@@ -4023,6 +4149,9 @@ namespace openrepublic
 			UpdateRegionStatus();
 			return;
 		}
+		runtime::NativeEconomyFrameBounds frame;
+		if (runtime::BuildNativeEconomyFrameBounds(nativeEconomyCheckpoint.world->Snapshot(),
+			*nativeEconomyCheckpoint.catalog, frame, error)) nativeCameraFrameBounds = frame;
 		nativeEconomyPresentationValid = true;
 		lastPresentedRegionRevision.reset();
 		UpdateRegionEconomyPresentation();

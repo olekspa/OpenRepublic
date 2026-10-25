@@ -7,7 +7,8 @@
     { "frame": 120, "action": "screenshot", "path": "autoplay-town-middle.png" },
     { "frame": 121, "action": "button", "label": "Overview" },
     { "frame": 122, "action": "button", "label": "Game" },
-    { "frame": 242, "action": "screenshot", "path": "autoplay-town-end.png" }
+    { "frame": 242, "action": "screenshot", "path": "autoplay-town-end.png" },
+    { "frame": 243, "action": "assert_text", "widget": "NativeObjectivesChecklist", "text": "2/2 complete" }
   ]
 }
 

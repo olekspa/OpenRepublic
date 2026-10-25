@@ -2685,6 +2685,12 @@ Catalog MakeSyntheticCatalog() {
     b.AddStorage(market, br, 16, e);
     b.AddRecipe(market, {"consume", 1, {{br, 1}}, {}}, e);
     b.AddVehicleType("truck", 4, 1, nullptr, e);
+    BuildingTypeId depot{};
+    b.AddBuildingType("road_depot", 1, 1, &depot, e);
+    b.SetDepot(depot, true, e);
+    VehicleTypeId truck{};
+    b.FindVehicleType("truck", truck);
+    b.AddFleet(depot, truck, 3, e);
     Catalog out;
     b.Build(out, e);
     return out;
@@ -2744,6 +2750,7 @@ Catalog MakeSyntheticTownCatalog() {
         "  recipe bake every 1 in flour:2 out bread:2\nend\n"
         "building market 1 1\n  store bread 64\nend\n"
         "building boiler 1 1\n  recipe heat every 1 out heat:2\nend\n"
+        "building road_depot 1 1\n  depot\n  fleet truck 3\n  handling 1 1\nend\n"
         "vehicle truck capacity 8 speed 2\n";
     Catalog result;
     ParseError error;
