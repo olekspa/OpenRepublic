@@ -2,6 +2,7 @@
 #include "ShowcaseProps.h"
 #include "ShowcaseEnvironment.h"
 #include "openrepublic/runtime/native_economy_tools.h"
+#include "openrepublic/runtime/ambient_traffic.h"
 #include "openrepublic/procgeo/vehicles.h"
 
 #include <algorithm>
@@ -17,8 +18,6 @@ namespace openrepublic::preview
 		using Plan = runtime::NativeEconomyScenePlan;
 		using BuildingPrimitive = runtime::NativeBuildingPrimitive;
 		using RoadPrimitive = runtime::NativeRoadPrimitive;
-		const float kTruckScale = static_cast<float>(runtime::NativeVehicleDisplayScale(
-			openrepublic::procgeo::VehicleLength(openrepublic::procgeo::VehicleKind::CargoTruck)));
 		constexpr float kRoadSurfaceY = 0.11f;
 
 		wi::ecs::Entity CreateVehicleNode(wi::scene::Scene& scene, wi::ecs::Entity mesh,
@@ -30,6 +29,7 @@ namespace openrepublic::preview
 			wi::scene::ObjectComponent* object = scene.objects.GetComponent(entity);
 			if (object == nullptr) { scene.Entity_Remove(entity); return wi::ecs::INVALID_ENTITY; }
 			object->meshID = mesh;
+			object->SetCastShadow(true);
 			return entity;
 		}
 
@@ -511,23 +511,35 @@ namespace openrepublic::preview
 		struct NewVehicle { economy::VehicleId id; VehicleVisual visual; };
 		std::vector<NewVehicle> addedVehicles;
 		addedVehicles.reserve(snapshot.vehicles.size());
-		if (!snapshot.vehicles.empty() && truckMesh_ == wi::ecs::INVALID_ENTITY)
+		if (!snapshot.vehicles.empty() && wheelMesh_ == wi::ecs::INVALID_ENTITY)
 		{
-			truckMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic native truck mesh",
-				openrepublic::procgeo::MakeCargoTruckBody(5), 0.5f, 0.1f);
 			wheelMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic native wheel mesh",
 				openrepublic::procgeo::MakeVehicleWheel(), 0.82f, 0.0f);
 			cargoMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic native coal heap mesh",
 				openrepublic::procgeo::MakeCoalHeap(), 0.09f, 0.0f);
-			if (truckMesh_ == wi::ecs::INVALID_ENTITY || wheelMesh_ == wi::ecs::INVALID_ENTITY ||
-				cargoMesh_ == wi::ecs::INVALID_ENTITY)
+			headlightsMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic native headlight mesh",
+				openrepublic::procgeo::MakeVehicleHeadlightPair(), 0.25f, 0.0f);
+			brakeLightsMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic native brake light mesh",
+				openrepublic::procgeo::MakeVehicleBrakeLightPair(), 0.25f, 0.0f);
+			exhaustMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic native exhaust puff mesh",
+				openrepublic::procgeo::MakeVehicleExhaustPuff(), 0.95f, 0.0f);
+			if (wheelMesh_ == wi::ecs::INVALID_ENTITY || cargoMesh_ == wi::ecs::INVALID_ENTITY ||
+				headlightsMesh_ == wi::ecs::INVALID_ENTITY || brakeLightsMesh_ == wi::ecs::INVALID_ENTITY ||
+				exhaustMesh_ == wi::ecs::INVALID_ENTITY)
 			{
-				if (truckMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(truckMesh_);
 				if (wheelMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(wheelMesh_);
 				if (cargoMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(cargoMesh_);
-				truckMesh_ = wheelMesh_ = cargoMesh_ = wi::ecs::INVALID_ENTITY;
+				if (headlightsMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(headlightsMesh_);
+				if (brakeLightsMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(brakeLightsMesh_);
+				if (exhaustMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(exhaustMesh_);
+				wheelMesh_ = cargoMesh_ = headlightsMesh_ = brakeLightsMesh_ = exhaustMesh_ = wi::ecs::INVALID_ENTITY;
 				error = "Wicked Engine could not create the native procedural truck meshes";
 				return false;
+			}
+			if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(headlightsMesh_))
+			{
+				material->SetEmissiveColor(XMFLOAT4(1.0f, 0.78f, 0.46f, 0.65f));
+				material->CreateRenderData(true);
 			}
 		}
 		for (const auto& vehicle : snapshot.vehicles)
@@ -539,10 +551,44 @@ namespace openrepublic::preview
 			VehicleVisual visual{};
 			const auto old = vehicles_.find(vehicle.id);
 			if (old != vehicles_.end()) visual = old->second;
-			else
+			const economy::VehicleTypeDef* vehicleType = catalog.VehicleType(vehicle.type);
+			if (vehicleType != nullptr)
 			{
-				visual.body = CreateVehicleNode(scene, truckMesh_, "OpenRepublic native truck " + std::to_string(vehicle.id));
+				visual.kind = openrepublic::procgeo::VehicleKindForCatalogName(vehicleType->name, vehicleType->railOnly);
+				const auto catalogKind = visual.kind;
+				const bool cargoTruck = catalogKind == openrepublic::procgeo::VehicleKind::CargoTruck ||
+					catalogKind == openrepublic::procgeo::VehicleKind::BoxVan ||
+					catalogKind == openrepublic::procgeo::VehicleKind::Flatbed ||
+					catalogKind == openrepublic::procgeo::VehicleKind::DumpTruck ||
+					catalogKind == openrepublic::procgeo::VehicleKind::Tanker;
+				if (cargoTruck)
+					for (const auto& order : snapshot.orders)
+						if (order.id == vehicle.order)
+						{
+							if (const economy::ResourceDef* resource = catalog.Resource(order.resource))
+								visual.kind = openrepublic::procgeo::TruckKindForResourceName(resource->name);
+							break;
+						}
+			}
+			if (visual.bodyMesh == wi::ecs::INVALID_ENTITY || (old != vehicles_.end() && visual.kind != old->second.kind))
+			{
+				const std::string meshName = "OpenRepublic native vehicle body mesh " + std::to_string(vehicle.id);
+				visual.bodyMesh = CreateProceduralMeshEntity(scene, meshName.c_str(),
+					openrepublic::procgeo::MakeVehicleBody(visual.kind, static_cast<std::uint32_t>(vehicle.id)), 0.5f, 0.1f);
+				if (visual.bodyMesh == wi::ecs::INVALID_ENTITY)
+				{
+					rollback(); error = "Wicked Engine could not create a native vehicle body mesh"; return false;
+				}
+				createdEntities.push_back(visual.bodyMesh);
+				if (old == vehicles_.end())
+					visual.body = CreateVehicleNode(scene, visual.bodyMesh, "OpenRepublic native vehicle " + std::to_string(vehicle.id));
+			}
+			if (old == vehicles_.end())
+			{
 				visual.load = CreateVehicleNode(scene, cargoMesh_, "OpenRepublic native coal load " + std::to_string(vehicle.id));
+				visual.headlights = CreateVehicleNode(scene, headlightsMesh_, "OpenRepublic native headlights " + std::to_string(vehicle.id));
+				visual.brakeLights = CreateVehicleNode(scene, brakeLightsMesh_, "OpenRepublic native brake lights " + std::to_string(vehicle.id));
+				visual.exhaust = CreateVehicleNode(scene, exhaustMesh_, "OpenRepublic native exhaust " + std::to_string(vehicle.id));
 				visual.labelMesh = CreateProceduralMeshEntity(scene, "OpenRepublic native truck ID label mesh",
 					openrepublic::procgeo::MakeVehicleIdLabel(vehicle.id), 1.0f, 0.0f);
 				visual.label = CreateVehicleNode(scene, visual.labelMesh,
@@ -550,11 +596,17 @@ namespace openrepublic::preview
 				for (wi::ecs::Entity& wheel : visual.wheels)
 					wheel = CreateVehicleNode(scene, wheelMesh_, "OpenRepublic native truck wheel " + std::to_string(vehicle.id));
 				if (visual.body == wi::ecs::INVALID_ENTITY || visual.load == wi::ecs::INVALID_ENTITY ||
+					visual.headlights == wi::ecs::INVALID_ENTITY || visual.brakeLights == wi::ecs::INVALID_ENTITY ||
+					visual.exhaust == wi::ecs::INVALID_ENTITY ||
 					visual.labelMesh == wi::ecs::INVALID_ENTITY || visual.label == wi::ecs::INVALID_ENTITY ||
 					std::any_of(visual.wheels.begin(), visual.wheels.end(), [](wi::ecs::Entity e) { return e == wi::ecs::INVALID_ENTITY; }))
 				{
 					if (visual.body != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.body);
+					if (visual.bodyMesh != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.bodyMesh);
 					if (visual.load != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.load);
+					if (visual.headlights != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.headlights);
+					if (visual.brakeLights != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.brakeLights);
+					if (visual.exhaust != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.exhaust);
 					if (visual.label != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.label);
 					if (visual.labelMesh != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.labelMesh);
 					for (wi::ecs::Entity wheel : visual.wheels) if (wheel != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(wheel);
@@ -562,6 +614,9 @@ namespace openrepublic::preview
 				}
 				createdEntities.push_back(visual.body);
 				createdEntities.push_back(visual.load);
+				createdEntities.push_back(visual.headlights);
+				createdEntities.push_back(visual.brakeLights);
+				createdEntities.push_back(visual.exhaust);
 				createdEntities.push_back(visual.label);
 				createdEntities.push_back(visual.labelMesh);
 				createdEntities.insert(createdEntities.end(), visual.wheels.begin(), visual.wheels.end());
@@ -801,9 +856,13 @@ namespace openrepublic::preview
 			{
 				scene.Entity_Remove(it->second.body);
 				scene.Entity_Remove(it->second.load);
+				scene.Entity_Remove(it->second.headlights);
+				scene.Entity_Remove(it->second.brakeLights);
+				scene.Entity_Remove(it->second.exhaust);
 				scene.Entity_Remove(it->second.label);
 				scene.Entity_Remove(it->second.labelMesh);
 				for (wi::ecs::Entity wheel : it->second.wheels) scene.Entity_Remove(wheel);
+				scene.Entity_Remove(it->second.bodyMesh);
 				it = vehicles_.erase(it);
 			}
 			else ++it;
@@ -830,7 +889,17 @@ namespace openrepublic::preview
 			buildings_.emplace(item.id, item.visual);
 		}
 		for (NewRoad& item : addedRoads) roads_.emplace(item.id, item.visual);
-		for (NewVehicle& item : addedVehicles) vehicles_[item.id] = item.visual;
+		for (NewVehicle& item : addedVehicles)
+		{
+			auto old = vehicles_.find(item.id);
+			if (old != vehicles_.end() && old->second.bodyMesh != item.visual.bodyMesh)
+			{
+				if (wi::scene::ObjectComponent* object = scene.objects.GetComponent(item.visual.body))
+					object->meshID = item.visual.bodyMesh;
+				scene.Entity_Remove(old->second.bodyMesh);
+			}
+			vehicles_[item.id] = item.visual;
+		}
 		for (const auto& desired : desiredEffects) buildingEffects_[desired.first] = desired.second;
 		if (newGround != wi::ecs::INVALID_ENTITY) groundEntity_ = newGround;
 		if (newWater != wi::ecs::INVALID_ENTITY) waterEntity_ = newWater;
@@ -847,6 +916,57 @@ namespace openrepublic::preview
 			static_cast<float>(plan.minX * 0.5 + plan.maxX * 0.5), 0.0f,
 			static_cast<float>(plan.minZ * 0.5 + plan.maxZ * 0.5));
 		initialized_ = true;
+		if (!SyncAmbientTraffic(scene, snapshot, error)) return false;
+		return true;
+	}
+
+	bool NativeEconomyScene::SyncAmbientTraffic(wi::scene::Scene& scene,
+		const economy::WorldSnapshot& snapshot, std::string& error)
+	{
+		if (!ambientTrafficEnabled_)
+		{
+			for (const AmbientVehicleVisual& visual : ambientVehicles_) scene.Entity_Remove(visual.entity);
+			ambientVehicles_.clear();
+			if (ambientCarMesh_ != wi::ecs::INVALID_ENTITY) { scene.Entity_Remove(ambientCarMesh_); ambientCarMesh_ = wi::ecs::INVALID_ENTITY; }
+			return true;
+		}
+		if (ambientCarMesh_ == wi::ecs::INVALID_ENTITY)
+		{
+			ambientCarMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic ambient traffic car mesh",
+				openrepublic::procgeo::MakeVehicleBody(openrepublic::procgeo::VehicleKind::Car, 91u), 0.18f, 0.0f);
+			if (ambientCarMesh_ == wi::ecs::INVALID_ENTITY) { error = "could not create ambient traffic car mesh"; return false; }
+		}
+		std::vector<std::vector<economy::Cell>> lines;
+		lines.reserve(snapshot.roads.size());
+		for (const auto& road : snapshot.roads) if (road.enabled) lines.push_back({road.a, road.b});
+		const auto traffic = runtime::ComputeAmbientTraffic(lines, snapshot.tick, 8);
+		while (ambientVehicles_.size() > traffic.size())
+		{
+			scene.Entity_Remove(ambientVehicles_.back().entity);
+			ambientVehicles_.pop_back();
+		}
+		while (ambientVehicles_.size() < traffic.size())
+		{
+			const wi::ecs::Entity entity = CreateVehicleNode(scene, ambientCarMesh_,
+				"OpenRepublic ambient road car " + std::to_string(ambientVehicles_.size()));
+			if (entity == wi::ecs::INVALID_ENTITY) { error = "could not create ambient traffic vehicle"; return false; }
+			ambientVehicles_.push_back({entity});
+		}
+		const float scale = static_cast<float>(runtime::NativeVehicleDisplayScale(
+			openrepublic::procgeo::VehicleLength(openrepublic::procgeo::VehicleKind::Car), 0.65));
+		for (std::size_t i = 0; i < traffic.size(); ++i)
+		{
+			const auto& item = traffic[i];
+			const float x = static_cast<float>((item.position.x - transform_->centerCellX) * runtime::NativeEconomyTransform::DisplayUnitsPerCell);
+			const float z = static_cast<float>((item.position.z - transform_->centerCellZ) * runtime::NativeEconomyTransform::DisplayUnitsPerCell);
+			wi::scene::TransformComponent* transform = scene.transforms.GetComponent(ambientVehicles_[i].entity);
+			if (transform == nullptr) continue;
+			transform->ClearTransform();
+			transform->Scale(XMFLOAT3(scale, scale, scale));
+			transform->Rotate(XMQuaternionRotationAxis(XMVectorSet(0, 1, 0, 0), static_cast<float>(item.yawRadians)));
+			transform->Translate(XMFLOAT3(x, static_cast<float>(GroundHeight(x, z)) + kRoadSurfaceY, z));
+			transform->UpdateTransform();
+		}
 		return true;
 	}
 
@@ -951,48 +1071,66 @@ namespace openrepublic::preview
 		for (auto& entry : vehicles_)
 		{
 			VehicleVisual& visual = entry.second;
-				const runtime::NativeVehicleMotion motion = runtime::InterpolateNativeVehicleMotion(
-				visual.previous, visual.current, alpha, visual.yaw, *transform_, 0.48 * kTruckScale);
+			const float modelScale = static_cast<float>(runtime::NativeVehicleDisplayScale(
+				openrepublic::procgeo::VehicleLength(visual.kind)));
+			const runtime::NativeVehicleMotion motion = runtime::InterpolateNativeVehicleMotion(
+				visual.previous, visual.current, alpha, visual.yaw, *transform_, 0.48 * modelScale);
 			if (motion.moving) visual.yaw = static_cast<float>(motion.yawRadians);
 			visual.wheelRotation = visual.wheelRotationBase + static_cast<float>(motion.wheelRotationRadians);
 			XMFLOAT4 yawRotation;
 			XMStoreFloat4(&yawRotation, XMQuaternionRotationAxis(XMVectorSet(0, 1, 0, 0), visual.yaw));
-				const double sampledHeight = groundHeight ? groundHeight(motion.position.x, motion.position.z) :
-					GroundHeight(motion.position.x, motion.position.z);
-				const float groundY = static_cast<float>(std::isfinite(sampledHeight) ? sampledHeight : 0.0) + kRoadSurfaceY;
-				const auto positionNode = [&](wi::ecs::Entity entity, float localX, float localY, float localZ,
+			const double sampledHeight = groundHeight ? groundHeight(motion.position.x, motion.position.z) :
+				GroundHeight(motion.position.x, motion.position.z);
+			const float groundY = static_cast<float>(std::isfinite(sampledHeight) ? sampledHeight : 0.0) + kRoadSurfaceY;
+			const auto positionNode = [&](wi::ecs::Entity entity, float localX, float localY, float localZ,
 				const XMFLOAT3& scale, const XMFLOAT4& rotation)
 			{
 				wi::scene::TransformComponent* node = scene.transforms.GetComponent(entity);
 				if (!node) return;
 				const float x = static_cast<float>(motion.position.x) +
-					(std::cos(visual.yaw) * localX + std::sin(visual.yaw) * localZ) * kTruckScale;
+					(std::cos(visual.yaw) * localX + std::sin(visual.yaw) * localZ) * modelScale;
 				const float z = static_cast<float>(motion.position.z) +
-					(-std::sin(visual.yaw) * localX + std::cos(visual.yaw) * localZ) * kTruckScale;
+					(-std::sin(visual.yaw) * localX + std::cos(visual.yaw) * localZ) * modelScale;
 				node->ClearTransform(); node->Scale(scale); node->Rotate(rotation);
-				node->Translate(XMFLOAT3(x, groundY + localY * kTruckScale, z)); node->UpdateTransform();
+				node->Translate(XMFLOAT3(x, groundY + localY * modelScale, z)); node->UpdateTransform();
 			};
-			positionNode(visual.body, 0, 0, 0, XMFLOAT3(kTruckScale, kTruckScale, kTruckScale), yawRotation);
+			positionNode(visual.body, 0, 0, 0, XMFLOAT3(modelScale, modelScale, modelScale), yawRotation);
+			float frontZ = 3.78f, rearZ = -3.78f, lampY = 0.96f;
+			if (visual.kind == openrepublic::procgeo::VehicleKind::Car) { frontZ = 1.89f; rearZ = -1.89f; lampY = 0.75f; }
+			else if (visual.kind == openrepublic::procgeo::VehicleKind::Bus) { frontZ = 3.67f; rearZ = -3.67f; lampY = 0.94f; }
+			else if (visual.kind == openrepublic::procgeo::VehicleKind::Locomotive) { frontZ = 2.57f; rearZ = -2.32f; lampY = 1.45f; }
+			positionNode(visual.headlights, 0, lampY, frontZ, XMFLOAT3(modelScale, modelScale, modelScale), yawRotation);
+			positionNode(visual.brakeLights, 0, lampY, rearZ, XMFLOAT3(modelScale, modelScale, modelScale), yawRotation);
+			positionNode(visual.exhaust, 0.22f, 1.42f, rearZ - 0.28f, XMFLOAT3(modelScale, modelScale, modelScale), yawRotation);
+			if (wi::scene::ObjectComponent* particle = scene.objects.GetComponent(visual.exhaust)) particle->SetRenderable(motion.moving);
+			if (wi::scene::ObjectComponent* lights = scene.objects.GetComponent(visual.headlights)) lights->SetRenderable(darkLighting_);
+			if (wi::scene::ObjectComponent* lights = scene.objects.GetComponent(visual.brakeLights))
+				lights->color = visual.idle ? XMFLOAT4(1.0f, 0.22f, 0.14f, 1.0f) : XMFLOAT4(0.70f, 0.25f, 0.20f, 1.0f);
 			const float loadY = visual.loaded ? 1.55f : -10000.0f;
 			positionNode(visual.load, 0, loadY, -1.55f,
-				XMFLOAT3(kTruckScale, kTruckScale, kTruckScale), yawRotation);
+				XMFLOAT3(modelScale, modelScale, modelScale), yawRotation);
 			if (wi::scene::TransformComponent* label = scene.transforms.GetComponent(visual.label))
 			{
 				label->ClearTransform(); label->Scale(XMFLOAT3(0.82f, 0.82f, 0.82f));
 				label->Translate(XMFLOAT3(static_cast<float>(motion.position.x),
-					groundY + 5.0f * kTruckScale, static_cast<float>(motion.position.z)));
+					groundY + 5.0f * modelScale, static_cast<float>(motion.position.z)));
 				label->UpdateTransform();
 			}
 			if (wi::scene::ObjectComponent* object = scene.objects.GetComponent(visual.body))
-				object->color = visual.idle ? XMFLOAT4(0.78f, 0.78f, 0.82f, 1.0f) : XMFLOAT4(1, 1, 1, 1);
-			const float wheelOffsets[4][2] = {{-1.12f, 3.05f}, {1.12f, 3.05f}, {-1.12f, -2.62f}, {1.12f, -2.62f}};
+				object->color = visual.idle ? XMFLOAT4(0.90f, 0.66f, 0.64f, 1.0f) : XMFLOAT4(1, 1, 1, 1);
+			float halfTrack = 1.12f, front = 3.05f, rear = -2.62f, radius = 0.48f;
+			if (visual.kind == openrepublic::procgeo::VehicleKind::Car) { halfTrack = 0.79f; front = 1.22f; rear = -1.25f; radius = 0.34f; }
+			else if (visual.kind == openrepublic::procgeo::VehicleKind::Bus) { halfTrack = 1.06f; front = 2.45f; rear = -2.42f; radius = 0.46f; }
+			else if (visual.kind == openrepublic::procgeo::VehicleKind::Locomotive) { halfTrack = 0.96f; front = 1.25f; rear = -1.35f; radius = 0.52f; }
+			else if (visual.kind == openrepublic::procgeo::VehicleKind::TrainWagon) { halfTrack = 1.10f; front = 1.46f; rear = -1.46f; radius = 0.50f; }
+			const float wheelOffsets[4][2] = {{-halfTrack, front}, {halfTrack, front}, {-halfTrack, rear}, {halfTrack, rear}};
 			XMFLOAT4 rollRotation;
 			XMStoreFloat4(&rollRotation, XMQuaternionRotationAxis(XMVectorSet(1, 0, 0, 0), visual.wheelRotation));
 			XMFLOAT4 combined;
 			XMStoreFloat4(&combined, XMQuaternionMultiply(XMLoadFloat4(&yawRotation), XMLoadFloat4(&rollRotation)));
 			for (std::size_t i = 0; i < visual.wheels.size(); ++i)
-				positionNode(visual.wheels[i], wheelOffsets[i][0], 0.48f, wheelOffsets[i][1],
-					XMFLOAT3(kTruckScale, kTruckScale, kTruckScale), combined);
+				positionNode(visual.wheels[i], wheelOffsets[i][0], radius, wheelOffsets[i][1],
+					XMFLOAT3(modelScale, modelScale, modelScale), combined);
 		}
 	}
 

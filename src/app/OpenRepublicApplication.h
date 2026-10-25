@@ -59,6 +59,8 @@ namespace openrepublic
 			bool dynamicLod = false, float lodNearDistance = 250.0f, float lodFarDistance = 700.0f);
 		void SetSyntheticRegionFixture();
 		void SetEconomyCheckpoint(openrepublic::economy::RestoredCheckpoint checkpoint, bool freshWorld = false);
+		void SetAmbientTraffic(bool enabled) noexcept { nativeEconomyScene.SetAmbientTraffic(enabled); }
+		void SetDarkSceneLighting(bool dark) noexcept { nativeEconomyScene.SetDarkLighting(dark); }
 		void SetNativeTerrainEnabled(bool enabled);
 		void SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees);
 		void SetScenePipeName(std::wstring name);
