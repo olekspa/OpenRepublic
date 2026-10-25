@@ -56,6 +56,7 @@ struct RegionImportReport {
     std::size_t skippedOutOfBounds{};
     double originX{};
     double originZ{};
+    double cellSizeMeters = 4.0;
     std::uint32_t gridWidth{};
     std::uint32_t gridDepth{};
     std::vector<std::string> notes;

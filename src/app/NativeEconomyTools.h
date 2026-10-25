@@ -37,7 +37,7 @@ namespace openrepublic::preview
 		};
 
 		void Create(wi::gui::GUI& gui, const economy::Catalog& catalog, Callbacks callbacks,
-			bool nativeConstruction = true);
+			bool nativeConstruction = true, bool dispatchControls = true);
 
 		/** Positions the construction and haul rows below the caller's top row.
 		 *  Returns the y-coordinate available for the next status/control row. */
@@ -54,7 +54,8 @@ namespace openrepublic::preview
 		void RefreshOrders(const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog);
 		/** Refreshes native road choices, preserving selection by exact road ID. */
 		void RefreshRoads(const economy::WorldSnapshot& snapshot);
-		void RefreshDispatchChoices(const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog);
+		void RefreshDispatchChoices(const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog,
+			const std::vector<economy::BuildingId>* allowedBuildings = nullptr);
 		void SetAutoRun(bool enabled);
 		void SetCoalDemoControls(bool enabled);
 
@@ -112,5 +113,6 @@ namespace openrepublic::preview
 		bool haveRoadRefresh_ = false;
 		bool hasLayout_ = false;
 		bool nativeConstruction_ = true;
+		bool dispatchControls_ = true;
 	};
 }

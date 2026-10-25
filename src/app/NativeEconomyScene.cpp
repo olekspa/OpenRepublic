@@ -850,7 +850,102 @@ namespace openrepublic::preview
 		return true;
 	}
 
-	void NativeEconomyScene::UpdateVehicleMotion(wi::scene::Scene& scene, double alpha)
+	bool NativeEconomyScene::SyncVehiclesOnly(wi::scene::Scene& scene,
+		const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog,
+		const runtime::NativeEconomyTransform& transform, std::string& error)
+	{
+		error.clear();
+		if (!std::isfinite(transform.centerCellX) || !std::isfinite(transform.centerCellZ))
+		{
+			error = "imported region vehicle transform is not finite";
+			return false;
+		}
+		std::unordered_set<economy::VehicleId> seen;
+		seen.reserve(snapshot.vehicles.size());
+		for (const auto& vehicle : snapshot.vehicles)
+		{
+			if (vehicle.id == 0 || !seen.insert(vehicle.id).second || catalog.VehicleType(vehicle.type) == nullptr)
+			{
+				error = "imported region snapshot has an invalid or duplicate vehicle";
+				return false;
+			}
+		}
+		if (!snapshot.vehicles.empty() && truckMesh_ == wi::ecs::INVALID_ENTITY)
+		{
+			truckMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic region truck mesh",
+				openrepublic::procgeo::MakeCargoTruckBody(5), 0.5f, 0.1f);
+			wheelMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic region truck wheel mesh",
+				openrepublic::procgeo::MakeVehicleWheel(), 0.82f, 0.0f);
+			cargoMesh_ = CreateProceduralMeshEntity(scene, "OpenRepublic region truck cargo mesh",
+				openrepublic::procgeo::MakeCoalHeap(), 0.09f, 0.0f);
+			if (truckMesh_ == wi::ecs::INVALID_ENTITY || wheelMesh_ == wi::ecs::INVALID_ENTITY ||
+				cargoMesh_ == wi::ecs::INVALID_ENTITY)
+			{
+				if (truckMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(truckMesh_);
+				if (wheelMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(wheelMesh_);
+				if (cargoMesh_ != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(cargoMesh_);
+				truckMesh_ = wheelMesh_ = cargoMesh_ = wi::ecs::INVALID_ENTITY;
+				error = "Wicked Engine could not create imported region vehicle meshes";
+				return false;
+			}
+		}
+		for (const auto& vehicle : snapshot.vehicles)
+		{
+			VehicleVisual visual{};
+			const auto old = vehicles_.find(vehicle.id);
+			if (old != vehicles_.end()) visual = old->second;
+			else
+			{
+				visual.body = CreateVehicleNode(scene, truckMesh_, "OpenRepublic region truck " + std::to_string(vehicle.id));
+				visual.load = CreateVehicleNode(scene, cargoMesh_, "OpenRepublic region truck cargo " + std::to_string(vehicle.id));
+				visual.labelMesh = CreateProceduralMeshEntity(scene, "OpenRepublic region truck ID mesh",
+					openrepublic::procgeo::MakeVehicleIdLabel(vehicle.id), 1.0f, 0.0f);
+				visual.label = CreateVehicleNode(scene, visual.labelMesh,
+					"OpenRepublic region truck ID " + std::to_string(vehicle.id));
+				for (wi::ecs::Entity& wheel : visual.wheels)
+					wheel = CreateVehicleNode(scene, wheelMesh_, "OpenRepublic region truck wheel " + std::to_string(vehicle.id));
+				if (visual.body == wi::ecs::INVALID_ENTITY || visual.load == wi::ecs::INVALID_ENTITY ||
+					visual.labelMesh == wi::ecs::INVALID_ENTITY || visual.label == wi::ecs::INVALID_ENTITY ||
+					std::any_of(visual.wheels.begin(), visual.wheels.end(),
+						[](wi::ecs::Entity entity) { return entity == wi::ecs::INVALID_ENTITY; }))
+				{
+					for (wi::ecs::Entity entity : { visual.body, visual.load, visual.label, visual.labelMesh })
+						if (entity != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(entity);
+					for (wi::ecs::Entity entity : visual.wheels)
+						if (entity != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(entity);
+					error = "Wicked Engine could not create imported region vehicle nodes";
+					return false;
+				}
+			}
+			visual.wheelRotationBase = visual.wheelRotation;
+			visual.previous = visual.hasPrevious ? visual.current : vehicle.cell;
+			visual.current = vehicle.cell;
+			visual.hasPrevious = true;
+			visual.loaded = vehicle.cargo > 0;
+			visual.idle = vehicle.ownerDepot != 0 ? vehicle.order == 0 :
+				(vehicle.state == economy::HaulState::Idle || vehicle.state == economy::HaulState::Waiting ||
+				 vehicle.state == economy::HaulState::NoRoute);
+			vehicles_[vehicle.id] = visual;
+		}
+		for (auto it = vehicles_.begin(); it != vehicles_.end();)
+		{
+			if (seen.find(it->first) == seen.end())
+			{
+				const VehicleVisual& visual = it->second;
+				scene.Entity_Remove(visual.body); scene.Entity_Remove(visual.load);
+				scene.Entity_Remove(visual.label); scene.Entity_Remove(visual.labelMesh);
+				for (wi::ecs::Entity wheel : visual.wheels) scene.Entity_Remove(wheel);
+				it = vehicles_.erase(it);
+			}
+			else ++it;
+		}
+		transform_ = transform;
+		error.clear();
+		return true;
+	}
+
+	void NativeEconomyScene::UpdateVehicleMotion(wi::scene::Scene& scene, double alpha,
+		const std::function<double(double, double)>& groundHeight)
 	{
 		if (!transform_) return;
 		for (auto& entry : vehicles_)
@@ -862,7 +957,9 @@ namespace openrepublic::preview
 			visual.wheelRotation = visual.wheelRotationBase + static_cast<float>(motion.wheelRotationRadians);
 			XMFLOAT4 yawRotation;
 			XMStoreFloat4(&yawRotation, XMQuaternionRotationAxis(XMVectorSet(0, 1, 0, 0), visual.yaw));
-				const float groundY = static_cast<float>(GroundHeight(motion.position.x, motion.position.z)) + kRoadSurfaceY;
+				const double sampledHeight = groundHeight ? groundHeight(motion.position.x, motion.position.z) :
+					GroundHeight(motion.position.x, motion.position.z);
+				const float groundY = static_cast<float>(std::isfinite(sampledHeight) ? sampledHeight : 0.0) + kRoadSurfaceY;
 				const auto positionNode = [&](wi::ecs::Entity entity, float localX, float localY, float localZ,
 				const XMFLOAT3& scale, const XMFLOAT4& rotation)
 			{
