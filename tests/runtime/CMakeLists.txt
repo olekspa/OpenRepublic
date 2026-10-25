@@ -66,3 +66,11 @@ add_executable(OpenRepublicNativeEconomyHudTests native_economy_hud_tests.cpp)
 target_link_libraries(OpenRepublicNativeEconomyHudTests PRIVATE OpenRepublicRuntime)
 target_compile_features(OpenRepublicNativeEconomyHudTests PRIVATE cxx_std_17)
 add_test(NAME RuntimeNativeEconomyHud COMMAND OpenRepublicNativeEconomyHudTests)
+
+add_executable(OpenRepublicPlayOptionsTests play_options_tests.cpp)
+
+target_link_libraries(OpenRepublicPlayOptionsTests PRIVATE OpenRepublicRuntime)
+
+target_compile_features(OpenRepublicPlayOptionsTests PRIVATE cxx_std_17)
+
+add_test(NAME RuntimePlayOptions COMMAND OpenRepublicPlayOptionsTests)
