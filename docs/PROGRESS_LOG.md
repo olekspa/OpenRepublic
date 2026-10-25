@@ -581,3 +581,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-25 06:10** Merged PLAY-TRANSIT after the repair (assigned workforce in the host summary): synthetic buses/routes/commute rules; commuter_town runs through the real host, ScenarioScore test passes, 0 compile errors, CTest 96/96.
 
 - **2026-10-25 06:13 EDT** PLAY-OBJECTIVES merged updated `main` (`aa366d5`, transit and ambient traffic included). Resolved `main.cpp` to retain `--native-objectives` JSON loading and `--ambient-traffic`; `OpenRepublicRuntime` includes save slots, objectives, and ambient traffic. Headless Release, client target, and default Release builds completed with 0 compile errors. CTest passed 96/96 headless and 97/97 client. App not launched; WRSR parity remains UNKNOWN.
+
+- **2026-10-25 06:15** Merged PLAY-OBJECTIVES (--native-objectives checklist with coal demo, construction sites and growth town sets, evaluator in src/runtime). Worker resolved the conflicts itself; merged main: 0 compile errors, CTest 97/97; not GUI-checked (screen capture from computer use is stale).
