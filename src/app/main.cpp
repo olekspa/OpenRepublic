@@ -42,6 +42,22 @@ namespace
 {
 	openrepublic::OpenRepublicApplication application;
 
+	// Run in the CRT's XI initializer range, before C++ global constructors.
+	// Wicked Engine performs cwd-relative startup work before wWinMain is called.
+	int SetStartupWorkingDirectory()
+	{
+		std::array<wchar_t, 32768> executablePath{};
+		const DWORD length = GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size()));
+		if (length == 0 || static_cast<std::size_t>(length) >= executablePath.size()) return 1;
+		const auto directory = openrepublic::runtime::ResolveEngineWorkingDirectory(
+			std::filesystem::path(executablePath.data(), executablePath.data() + length));
+		return !directory.empty() && SetCurrentDirectoryW(directory.c_str()) ? 0 : 1;
+	}
+
+	using StartupInitializer = int (__cdecl*)();
+	#pragma section(".CRT$XIAA", long, read)
+	__declspec(allocate(".CRT$XIAA")) StartupInitializer setStartupWorkingDirectory = &SetStartupWorkingDirectory;
+
 	bool IsStandaloneEconomyIncompatibleOption(std::wstring_view argument)
 	{
 		static constexpr std::wstring_view incompatible[] = {
@@ -207,20 +223,6 @@ namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 {
-	std::array<wchar_t, 32768> executablePath{};
-	const DWORD executableLength = GetModuleFileNameW(nullptr, executablePath.data(),
-		static_cast<DWORD>(executablePath.size()));
-	if (executableLength > 0 && static_cast<std::size_t>(executableLength) < executablePath.size())
-	{
-		const auto workingDirectory = openrepublic::runtime::ResolveEngineWorkingDirectory(
-			std::filesystem::path(executablePath.data(), executablePath.data() + executableLength));
-		if (!workingDirectory.empty() && !SetCurrentDirectoryW(workingDirectory.c_str()))
-		{
-			std::fprintf(stderr, "OpenRepublic could not set its working directory (Windows error %lu).\n",
-				static_cast<unsigned long>(GetLastError()));
-			return 2;
-		}
-	}
 	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
 	int argumentCount = 0;
