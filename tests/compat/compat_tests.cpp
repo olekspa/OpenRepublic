@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -59,6 +62,40 @@ const economy::InventorySnapshot *FindInventory(const economy::BuildingSnapshot 
 } // namespace
 
 int main() {
+    // Directory ingestion is exercised only with tiny project-authored text
+    // fixtures; no original-game files are part of the repository or test.
+    {
+        const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+        const auto root = std::filesystem::temp_directory_path() /
+            ("openrepublic_catalog_fixture_" + std::to_string(unique)) / "buildings_types";
+        std::filesystem::create_directories(root);
+        const auto write = [&](const char *name, const char *text) {
+            std::ofstream file(root / name, std::ios::binary);
+            file << text;
+        };
+        write("farm.ini", "$PRODUCTION grain 24\n");
+        write("bakery.ini", "$CONSUMPTION grain 12\n$PRODUCTION bread 6\n");
+        write("decorative.ini", "$NAME 17\n");
+        compat::CatalogImportOptions options;
+        options.buildingWhitelist = {"bakery", "farm"};
+        economy::Catalog fixtureCatalog;
+        compat::ImportReport fixtureReport;
+        std::string fixtureError;
+        const bool imported = compat::ImportCatalogFromContentDirectory(
+            root.parent_path(), options, fixtureCatalog, fixtureReport, fixtureError);
+        Check(imported && fixtureError.empty(), "synthetic definition directory imports");
+        Check(fixtureReport.definitionsSeen == 3 && fixtureReport.buildingsImported == 2 &&
+                  fixtureReport.buildingsSkipped == 1 &&
+                  fixtureReport.skippedBuildings[0].name == "decorative" &&
+                  fixtureReport.skippedBuildings[0].reason.find("allowlist") != std::string::npos,
+              "content import reports non-whitelisted definitions as skipped");
+        const auto *farm = fixtureCatalog.BuildingTypes().empty()
+            ? nullptr : &fixtureCatalog.BuildingTypes().front();
+        Check(farm != nullptr && farm->name == "bakery" && farm->width == 4 && farm->depth == 4,
+              "content import has stable sorted types and configured footprint fallback");
+        std::filesystem::remove_all(root.parent_path());
+    }
+
     std::map<std::string, content::BuildingDefinition> definitions;
     auto farmDefinition = MakeFarm();
     farmDefinition.storage.push_back({"$STORAGE_MISC", "opaque", 50.0, "storage_only", 7});

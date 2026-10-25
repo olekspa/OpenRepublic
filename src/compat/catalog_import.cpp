@@ -247,6 +247,9 @@ bool ImportCatalogFromDefinitions(
     for (const auto &building : definitions) {
         const auto &definition = building.second;
         CollectDirectiveCoverage(definition, next);
+        if (!options.buildingWhitelist.empty() &&
+            !options.buildingWhitelist.count(building.first))
+            continue;
         if (options.constructionCosts) {
             for (const auto &directive : definition.economicRaw) {
                 if (directive.name.rfind("$COST_", 0) != 0)
@@ -304,6 +307,10 @@ bool ImportCatalogFromDefinitions(
     for (const auto &building : definitions) {
         const auto &name = building.first;
         const auto &definition = building.second;
+        if (!options.buildingWhitelist.empty() && !options.buildingWhitelist.count(name)) {
+            AddSkipped(next, name, "building is outside the configured exact-name allowlist");
+            continue;
+        }
         const bool hasEconomics = !definition.production.empty() || !definition.consumption.empty() ||
                                   !definition.consumptionPerSecond.empty();
         if (!ValidName(name)) {

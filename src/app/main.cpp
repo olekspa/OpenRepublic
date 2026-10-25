@@ -6,6 +6,7 @@
 #include "openrepublic/runtime/save_slots.h"
 #include "openrepublic/economy/checkpoint.h"
 #include "openrepublic/compat/storage_profile.h"
+#include "openrepublic/compat/catalog_import.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -46,7 +47,8 @@ namespace
 			L"--showcase-camera", L"--showcase-wind", L"--showcase-grass", L"--scene-pipe-name", L"--showcase-sun", L"--building-type",
 			L"--building-lod", L"--nmf-texture-root", L"--nmf-unlit-preview",
 			L"--nmf-material-unlit-preview", L"--capture-preview", L"--capture-preview-zoom",
-			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform", L"--storage-profile", L"--utility-resource" };
+			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform", L"--storage-profile", L"--utility-resource",
+			L"--native-catalog-from-content" };
 		return std::find(std::begin(incompatible), std::end(incompatible), argument) != std::end(incompatible);
 	}
 
@@ -249,6 +251,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool nativeConstructionSitesArgumentSeen = false;
 	bool nativeCoalDemoArgumentSeen = false;
 	bool nativeTerrainArgumentSeen = false;
+	bool nativeContentCatalogArgumentSeen = false;
+	std::filesystem::path nativeContentCatalogPath;
 	std::string nativeEconomyArgumentError;
 	std::vector<std::wstring> economyCheckpointIncompatibleOptions;
 	std::string economyCheckpointArgumentError;
@@ -304,6 +308,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			}
 			else if (argument == L"--native-terrain") nativeTerrainArgumentSeen = true;
 			else if (argument == L"--native-coal-demo") nativeCoalDemoArgumentSeen = true;
+			else if (argument == L"--native-catalog-from-content")
+			{
+				if (nativeContentCatalogArgumentSeen)
+				{
+					nativeEconomyArgumentError = "--native-catalog-from-content may only be supplied once";
+					if (i + 1 < argumentCount && std::wstring_view(arguments[i + 1]).rfind(L"--", 0) != 0) ++i;
+					continue;
+				}
+				nativeContentCatalogArgumentSeen = true;
+				if (i + 1 >= argumentCount || std::wstring_view(arguments[i + 1]).empty() ||
+					std::wstring_view(arguments[i + 1]).rfind(L"--", 0) == 0)
+				{
+					nativeEconomyArgumentError = "--native-catalog-from-content requires a media_soviet or buildings_types directory";
+					continue;
+				}
+				nativeContentCatalogPath = arguments[++i];
+			}
 			else if (argument == L"--scene-probe" && i + 1 < argumentCount)
 			{
 				sceneProbePath = arguments[++i];
@@ -860,6 +881,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	if (nativeCoalDemoArgumentSeen && !nativeEconomyArgumentSeen)
 		return LogNativeEconomyStartupError("--native-coal-demo requires --native-economy");
+	if (nativeContentCatalogArgumentSeen && !nativeEconomyArgumentSeen)
+		return LogNativeEconomyStartupError("--native-catalog-from-content requires --native-economy");
+	if (nativeContentCatalogArgumentSeen && (nativeCoalDemoArgumentSeen || nativeConstructionSitesArgumentSeen))
+		return LogNativeEconomyStartupError("--native-catalog-from-content cannot be combined with synthetic coal-demo or construction-site catalogs");
 	if (nativeTerrainArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
 		return LogNativeEconomyStartupError("--native-terrain requires --native-economy or --economy-checkpoint");
 	if ((nativeEconomyArgumentSeen || economyCheckpointArgumentSeen) && !economyCheckpointIncompatibleOptions.empty())
@@ -911,10 +936,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	if (nativeEconomyArgumentSeen)
 	{
 		economyCheckpoint = std::make_unique<openrepublic::economy::RestoredCheckpoint>();
-		economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>(
-			nativeCoalDemoArgumentSeen ? openrepublic::economy::MakeSyntheticCoalCatalog() :
-			(nativeConstructionSitesArgumentSeen ? openrepublic::economy::MakeSyntheticConstructionCatalog()
-			                                    : openrepublic::economy::MakeSyntheticCatalog()));
+		if (nativeContentCatalogArgumentSeen)
+		{
+			openrepublic::compat::CatalogImportOptions importOptions;
+			importOptions.buildingWhitelist = {"bakery", "coal_mine", "farm", "heating_plant",
+				"power_plant", "storage"};
+			economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>();
+			openrepublic::compat::ImportReport importReport;
+			std::string importError;
+			if (!openrepublic::compat::ImportCatalogFromContentDirectory(nativeContentCatalogPath,
+				importOptions, *economyCheckpoint->catalog, importReport, importError))
+				return LogNativeEconomyStartupError("content catalog import failed: " + importError);
+			std::fprintf(stderr, "%s", openrepublic::compat::DescribeImport(importReport).c_str());
+			if (importReport.buildingsImported == 0)
+				return LogNativeEconomyStartupError("content catalog had no supported buildings in the curated allowlist");
+		}
+		else
+		{
+			economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>(
+				nativeCoalDemoArgumentSeen ? openrepublic::economy::MakeSyntheticCoalCatalog() :
+				(nativeConstructionSitesArgumentSeen ? openrepublic::economy::MakeSyntheticConstructionCatalog()
+				                                    : openrepublic::economy::MakeSyntheticCatalog()));
+		}
 		economyCheckpoint->world = std::make_unique<openrepublic::economy::World>(
 			*economyCheckpoint->catalog, 64, 64);
 		if (nativeCoalDemoArgumentSeen)
