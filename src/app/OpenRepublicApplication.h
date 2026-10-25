@@ -16,6 +16,7 @@
 #include "openrepublic/runtime/native_economy_clock.h"
 #include "openrepublic/runtime/economy_overview.h"
 #include "openrepublic/runtime/native_coal_demo.h"
+#include "openrepublic/runtime/native_objectives.h"
 #include "openrepublic/runtime/save_slots.h"
 #include "openrepublic/runtime/native_construction.h"
 #include "openrepublic/content/terrain_dds.h"
@@ -62,6 +63,7 @@ namespace openrepublic
 		void SetAmbientTraffic(bool enabled) noexcept { nativeEconomyScene.SetAmbientTraffic(enabled); }
 		void SetDarkSceneLighting(bool dark) noexcept { nativeEconomyScene.SetDarkLighting(dark); }
 		void SetNativeTerrainEnabled(bool enabled);
+		void SetNativeObjectives(openrepublic::runtime::NativeObjectiveSet objectiveSet);
 		void SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees);
 		void SetScenePipeName(std::wstring name);
 		void SetSceneScriptPath(std::filesystem::path path);
@@ -135,6 +137,7 @@ namespace openrepublic
 		void QueueNativeDispatch();
 		void QueueNativeCoalImport();
 		void UpdateNativeCoalAutomation();
+		void RestartNativeObjectives();
 		void QueueNativeUtilityConnection(bool connect);
 		void QueueNativeRoadToggle();
 		void SaveNativeCheckpoint();
@@ -159,6 +162,8 @@ namespace openrepublic
 		bool nativeEconomyFreshWorld = false;
 		bool nativeCoalDemo = false;
 		bool nativeCoalAutoRun = false;
+		std::optional<openrepublic::runtime::NativeObjectiveSet> nativeObjectiveSet;
+		std::string nativeObjectiveBaseline;
 		openrepublic::economy::BuildingId coalDemoBorder{}, coalDemoDepot{}, coalDemoStorage{}, coalDemoPlant{};
 		openrepublic::economy::ResourceId coalDemoResource{};
 		openrepublic::economy::ResourceId coalDemoGrain{};
@@ -175,6 +180,8 @@ namespace openrepublic
 		wi::gui::Button nativeDetailsButton;
 		wi::gui::Button nativeOverviewButton;
 		wi::gui::Button nativeSaveButton;
+		wi::gui::Button nativeObjectiveRestartButton;
+		wi::gui::Label nativeObjectiveLabel;
 		wi::gui::Button nativeQuitButton;
 		wi::gui::Button nativeGameMenuButton;
 		std::array<wi::gui::Button, 3> nativeNewGameButtons;

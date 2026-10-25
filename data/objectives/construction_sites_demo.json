@@ -1,0 +1,8 @@
+{
+  "id": "construction_sites_demo",
+  "title": "Build the town",
+  "objectives": [
+    { "id": "place_sites", "title": "Start two construction sites", "hint": "Place two authored construction sites.", "metric": "construction_sites_count", "target": 2 },
+    { "id": "complete_sites", "title": "Complete two buildings", "hint": "Supply materials and wait for construction work to finish.", "metric": "construction_sites_complete", "target": 2 }
+  ]
+}
