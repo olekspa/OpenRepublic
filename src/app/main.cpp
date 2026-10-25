@@ -5,6 +5,8 @@
 #include "openrepublic/runtime/graphics_settings.h"
 #include "openrepublic/economy/checkpoint.h"
 #include "openrepublic/compat/storage_profile.h"
+#include "openrepublic/runtime/native_objectives.h"
+#include "json.hpp"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -271,6 +273,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool nativeEconomyArgumentSeen = false;
 	bool nativeConstructionSitesArgumentSeen = false;
 	bool nativeCoalDemoArgumentSeen = false;
+	std::wstring nativeObjectivesArgument;
+	std::optional<openrepublic::runtime::NativeObjectiveSet> nativeObjectiveSet;
 	bool nativeTerrainArgumentSeen = false;
 	std::string nativeEconomyArgumentError;
 	std::vector<std::wstring> economyCheckpointIncompatibleOptions;
@@ -327,6 +331,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			}
 			else if (argument == L"--native-terrain") nativeTerrainArgumentSeen = true;
 			else if (argument == L"--native-coal-demo") nativeCoalDemoArgumentSeen = true;
+			else if (argument == L"--native-objectives")
+			{
+				if (!nativeObjectivesArgument.empty() || i + 1 >= argumentCount ||
+					std::wstring_view(arguments[i + 1]).empty() || std::wstring_view(arguments[i + 1]).rfind(L"--", 0) == 0)
+					nativeEconomyArgumentError = "--native-objectives requires one objective JSON path or builtin:coal_demo";
+				else nativeObjectivesArgument = arguments[++i];
+			}
 			else if (argument == L"--scene-probe" && i + 1 < argumentCount)
 			{
 				sceneProbePath = arguments[++i];
@@ -873,6 +884,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		}
 		LocalFree(arguments);
 	}
+	if (!nativeObjectivesArgument.empty()) nativeEconomyArgumentSeen = true;
 	if (!nativeEconomyArgumentError.empty())
 	{
 		return LogNativeEconomyStartupError(nativeEconomyArgumentError);
@@ -883,6 +895,55 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	if (nativeCoalDemoArgumentSeen && !nativeEconomyArgumentSeen)
 		return LogNativeEconomyStartupError("--native-coal-demo requires --native-economy");
+	if (!nativeObjectivesArgument.empty())
+	{
+		std::wstring fileArgument = nativeObjectivesArgument;
+		if (fileArgument.rfind(L"builtin:", 0) == 0)
+			fileArgument = L"data/objectives/" + fileArgument.substr(8) + L".json";
+		const std::filesystem::path objectivePath(fileArgument);
+		std::error_code objectiveFileError;
+		const auto objectiveFileSize = std::filesystem::file_size(objectivePath, objectiveFileError);
+		if (objectiveFileError || objectiveFileSize > 64 * 1024)
+			return LogNativeEconomyStartupError("objective scenario JSON is unavailable or exceeds the 64 KiB limit");
+		std::ifstream objectiveFile(objectivePath, std::ios::binary);
+		if (!objectiveFile) return LogNativeEconomyStartupError("could not open objective scenario JSON");
+		try
+		{
+			const auto json = nlohmann::json::parse(objectiveFile);
+			if (!json.is_object() || !json.contains("objectives") || !json.at("objectives").is_array() ||
+				json.at("objectives").empty() || json.at("objectives").size() > 128)
+				throw std::runtime_error("objectives must be a non-empty array with at most 128 entries");
+			openrepublic::runtime::NativeObjectiveSet set;
+			set.id = json.at("id").get<std::string>();
+			set.title = json.at("title").get<std::string>();
+			for (const auto& item : json.at("objectives"))
+			{
+				openrepublic::runtime::NativeObjective objective;
+				objective.id = item.at("id").get<std::string>();
+				objective.title = item.at("title").get<std::string>();
+				objective.hint = item.at("hint").get<std::string>();
+				const auto metric = item.at("metric").get<std::string>();
+				if (metric == "inventory_at_least") objective.metric = openrepublic::runtime::ObjectiveMetric::InventoryAtLeast;
+				else if (metric == "delivered_at_least") objective.metric = openrepublic::runtime::ObjectiveMetric::DeliveredAtLeast;
+				else if (metric == "construction_sites_complete") objective.metric = openrepublic::runtime::ObjectiveMetric::ConstructionSitesComplete;
+				else if (metric == "construction_sites_count") objective.metric = openrepublic::runtime::ObjectiveMetric::ConstructionSitesCount;
+				else if (metric == "population_at_least") objective.metric = openrepublic::runtime::ObjectiveMetric::PopulationAtLeast;
+				else if (metric == "building_count_at_least") objective.metric = openrepublic::runtime::ObjectiveMetric::BuildingCountAtLeast;
+				else throw std::runtime_error("unknown objective metric");
+				objective.buildingType = item.value("building_type", std::string{});
+				objective.resource = item.value("resource", std::string{});
+				objective.target = item.at("target").get<std::uint64_t>();
+				set.objectives.push_back(std::move(objective));
+			}
+			nativeObjectiveSet = std::move(set);
+		}
+		catch (const std::exception& error)
+		{
+			return LogNativeEconomyStartupError(std::string("invalid objective scenario JSON: ") + error.what());
+		}
+		if (nativeObjectiveSet->id == "coal_demo") nativeCoalDemoArgumentSeen = true;
+		else if (nativeObjectiveSet->id == "construction_sites_demo") nativeConstructionSitesArgumentSeen = true;
+	}
 	if (nativeTerrainArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
 		return LogNativeEconomyStartupError("--native-terrain requires --native-economy or --economy-checkpoint");
 	if ((nativeEconomyArgumentSeen || economyCheckpointArgumentSeen) && !economyCheckpointIncompatibleOptions.empty())
@@ -1327,6 +1388,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	if (economyCheckpoint)
 	{
+		if (nativeObjectiveSet) application.SetNativeObjectives(std::move(*nativeObjectiveSet));
 		application.SetEconomyCheckpoint(std::move(*economyCheckpoint), nativeEconomyArgumentSeen);
 		application.SetNativeTerrainEnabled(nativeTerrainArgumentSeen);
 	}

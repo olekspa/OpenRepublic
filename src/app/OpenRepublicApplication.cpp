@@ -439,6 +439,9 @@ namespace openrepublic
 	{
 		nativeEconomyCheckpoint = std::move(checkpoint);
 		nativeEconomyFreshWorld = freshWorld;
+		nativeObjectiveBaseline.clear();
+		if (nativeObjectiveSet && nativeEconomyCheckpoint.world)
+			nativeObjectiveBaseline = economy::SaveWorld(*nativeEconomyCheckpoint.world);
 		nativeEconomyCheckpointMode = nativeEconomyCheckpoint.catalog && nativeEconomyCheckpoint.world;
 		nativeCoalDemo = false; nativeCoalAutoRun = false;
 		coalDemoBorder = coalDemoDepot = coalDemoStorage = coalDemoPlant = 0; coalDemoResource = coalDemoGrain = economy::InvalidResourceId;
@@ -460,6 +463,11 @@ namespace openrepublic
 			}
 		}
 		mapRegionPreview = nativeEconomyCheckpointMode;
+	}
+
+	void OpenRepublicApplication::SetNativeObjectives(runtime::NativeObjectiveSet objectiveSet)
+	{
+		nativeObjectiveSet = std::move(objectiveSet);
 	}
 
 	void OpenRepublicApplication::SetNativeTerrainEnabled(bool enabled)
@@ -1760,6 +1768,20 @@ namespace openrepublic
 					nativeSaveButton.SetTooltip("Pause and save a native checkpoint to a new file. Existing files are never overwritten.");
 					nativeSaveButton.OnClick([this](const wi::gui::EventArgs&) { SaveNativeCheckpoint(); });
 					gui.AddWidget(&nativeSaveButton);
+					if (nativeObjectiveSet)
+					{
+						nativeObjectiveRestartButton.Create("NativeObjectivesRestartButton");
+						nativeObjectiveRestartButton.SetText("Restart objectives");
+						StyleButton(nativeObjectiveRestartButton);
+						nativeObjectiveRestartButton.SetSize(XMFLOAT2(132, 28));
+						nativeObjectiveRestartButton.SetTooltip("Restore the authored starting world and restart this objective set.");
+						nativeObjectiveRestartButton.OnClick([this](const wi::gui::EventArgs&) { RestartNativeObjectives(); });
+						gui.AddWidget(&nativeObjectiveRestartButton);
+						nativeObjectiveLabel.Create("NativeObjectivesChecklist");
+						nativeObjectiveLabel.SetSize(XMFLOAT2(540, 142));
+						nativeObjectiveLabel.SetText(nativeObjectiveSet->title);
+						gui.AddWidget(&nativeObjectiveLabel);
+					}
 				}
 				if (nativeEconomyCheckpointMode)
 				{
@@ -2685,6 +2707,22 @@ namespace openrepublic
 		if (!nativeEconomyCheckpointMode)
 			status << ", " << regionEconomyImport.placedSourceBuildings.size() << " exact placement bindings";
 		regionWorldStatus = status.str();
+		if (nativeObjectiveSet && nativeEconomyCheckpoint.world && nativeEconomyCheckpoint.catalog)
+		{
+			const auto progress = runtime::EvaluateNativeObjectives(*nativeObjectiveSet,
+				nativeEconomyCheckpoint.world->Snapshot(), *nativeEconomyCheckpoint.catalog);
+			std::ostringstream checklist;
+			checklist << nativeObjectiveSet->title << "  " << progress.completedCount << "/"
+				<< nativeObjectiveSet->objectives.size() << " complete\n[";
+			constexpr int barWidth = 20;
+			const int filled = static_cast<int>(progress.fraction * barWidth + 0.5);
+			for (int i = 0; i < barWidth; ++i) checklist << (i < filled ? '#' : '-');
+			checklist << "] " << static_cast<int>(progress.fraction * 100.0 + 0.5) << "%\n";
+			for (std::size_t i = 0; i < nativeObjectiveSet->objectives.size(); ++i)
+				checklist << (progress.complete[i] ? "[x] " : "[ ] ") << nativeObjectiveSet->objectives[i].title << '\n';
+			checklist << (progress.finished ? "Scenario complete!" : "Hint: " + progress.currentHint);
+			nativeObjectiveLabel.SetText(checklist.str());
+		}
 	}
 
 	void OpenRepublicApplication::UpdateRegionEconomyPresentation()
@@ -2872,8 +2910,9 @@ namespace openrepublic
 		float x = 18.0f, y = 18.0f;
 		for (auto* button : { &regionStepOneButton, &regionStepButton, &regionToggleButton,
 			&regionHaulSourceButton, &regionHaulButton, &nativeFrameButton, &nativeCameraFollowButton, &nativeStepManyButton, &nativeRunPauseButton,
-			&nativeDetailsButton, &nativeOverviewButton, &nativeSaveButton })
+			&nativeDetailsButton, &nativeOverviewButton, &nativeSaveButton, &nativeObjectiveRestartButton })
 		{
+			if (!nativeObjectiveSet && button == &nativeObjectiveRestartButton) continue;
 			if (!nativeEconomyCheckpointMode && (button == &nativeFrameButton || button == &nativeCameraFollowButton || button == &nativeStepManyButton ||
 				button == &nativeRunPauseButton || button == &nativeSaveButton)) continue;
 			if (x > 18.0f && x + 132.0f > width - 18.0f) { x = 18.0f; y += 34.0f; }
@@ -2881,6 +2920,35 @@ namespace openrepublic
 			x += 138.0f;
 		}
 		nativeStatusTop = nativeEconomyTools.Layout(width, y + 36.0f);
+		if (nativeObjectiveSet)
+			nativeObjectiveLabel.SetPos(XMFLOAT2(18.0f, nativeStatusTop + 6.0f));
+	}
+
+	void OpenRepublicApplication::RestartNativeObjectives()
+	{
+		if (nativeObjectiveBaseline.empty() || !nativeEconomyCheckpoint.world || !nativeEconomyCheckpoint.catalog)
+		{
+			uiNotice = "Objective restart is unavailable for this world.";
+			UpdateRegionStatus();
+			return;
+		}
+		nativeEconomyRunning = false;
+		nativeEconomyRunClock.Reset();
+		nativeRunPauseButton.SetText("Run");
+		openrepublic::economy::ParseError error;
+		if (!openrepublic::economy::LoadWorld(nativeObjectiveBaseline, *nativeEconomyCheckpoint.catalog,
+			*nativeEconomyCheckpoint.world, error))
+		{
+			uiNotice = "Could not restart objectives: " + error.message;
+			UpdateRegionStatus();
+			return;
+		}
+		regionPendingCommandHandles.clear();
+		nativeOverviewHistory.clear();
+		uiNotice = "Objective scenario restarted from its authored starting world.";
+		RefreshRegionEconomy();
+		UpdateRegionEconomyPresentation();
+		UpdateRegionStatus();
 	}
 
 	openrepublic::economy::World* OpenRepublicApplication::ActiveOwnedEconomyWorld() noexcept

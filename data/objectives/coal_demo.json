@@ -1,0 +1,10 @@
+{
+  "id": "coal_demo",
+  "title": "Coal to heat",
+  "objectives": [
+    { "id": "buy_coal", "title": "Buy coal at the border", "hint": "Use Buy coal to import coal at the border post.", "metric": "inventory_at_least", "building_type": "border_post", "resource": "coal", "target": 1 },
+    { "id": "dispatch_storage", "title": "Dispatch coal to storage", "hint": "Dispatch a depot truck from the border post to storage.", "metric": "delivered_at_least", "building_type": "storage", "resource": "coal", "target": 1 },
+    { "id": "deliver_plant", "title": "Deliver coal to the heating plant", "hint": "Dispatch a second truck from storage to the heating plant.", "metric": "delivered_at_least", "building_type": "heating_plant", "resource": "coal", "target": 1 },
+    { "id": "produce_heat", "title": "Reach 100 heat units", "hint": "Keep the heating plant supplied until it stores 100 heat units.", "metric": "inventory_at_least", "building_type": "heating_plant", "resource": "heat", "target": 100 }
+  ]
+}
