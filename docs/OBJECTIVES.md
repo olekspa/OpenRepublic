@@ -18,6 +18,8 @@ Without another world option, the objective option initializes native economy mo
 
 `delivered_at_least` is currently measured from inventory held at matching destination buildings. The snapshot does not expose durable delivery history, so this is an observable stock proxy and can decrease if production consumes the delivered resource. Goals that need historical delivery credit remain a known limitation.
 
+`construction_sites_complete` counts matching buildings whose authored construction state is done. Completed sites are promoted to ordinary buildings and clear the active-site flag, so the metric uses the retained completed state rather than requiring the building to remain an active site.
+
 The growth town set requires a checkpoint whose catalog declares population and housing mechanics; the default economy catalog has no population simulation. This set evaluates those authored snapshot fields when present and does not add population rules.
 
 ## Evidence boundary

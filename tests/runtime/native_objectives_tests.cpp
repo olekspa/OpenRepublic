@@ -47,6 +47,11 @@ int main()
 	progress = runtime::EvaluateNativeObjectives(heatGoal, completedSnapshot, catalog);
 	Check(progress.finished && progress.completedCount == 4 && progress.fraction == 1.0,
 		"inventory, population, and construction targets must evaluate from snapshot data");
+	completedSnapshot.buildings.back().constructionSite = false;
+	const runtime::NativeObjectiveSet completedSiteGoal{ "completed_site", "Completed site", { heatGoal.objectives.back() } };
+	progress = runtime::EvaluateNativeObjectives(completedSiteGoal, completedSnapshot, catalog);
+	Check(progress.finished && progress.values.front() == 1,
+		"a completed construction remains complete after its active-site flag clears");
 	Check(progress.currentHint.empty(), "completed sets have no outstanding hint");
 
 	const auto beforeHash = completedSnapshot.stateHash;

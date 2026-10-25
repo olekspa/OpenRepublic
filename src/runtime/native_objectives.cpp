@@ -35,7 +35,7 @@ namespace openrepublic::runtime
 			if (objective.metric == ObjectiveMetric::ConstructionSitesComplete)
 				return static_cast<std::uint64_t>(std::count_if(snapshot.buildings.begin(), snapshot.buildings.end(),
 					[&](const auto& building) { return TypeMatches(building, catalog, objective.buildingType) &&
-						building.constructionSite && building.constructionState == 2; }));
+						building.constructionState == 2; }));
 			if (objective.metric == ObjectiveMetric::BuildingCountAtLeast)
 				return static_cast<std::uint64_t>(std::count_if(snapshot.buildings.begin(), snapshot.buildings.end(),
 					[&](const auto& building) { return TypeMatches(building, catalog, objective.buildingType); }));

@@ -487,6 +487,18 @@ namespace openrepublic
 		nativeObjectiveSet = std::move(objectiveSet);
 	}
 
+	void OpenRepublicApplication::SetCampaignProgress(runtime::CampaignDefinition campaign,
+		runtime::CampaignProgress progress, std::string missionId,
+		std::filesystem::path progressPath, std::uint64_t score)
+	{
+		nativeCampaign = std::move(campaign);
+		nativeCampaignProgress = std::move(progress);
+		nativeCampaignMissionId = std::move(missionId);
+		nativeCampaignProgressPath = std::move(progressPath);
+		nativeCampaignParScore = score;
+		nativeCampaignCompletionHandled = false;
+	}
+
 	void OpenRepublicApplication::SetNativeTerrainEnabled(bool enabled)
 	{
 		nativeTerrainEnabled = enabled;
@@ -2851,6 +2863,20 @@ namespace openrepublic
 		{
 			const auto progress = runtime::EvaluateNativeObjectives(*nativeObjectiveSet,
 				nativeEconomyCheckpoint.world->Snapshot(), *nativeEconomyCheckpoint.catalog);
+			if (progress.finished && nativeCampaign && nativeCampaignProgress && !nativeCampaignCompletionHandled)
+			{
+				nativeCampaignCompletionHandled = true;
+				std::string progressError;
+				if (runtime::RecordCampaignCompletion(*nativeCampaign, *nativeCampaignProgress,
+					nativeCampaignMissionId, nativeCampaignParScore) &&
+					runtime::SaveCampaignProgressAtomic(nativeCampaignProgressPath, *nativeCampaign,
+						*nativeCampaignProgress, progressError))
+					uiNotice = "Campaign mission completed. Progress saved.";
+				else
+					uiNotice = progressError.empty()
+						? "Campaign mission completed, but progress could not be recorded."
+						: "Campaign mission completed, but progress could not be saved: " + progressError;
+			}
 			std::ostringstream checklist;
 			checklist << nativeObjectiveSet->title << "  " << progress.completedCount << "/"
 				<< nativeObjectiveSet->objectives.size() << " complete\n[";

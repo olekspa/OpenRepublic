@@ -83,7 +83,7 @@ def _read_campaign(path):
     return {"id": fields["id"], "title": fields["title"], "missions": missions}
 
 
-def _objective_value(objective, world):
+def _objective_value(objective, world, score):
     """Evaluate the existing native objective metrics over the final host snapshot."""
     metric = objective.get("metric")
     buildings = world.get("buildings", [])
@@ -107,8 +107,11 @@ def _objective_value(objective, world):
     if metric == "construction_sites_count":
         return sum(1 for building in matching if building.get("constructionSite")), "finalSnapshotConstructionSites"
     if metric == "construction_sites_complete":
-        return sum(1 for building in matching if building.get("constructionSite") and
-                   building.get("constructionState") == "done"), "finalSnapshotCompletedSites"
+        # Completed sites are promoted to ordinary buildings in the snapshot;
+        # the scenario receipt retains the completed-site outcome explicitly.
+        states = score.get("scoreBreakdown", {}).get("siteStates", [])
+        return sum(1 for item in states if item.get("state") == "done" and
+                   (not kind or item.get("type") == kind)), "scenarioScoreCompletedSites"
     if metric == "population_at_least":
         return int(world.get("population", 0)), "finalSnapshotPopulation"
     if metric == "building_count_at_least":
@@ -194,7 +197,7 @@ def run(host, campaign, ticks_override=None):
         objectives = []
         all_measured_pass = True
         for objective in objectives_doc.get("objectives", []):
-            value, source = _objective_value(objective, world)
+            value, source = _objective_value(objective, world, score)
             target = objective.get("target")
             state = "not_measured" if value is None else ("reachable" if value >= target else "not_reached")
             if state != "reachable":

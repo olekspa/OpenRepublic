@@ -4,10 +4,10 @@
   "objectives": [
     {
       "id": "delivery",
-      "title": "Deliver coal to the heating plant",
-      "hint": "Earn treasury by exporting grain, import coal, then dispatch a depot truck to the plant.",
-      "metric": "delivered_at_least",
-      "building_type": "heating_plant",
+      "title": "Import a coal reserve",
+      "hint": "Earn treasury by exporting grain, then import coal through the border post.",
+      "metric": "inventory_at_least",
+      "building_type": "border_post",
       "resource": "coal",
       "target": 1
     },
