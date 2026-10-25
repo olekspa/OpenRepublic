@@ -1,4 +1,4 @@
-﻿# OpenRepublic progress log (chronological, timestamped)
+# OpenRepublic progress log (chronological, timestamped)
 
 Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/New_York (EDT) with UTC in brackets. `docs/DEVELOPMENT_CHECKPOINT.md` remains the detailed handoff; this file is the short, ordered record. Append new entries at the bottom. Evidence statuses follow `AGENTS.md` (VERIFIED / OBSERVED / INFERRED / UNKNOWN).
 
@@ -613,3 +613,6 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 - **2026-10-25 06:51 EDT [10:51 UTC]** PLAY-RAILUI implementation: added opt-in `--native-rail` synthetic station/train catalog, station placement and straight rail construction between selected stations through `BuildRail`, rail haul dispatch through the typed `CreateHaulOrder` API, procedural sleeper/rail geometry, locomotive plus two wagon rendering, and tested pure rail geometry/motion mapping. Headless Release build completed; focused rail geometry test passes. Full CTest and required client target/default build are still pending. No desktop app or WRSR runtime launched; all rail mechanics/presentation are OpenRepublic synthetic and WRSR parity remains UNKNOWN.
 
 - **2026-10-25 06:58 EDT [10:58 UTC]** PLAY-RAILUI verification: headless Release build and CTest 76/76 pass; required OpenRepublic client target and default full Release build complete with 0 compile errors; client CTest 102/102 pass. git diff --check passes. Source/build evidence only; no desktop app or original WRSR run, and WRSR rail parity remains UNKNOWN.
+- **2026-10-25** PLAY-UTILUI: native utility connect/disconnect controls, colored links, and selected-building utility diagnostics were already present through the typed API; documented their behavior and synthetic limits. Added a tested pure executable-ancestor resolver and set the process working directory before engine initialization to locate shader resources. Headless Release build had 0 compile errors and CTest passed 75/75. Client configuration is blocked because this worktree's Wicked Engine submodule is absent; the allowed temporary junction attempt was rejected by command policy. No GUI launch or WRSR comparison.
+
+- **2026-10-25 06:51** Merged PLAY-UTILUI (resolver + SetCurrentDirectoryW at startup, utility docs). 0 compile errors, CTest 101/101, BUT launching from other working directories (Documents, Temp, C:\) still crashes with 0xC0000005 (fault offset 0x37120b): the fix is incomplete. Sent back for real root-cause diagnosis.

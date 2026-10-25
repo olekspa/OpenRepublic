@@ -87,4 +87,27 @@ namespace openrepublic::runtime
 		}
 		return workingCandidate;
 	}
+
+	std::filesystem::path ResolveEngineWorkingDirectory(const std::filesystem::path& executablePath)
+	{
+		auto directory = executablePath.parent_path();
+		if (directory.empty()) return {};
+		const auto executableDirectory = directory;
+		while (!directory.empty())
+		{
+			std::error_code error;
+			const auto hasShaderDirectory = [&](const std::filesystem::path& relative)
+			{
+				error.clear();
+				return std::filesystem::is_directory(directory / relative, error) && !error;
+			};
+			if (hasShaderDirectory("WickedEngine/shaders") ||
+				hasShaderDirectory("third_party/WickedEngine/WickedEngine/shaders") ||
+				hasShaderDirectory("shaders")) return directory;
+			const auto parent = directory.parent_path();
+			if (parent == directory) break;
+			directory = parent;
+		}
+		return executableDirectory;
+	}
 }
