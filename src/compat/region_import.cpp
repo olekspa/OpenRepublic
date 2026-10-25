@@ -170,6 +170,7 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
 
     next.originX = minX - kMarginCells * options.cellSizeMeters;
     next.originZ = minZ - kMarginCells * options.cellSizeMeters;
+    next.cellSizeMeters = options.cellSizeMeters;
     next.gridWidth = gridWidth;
     next.gridDepth = gridDepth;
     next.considered = placements.size();

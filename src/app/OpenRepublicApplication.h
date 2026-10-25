@@ -198,6 +198,7 @@ namespace openrepublic
 		std::unique_ptr<openrepublic::economy_host::LocalEconomyPipeEndpoint> localEconomyPipeEndpoint;
 		std::wstring localEconomyPipeName;
 		openrepublic::compat::RegionImportReport regionEconomyImport;
+		std::optional<openrepublic::runtime::NativeEconomyTransform> regionVehicleTransform;
 		std::optional<openrepublic::economy_api::WorldView> regionEconomySnapshot;
 		std::deque<openrepublic::economy::WorldSnapshot> nativeOverviewHistory;
 		std::vector<std::uint64_t> regionPendingCommandHandles;
