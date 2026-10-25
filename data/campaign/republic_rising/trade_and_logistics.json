@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "id": "trade_and_logistics",
+  "name": "Trade and depot logistics",
+  "description": "Build grain-export funds, buy coal, dispatch a depot truck to the heating plant, and grow stored heat.",
+  "catalog": "openrepublic-economy 1\nutility power\nresource grain\nresource coal\nresource heat\ntrade grain buy 1 sell 1\ntrade coal buy 1 sell 1\nbuilding border_post 1 1\n  store grain 80\n  store coal 80\n  recipe produce_export_goods every 1 out grain:4\n  tradepost\nend\nbuilding road_depot 1 1\n  depot\n  fleet truck 2\n  handling 2 1\nend\nbuilding storage 1 1\n  store coal 80\n  store heat 20\nend\nbuilding heating_plant 1 1\n  store coal 80\n  store heat 2000\n  recipe generate_heat every 1 in coal:1 out heat:1\nend\nvehicle truck capacity 8 speed 1\n",
+  "roads": [
+    {
+      "a": {
+        "x": 1,
+        "z": 2
+      },
+      "b": {
+        "x": 2,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 2,
+        "z": 2
+      },
+      "b": {
+        "x": 3,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 3,
+        "z": 2
+      },
+      "b": {
+        "x": 4,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 4,
+        "z": 2
+      },
+      "b": {
+        "x": 5,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 5,
+        "z": 2
+      },
+      "b": {
+        "x": 6,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 6,
+        "z": 2
+      },
+      "b": {
+        "x": 7,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 7,
+        "z": 2
+      },
+      "b": {
+        "x": 8,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 8,
+        "z": 2
+      },
+      "b": {
+        "x": 9,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 9,
+        "z": 2
+      },
+      "b": {
+        "x": 10,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 10,
+        "z": 2
+      },
+      "b": {
+        "x": 11,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 11,
+        "z": 2
+      },
+      "b": {
+        "x": 12,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 12,
+        "z": 2
+      },
+      "b": {
+        "x": 13,
+        "z": 2
+      }
+    },
+    {
+      "a": {
+        "x": 13,
+        "z": 2
+      },
+      "b": {
+        "x": 14,
+        "z": 2
+      }
+    }
+  ],
+  "buildings": [
+    {
+      "type": "border_post",
+      "x": 5,
+      "z": 3
+    },
+    {
+      "type": "road_depot",
+      "x": 1,
+      "z": 3
+    },
+    {
+      "type": "storage",
+      "x": 9,
+      "z": 3
+    },
+    {
+      "type": "heating_plant",
+      "x": 13,
+      "z": 3
+    }
+  ],
+  "score": {
+    "metric": "heat_units"
+  }
+}

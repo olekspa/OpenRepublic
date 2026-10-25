@@ -1,0 +1,13 @@
+{
+  "id": "growing_town",
+  "title": "Grow a fed town",
+  "objectives": [
+    {
+      "id": "residents",
+      "title": "Feed four residents",
+      "hint": "Keep the farm-to-bakery chain supplied and serve food at the market.",
+      "metric": "population_at_least",
+      "target": 4
+    }
+  ]
+}

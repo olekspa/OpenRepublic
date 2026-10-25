@@ -1,0 +1,24 @@
+{
+  "id": "trade_and_logistics",
+  "title": "Trade and depot logistics",
+  "objectives": [
+    {
+      "id": "delivery",
+      "title": "Deliver coal to the heating plant",
+      "hint": "Earn treasury by exporting grain, import coal, then dispatch a depot truck to the plant.",
+      "metric": "delivered_at_least",
+      "building_type": "heating_plant",
+      "resource": "coal",
+      "target": 1
+    },
+    {
+      "id": "reserve",
+      "title": "Build a 100-unit heat reserve",
+      "hint": "Keep the depot loop moving until the plant stores 100 heat units.",
+      "metric": "inventory_at_least",
+      "building_type": "heating_plant",
+      "resource": "heat",
+      "target": 100
+    }
+  ]
+}

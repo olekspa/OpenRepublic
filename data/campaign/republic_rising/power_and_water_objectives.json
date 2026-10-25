@@ -1,0 +1,24 @@
+{
+  "id": "power_and_water",
+  "title": "Power and water utilities",
+  "objectives": [
+    {
+      "id": "water_output",
+      "title": "Produce treated water",
+      "hint": "Keep the water tower linked and supply the waterworks.",
+      "metric": "inventory_at_least",
+      "building_type": "waterworks",
+      "resource": "potable_water",
+      "target": 10
+    },
+    {
+      "id": "power_output",
+      "title": "Produce electrical parts",
+      "hint": "Keep the power plant linked and supply the parts factory.",
+      "metric": "inventory_at_least",
+      "building_type": "parts_factory",
+      "resource": "electric_parts",
+      "target": 10
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "build_the_chain",
+  "name": "Build the mill chain",
+  "description": "Grow a timber and planks supply chain, then deliver materials and work to complete two mill construction sites.",
+  "catalog": "openrepublic-economy 1\nresource timber\nresource planks\nutility power\nbuilding farm 1 1\n  store timber 100\n  recipe harvest every 1 out timber:2\nend\nbuilding sawmill 1 1\n  store timber 100\n  store planks 100\n  recipe saw every 1 in timber:1 out planks:1\nend\nbuilding mill 2 2\n  store planks 100\n  build planks:2 work 4\nend\nvehicle truck capacity 10 speed 1\n",
+  "roads": [
+    {
+      "a": {
+        "x": 1,
+        "z": 1
+      },
+      "b": {
+        "x": 2,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 2,
+        "z": 1
+      },
+      "b": {
+        "x": 3,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 3,
+        "z": 1
+      },
+      "b": {
+        "x": 4,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 4,
+        "z": 1
+      },
+      "b": {
+        "x": 5,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 5,
+        "z": 1
+      },
+      "b": {
+        "x": 6,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 6,
+        "z": 1
+      },
+      "b": {
+        "x": 7,
+        "z": 1
+      }
+    },
+    {
+      "a": {
+        "x": 7,
+        "z": 1
+      },
+      "b": {
+        "x": 8,
+        "z": 1
+      }
+    }
+  ],
+  "buildings": [
+    {
+      "type": "farm",
+      "x": 1,
+      "z": 2
+    },
+    {
+      "type": "sawmill",
+      "x": 3,
+      "z": 2
+    },
+    {
+      "type": "mill",
+      "x": 5,
+      "z": 2,
+      "constructionSite": true
+    },
+    {
+      "type": "mill",
+      "x": 7,
+      "z": 2,
+      "constructionSite": true
+    }
+  ],
+  "score": {
+    "metric": "completed_construction_sites"
+  }
+}
