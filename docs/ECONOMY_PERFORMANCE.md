@@ -148,3 +148,71 @@ loads on the imported region. The existing full JSON query remains expensive
 for large worlds. Local content was read-only and the original game was not
 launched. No WRSR simulation, format, or performance compatibility claim
 follows from these results.
+
+## Combined road, citizen, transit, depot, and construction workload
+
+**VERIFIED (synthetic benchmark, 25 October 2026):** the new
+`OpenRepublicEconomyCombinedScaleBench` builds worlds with the requested number
+of placements (homes, workplaces, stations, one depot with eight trucks, one
+construction site, and a connected road line), declares citizens and bus
+transit, installs a bus route, and advances 50 measured ticks. The benchmark
+emits CSV fields for requested/placed buildings, configured production threads,
+elapsed seconds, ticks per second, peak process working set, and final state
+hash. `tools/run_economy_scale_bench.py` runs each size/thread pair in its own
+process, checks the four hashes match per size, and prints a machine description
+and Markdown table. Example:
+
+```powershell
+cmake --build build/headless --config Release --target OpenRepublicEconomyCombinedScaleBench -- /m
+python tools/run_economy_scale_bench.py --bench build/headless/tests/economy/Release/OpenRepublicEconomyCombinedScaleBench.exe --ticks 50
+```
+
+Machine: Windows 11 build 10.0.26300, MSVC 19.44 Release, AMD64 Family 25 Model
+97 Stepping 2, 16 logical CPUs. Peak memory is the Windows process peak working
+set reported by `GetProcessMemoryInfo`; each matrix cell is a fresh process.
+
+| Buildings requested | Buildings placed | Threads | Ticks | Seconds | Ticks/s | Peak working set (MiB) | State hash |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1,000 | 1,000 | 1 | 50 | 0.244 | 204.95 | 7 | `5721408337779921815` |
+| 1,000 | 1,000 | 2 | 50 | 0.243 | 205.47 | 7 | `5721408337779921815` |
+| 1,000 | 1,000 | 4 | 50 | 0.242 | 206.65 | 7 | `5721408337779921815` |
+| 1,000 | 1,000 | 8 | 50 | 0.241 | 207.67 | 7 | `5721408337779921815` |
+| 5,000 | 5,000 | 1 | 50 | 1.223 | 40.90 | 17 | `4236805331629816259` |
+| 5,000 | 5,000 | 2 | 50 | 1.231 | 40.61 | 17 | `4236805331629816259` |
+| 5,000 | 5,000 | 4 | 50 | 1.208 | 41.39 | 17 | `4236805331629816259` |
+| 5,000 | 5,000 | 8 | 50 | 1.227 | 40.75 | 17 | `4236805331629816259` |
+| 20,000 | 20,000 | 1 | 50 | 4.779 | 10.46 | 54 | `13223839524107294457` |
+| 20,000 | 20,000 | 2 | 50 | 4.733 | 10.56 | 54 | `13223839524107294457` |
+| 20,000 | 20,000 | 4 | 50 | 4.634 | 10.79 | 54 | `13223839524107294457` |
+| 20,000 | 20,000 | 8 | 50 | 4.573 | 10.93 | 54 | `13223839524107294457` |
+
+All configured thread counts produced the same final hash at each size. The
+near-flat thread results at 1,000 and 5,000 buildings are expected because the
+existing production parallelization cutoff is 16,384 buildings; at 20,000,
+threaded production improves this mostly simulation-overhead workload only
+slightly. These numbers describe this authored OpenRepublic workload, not an
+original-game benchmark. The depot owns eight idle trucks; active depot dispatch
+is not represented in this fixture.
+
+### Transit waiting-distance profile and fix
+
+A matched 4,999-building run (2 measured ticks, one production thread) took
+**8.998 seconds** before the waiting-distance change and **0.055 seconds** after
+it, about **164x faster**. Both runs produced state hash
+`4733020699956927582` and reported a 17 MiB peak working set. This comparison
+was made after commute-candidate indexing was already present, so it isolates
+the later bus-waiting fix. Previously, each residential building performed a
+complete road shortest-path query each tick to decide whether it was within the
+small transfer radius of a bus. The tick-local `CommuteIndex` now builds a
+deterministic road adjacency/component index and reuses distances bounded to
+the commute or transfer radius. Workforce assignment also gathers only homes
+reachable through the road-distance threshold or distinct route stops and
+preserves the original building-ID allocation order. Neither derived index is
+serialized or included in the authoritative hash.
+
+The regression guard `EconomyCombinedScaleGuard` constructs a 1,004-placement
+world with the same opt-in mechanics and fails if three timed ticks take more
+than 15 seconds (CTest timeout: 30 seconds). This generous bound catches a
+return to repeated full-map transit path searches while tolerating slower
+machines. Synthetic citizens, transit, depot, and construction behavior remain
+OpenRepublic rules; WRSR parity remains **UNKNOWN**.
