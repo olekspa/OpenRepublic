@@ -157,6 +157,34 @@ namespace openrepublic::preview
 			buildingType_.AddItem(type.name + " (" + std::to_string(type.width) + "x" +
 				std::to_string(type.depth) + ")", type.id);
 		}
+		buildingType_.OnSelect([this, &catalog](const wi::gui::EventArgs&) {
+			const auto* type = catalog.BuildingType(SelectedBuildingType());
+			if (!type) return;
+			std::string tip = type->name + " | footprint " + std::to_string(type->width) + " x " + std::to_string(type->depth) + " cells";
+			for (const auto& recipe : type->recipes) {
+				tip += "\n" + recipe.name + ": ";
+				const auto append = [&catalog, &tip](const char* label, const std::vector<economy::RecipeAmount>& amounts) {
+					if (amounts.empty()) return;
+					tip += label;
+					for (std::size_t i = 0; i < amounts.size(); ++i) {
+						const auto* resource = catalog.Resource(amounts[i].resource);
+						if (i) tip += ", ";
+						tip += (resource ? resource->name : "resource") + std::string(" ") + std::to_string(amounts[i].amount);
+					}
+				};
+				append("in ", recipe.inputs); append(" out ", recipe.outputs);
+			}
+			if (!type->constructionMaterials.empty() || type->constructionWorkTicks) {
+				tip += "\nBuild requirements (OpenRepublic synthetic): ";
+				for (std::size_t i = 0; i < type->constructionMaterials.size(); ++i) {
+					const auto& amount = type->constructionMaterials[i]; const auto* resource = catalog.Resource(amount.resource);
+					if (i) tip += ", ";
+					tip += (resource ? resource->name : "resource") + std::string(" ") + std::to_string(amount.amount);
+				}
+				if (type->constructionWorkTicks) tip += "; work " + std::to_string(type->constructionWorkTicks) + " ticks";
+			} else tip += "\nBuild requirements: none declared";
+			buildingType_.SetTooltip(tip);
+		});
 		StyleCombo(buildingType_);
 		if (buildingType_.GetItemCount() != 0) buildingType_.SetSelectedWithoutCallback(0);
 

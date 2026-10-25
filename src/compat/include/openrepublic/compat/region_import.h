@@ -73,6 +73,13 @@ bool ImportRegionIntoWorld(const std::vector<PlacedBuildingRef> &placements,
                            std::unique_ptr<economy::World> &outWorld,
                            RegionImportReport &report);
 
+// Places the explicitly synthetic fleet depot in a free cell immediately south
+// of an imported road cell. The depot access cell is therefore the existing road.
+bool PlaceSyntheticRegionFleetDepot(economy::World &world,
+                                    economy::BuildingTypeId depotType,
+                                    economy::BuildingId &outDepot,
+                                    std::string &error);
+
 // Formats a deterministic concise summary of the import result.
 std::string DescribeRegionImport(const RegionImportReport &report);
 

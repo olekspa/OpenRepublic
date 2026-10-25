@@ -225,10 +225,13 @@ int main() {
             return std::make_pair(snap.stateHash, snap.buildings.size());
         };
         const auto serial = run(1);
+        const auto two = run(2);
+        const auto four = run(4);
         const auto parallel = run(8);
         SetProductionThreads(0);
         Check(serial.second >= 16384, "parallel determinism world exceeds the threading threshold");
-        Check(serial == parallel, "parallel production matches serial production bit for bit");
+        Check(serial == two && serial == four && serial == parallel,
+              "parallel production matches serial hashes at 1/2/4/8 threads");
     }
     {
         // Rules swap: identical structure is accepted, a different one is not.
