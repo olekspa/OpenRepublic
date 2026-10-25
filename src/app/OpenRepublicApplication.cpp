@@ -25,6 +25,7 @@
 #include "openrepublic/content/terrain_preview.h"
 #include "openrepublic/compat/catalog_import.h"
 #include "openrepublic/compat/region_roads.h"
+#include "openrepublic/runtime/native_toolbar_layout.h"
 
 #ifdef OPENREPUBLIC_WITH_LUA_RULES
 #include "openrepublic/scripting/lua_rules_loader.h"
@@ -815,7 +816,7 @@ namespace openrepublic
 			{
 				nativeEconomyPresentationValid = true;
 				nmfPreviewCameraTarget = nativeEconomyScene.CameraTarget();
-				nmfPreviewCameraDistance = nativeEconomyScene.CameraDistance() * (nativeCoalDemo ? 0.68f : 1.0f);
+				nmfPreviewCameraDistance = nativeEconomyScene.CameraDistance() * 1.2f;
 				nmfPreviewLoaded = true;
 				regionEconomyApi = std::make_unique<economy_api::EconomyApi>(
 					*nativeEconomyCheckpoint.world, economy_api::Permissions{ true, true });
@@ -1748,7 +1749,7 @@ namespace openrepublic
 						FrameNativeEconomyWorld();
 						if (!renderPath || !renderPath->camera) return;
 						const auto target = nativeEconomyScene.CameraTarget();
-						const float distance = nativeEconomyScene.CameraDistance();
+						const float distance = nativeEconomyScene.CameraDistance() * 1.2f;
 						wi::scene::TransformComponent cameraTransform;
 						cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 1.25f, target.z));
 						cameraTransform.RotateRollPitchYaw(XMFLOAT3(1.5707963f, 0, 0));
@@ -1830,6 +1831,7 @@ namespace openrepublic
 						nativeObjectiveLabel.font.params.color = wi::Color(245, 248, 250, 255);
 						nativeObjectiveLabel.margin_left = 10;
 						nativeObjectiveLabel.margin_top = 8;
+						nativeObjectiveLabel.SetWrapEnabled(true);
 						nativeObjectiveLabel.SetText(nativeObjectiveSet->title);
 						gui.AddWidget(&nativeObjectiveLabel);
 					}
@@ -1849,17 +1851,6 @@ namespace openrepublic
 						UpdateRegionStatus();
 					});
 					gui.AddWidget(&nativeGameMenuButton);
-					nativeToolsButton.Create("NativeEconomyToolsButton");
-					nativeToolsButton.SetText("Tools");
-					StyleButton(nativeToolsButton);
-					nativeToolsButton.SetSize(XMFLOAT2(132, 28));
-					nativeToolsButton.SetTooltip("Show or hide construction, haul, dispatch and utility controls.");
-					nativeToolsButton.OnClick([this](const wi::gui::EventArgs&) {
-						nativeEconomyTools.SetExpanded(!nativeEconomyTools.IsExpanded());
-						nativeToolsButton.SetText(nativeEconomyTools.IsExpanded() ? "Hide tools" : "Tools");
-						LayoutNativeControls();
-					});
-					gui.AddWidget(&nativeToolsButton);
 					const std::array<const char*, 3> newGameLabels{{"New sandbox", "New coal demo", "New construction game"}};
 					const std::array<const wchar_t*, 3> newGameArguments{{L"--native-economy", L"--native-economy --native-coal-demo", L"--native-economy --native-construction-sites"}};
 					for (std::size_t i = 0; i < nativeNewGameButtons.size(); ++i)
@@ -1951,6 +1942,20 @@ namespace openrepublic
 					RefreshNativeHaulChoices();
 				}
 			}
+			if (nativeToolsReady)
+			{
+				nativeToolsButton.Create("NativeEconomyToolsButton");
+				nativeToolsButton.SetText("Tools");
+				StyleButton(nativeToolsButton);
+				nativeToolsButton.SetSize(XMFLOAT2(132, 28));
+				nativeToolsButton.SetTooltip("Show or hide construction, haul, dispatch and utility controls.");
+				nativeToolsButton.OnClick([this](const wi::gui::EventArgs&) {
+					nativeEconomyTools.SetExpanded(!nativeEconomyTools.IsExpanded());
+					nativeToolsButton.SetText(nativeEconomyTools.IsExpanded() ? "Hide tools" : "Tools");
+					LayoutNativeControls();
+				});
+				gui.AddWidget(&nativeToolsButton);
+			}
 			simulationStatus.SetPos(XMFLOAT2(18, 54));
 			simulationStatus.scrollbar.SetEnabled(true);
 			simulationStatus.SetSize(XMFLOAT2(864, 96));
@@ -1959,6 +1964,7 @@ namespace openrepublic
 				: (regionEconomyApi ? regionWorldStatus : uiNotice);
 			if (economyOverlay || regionEconomyApi) UpdateRegionStatus();
 			else simulationStatus.SetText(regionWorldStatus);
+			UpdateNativeObjectiveChecklist();
 		}
 
 		ActivatePath(renderPath.get());
@@ -2110,7 +2116,7 @@ namespace openrepublic
 					const double alpha = nativeEconomyRunning ? nativeEconomyRunClock.InterpolationAlpha() : 1.0;
 					const auto target = nativeEconomyScene.VehiclePosition(vehicleId, alpha)
 						.value_or(nativeEconomyScene.CellPosition(vehicle->cell));
-					const float distance = nativeEconomyScene.CameraDistance() * (nativeCoalDemo ? 0.68f : 1.0f);
+					const float distance = nativeEconomyScene.CameraDistance() * 1.2f;
 					wi::scene::TransformComponent cameraTransform;
 					cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 0.55f, target.z - distance * 0.85f));
 					cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.6f, 0, 0));
@@ -2181,7 +2187,9 @@ namespace openrepublic
 		if (nativeEconomyCheckpointMode && nativeEconomyPresentationValid && nativeEconomyCheckpoint.world && nativeEconomyCheckpoint.catalog)
 		{
 			if (!nativeHudSnapshot) nativeHudSnapshot = nativeEconomyCheckpoint.world->Snapshot();
-			nativeEconomyHud.Layout(static_cast<float>(renderPath->GetLogicalWidth()), static_cast<float>(renderPath->GetLogicalHeight()), nativeStatusTop + 4.0f);
+			const float uiScale = std::max(1.0f, renderPath->GetDPIScaling());
+			nativeEconomyHud.Layout(static_cast<float>(renderPath->GetLogicalWidth()) / uiScale,
+				static_cast<float>(renderPath->GetLogicalHeight()) / uiScale, nativeStatusTop + 4.0f);
 			std::string hoverText;
 			if (!guiHasFocus && renderPath->camera)
 			{
@@ -2895,18 +2903,26 @@ namespace openrepublic
 						? "Campaign mission completed, but progress could not be recorded."
 						: "Campaign mission completed, but progress could not be saved: " + progressError;
 			}
-			std::ostringstream checklist;
-			checklist << nativeObjectiveSet->title << "  " << progress.completedCount << "/"
-				<< nativeObjectiveSet->objectives.size() << " complete\n[";
-			constexpr int barWidth = 20;
-			const int filled = static_cast<int>(progress.fraction * barWidth + 0.5);
-			for (int i = 0; i < barWidth; ++i) checklist << (i < filled ? '#' : '-');
-			checklist << "] " << static_cast<int>(progress.fraction * 100.0 + 0.5) << "%\n";
-			for (std::size_t i = 0; i < nativeObjectiveSet->objectives.size(); ++i)
-				checklist << (progress.complete[i] ? "[x] " : "[ ] ") << nativeObjectiveSet->objectives[i].title << '\n';
-			checklist << (progress.finished ? "Scenario complete!" : "Hint: " + progress.currentHint);
-			nativeObjectiveLabel.SetText(checklist.str());
+			UpdateNativeObjectiveChecklist();
 		}
+	}
+
+	void OpenRepublicApplication::UpdateNativeObjectiveChecklist()
+	{
+		if (!nativeObjectiveSet || !nativeEconomyCheckpoint.world || !nativeEconomyCheckpoint.catalog) return;
+		const auto progress = runtime::EvaluateNativeObjectives(*nativeObjectiveSet,
+			nativeEconomyCheckpoint.world->Snapshot(), *nativeEconomyCheckpoint.catalog);
+		std::ostringstream checklist;
+		checklist << nativeObjectiveSet->title << "  " << progress.completedCount << "/"
+			<< nativeObjectiveSet->objectives.size() << " complete\n[";
+		constexpr int barWidth = 20;
+		const int filled = static_cast<int>(progress.fraction * barWidth + 0.5);
+		for (int i = 0; i < barWidth; ++i) checklist << (i < filled ? '#' : '-');
+		checklist << "] " << static_cast<int>(progress.fraction * 100.0 + 0.5) << "%\n";
+		for (std::size_t i = 0; i < nativeObjectiveSet->objectives.size(); ++i)
+			checklist << (progress.complete[i] ? "[x] " : "[ ] ") << nativeObjectiveSet->objectives[i].title << '\n';
+		checklist << (progress.finished ? "Scenario complete!" : "Hint: " + progress.currentHint);
+		nativeObjectiveLabel.SetText(checklist.str());
 	}
 
 	void OpenRepublicApplication::UpdateRegionEconomyPresentation()
@@ -3114,23 +3130,34 @@ namespace openrepublic
 	void OpenRepublicApplication::LayoutNativeControls()
 	{
 		if (!nativeToolsReady || !renderPath) return;
-		const float width = static_cast<float>(renderPath->GetLogicalWidth());
-		float x = 18.0f, y = 18.0f;
-		for (auto* button : { &regionStepOneButton, &regionStepButton, &regionToggleButton,
-			&regionHaulSourceButton, &regionHaulButton, &nativeFrameButton, &nativeCameraFollowButton, &nativeStepManyButton, &nativeRunPauseButton,
-			&nativeDetailsButton, &nativeOverviewButton, &nativeGameMenuButton, &nativeToolsButton, &nativeObjectiveRestartButton })
+		const float uiScale = std::max(1.0f, renderPath->GetDPIScaling());
+		const float width = static_cast<float>(renderPath->GetLogicalWidth()) / uiScale;
+		std::vector<wi::gui::Button*> buttons;
+		if (nativeEconomyCheckpointMode)
 		{
-			if (!nativeObjectiveSet && button == &nativeObjectiveRestartButton) continue;
-			if (!nativeEconomyCheckpointMode) continue;
-			if (x > 18.0f && x + 132.0f > width - 18.0f) { x = 18.0f; y += 34.0f; }
-			button->SetPos(XMFLOAT2(x, y));
-			x += 138.0f;
+			buttons = { &regionStepOneButton, &regionStepButton, &regionToggleButton,
+				&regionHaulSourceButton, &regionHaulButton, &nativeFrameButton, &nativeCameraFollowButton,
+				&nativeStepManyButton, &nativeRunPauseButton, &nativeDetailsButton, &nativeOverviewButton,
+				&nativeGameMenuButton, &nativeToolsButton };
+			if (nativeObjectiveSet) buttons.push_back(&nativeObjectiveRestartButton);
 		}
-		nativeStatusTop = nativeEconomyTools.Layout(width, y + 36.0f);
+		else
+		{
+			buttons = { &regionStepOneButton, &regionStepButton, &regionToggleButton,
+				&regionHaulSourceButton, &regionHaulButton, &nativeDetailsButton,
+				&nativeOverviewButton, &nativeToolsButton };
+		}
+		const auto toolbar = runtime::LayoutNativeToolbar(width, buttons.size());
+		for (std::size_t i = 0; i < buttons.size(); ++i)
+		{
+			buttons[i]->SetPos(XMFLOAT2(toolbar.items[i].x, toolbar.items[i].y));
+			buttons[i]->SetSize(XMFLOAT2(toolbar.items[i].width, toolbar.items[i].height));
+		}
+		nativeStatusTop = nativeEconomyTools.Layout(width, toolbar.nextY + 8.0f);
 		if (nativeObjectiveSet)
 		{
-			const float viewportHeight = static_cast<float>(renderPath->GetLogicalHeight());
-			nativeObjectiveLabel.SetPos(XMFLOAT2(18.0f, std::max(18.0f, viewportHeight - 170.0f)));
+			const float viewportHeight = static_cast<float>(renderPath->GetLogicalHeight()) / uiScale;
+			nativeObjectiveLabel.SetPos(XMFLOAT2(18.0f, std::max(18.0f, viewportHeight - 174.0f)));
 			nativeObjectiveLabel.SetVisible(!nativeGameMenuExpanded);
 		}
 		float menuY = nativeStatusTop + 8.0f;
@@ -3931,7 +3958,7 @@ namespace openrepublic
 			}
 		}
 		const auto target = nativeEconomyScene.CameraTarget();
-		const float distance = nativeEconomyScene.CameraDistance();
+		const float distance = nativeEconomyScene.CameraDistance() * 1.2f;
 		wi::scene::TransformComponent cameraTransform;
 		cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 0.55f, target.z - distance * 0.85f));
 		cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.6f, 0, 0));

@@ -100,6 +100,20 @@ int main() {
               std::to_string(plan.transform.centerCellZ) + ")");
     Check(plan.minX < plan.maxX && plan.minZ < plan.maxZ && plan.cameraDistance >= 16.0,
           "plan includes valid camera bounds and distance");
+    for (const auto &building : plan.buildings) {
+        Check(building.centerX - building.width * 0.5 >= plan.minX - 1e-9 &&
+                  building.centerX + building.width * 0.5 <= plan.maxX + 1e-9 &&
+                  building.centerZ - building.depth * 0.5 >= plan.minZ - 1e-9 &&
+                  building.centerZ + building.depth * 0.5 <= plan.maxZ + 1e-9,
+              "camera bounds contain each complete building footprint");
+    }
+    for (const auto &road : plan.roads) {
+        Check(road.centerX - road.width * 0.5 >= plan.minX - 1e-9 &&
+                  road.centerX + road.width * 0.5 <= plan.maxX + 1e-9 &&
+                  road.centerZ - road.depth * 0.5 >= plan.minZ - 1e-9 &&
+                  road.centerZ + road.depth * 0.5 <= plan.maxZ + 1e-9,
+              "camera bounds contain each complete road segment");
+    }
     Check(runtime::NativeEconomyPlanFitsFloatPrecision(plan, error),
           "ordinary native scene fits float precision: " + error);
 

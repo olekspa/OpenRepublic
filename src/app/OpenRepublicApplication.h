@@ -117,6 +117,7 @@ namespace openrepublic
 		openrepublic::sim::Snapshot QuerySimulationSnapshot() const;
 		void SetEntityColor(wi::ecs::Entity entity, const XMFLOAT4& color);
 		void UpdateRegionStatus();
+		void UpdateNativeObjectiveChecklist();
 		std::string SelectedUtilityStatus(bool expanded) const;
 		void PumpLocalEconomyRequests();
 		void StartLocalEconomyEndpoint();

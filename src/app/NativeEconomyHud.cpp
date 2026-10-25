@@ -91,11 +91,12 @@ namespace openrepublic::preview
 	void NativeEconomyHud::Layout(float width, float height, float top)
 	{
 		if (!created_) return;
-		const float w = std::max(240.0f, width - 36.0f);
-		topBar_.SetPos(XMFLOAT2(18, top)); topBar_.SetSize(XMFLOAT2(w - 166.0f, 32));
-		overviewButton_.SetPos(XMFLOAT2(std::max(18.0f, width - 168.0f), top));
-		resourceTicker_.SetPos(XMFLOAT2(18, top + 34.0f)); resourceTicker_.SetSize(XMFLOAT2(w, 48));
-		const float logWidth = std::min(500.0f, std::max(300.0f, width - 36.0f));
+		const float available = std::max(240.0f, width - 36.0f);
+		const float topBarWidth = std::min(620.0f, available);
+		topBar_.SetPos(XMFLOAT2(18, top)); topBar_.SetSize(XMFLOAT2(topBarWidth, 32));
+		overviewButton_.SetPos(XMFLOAT2(18.0f + topBarWidth + 8.0f, top));
+		resourceTicker_.SetPos(XMFLOAT2(18, top + 34.0f)); resourceTicker_.SetSize(XMFLOAT2(std::min(620.0f, available), 48));
+		const float logWidth = std::min(280.0f, std::max(200.0f, width - 36.0f));
 		eventLog_.SetPos(XMFLOAT2(std::max(18.0f, width - logWidth - 18.0f), std::max(top + 90.0f, height - 170.0f)));
 		eventLog_.SetSize(XMFLOAT2(logWidth, 150));
 	}
