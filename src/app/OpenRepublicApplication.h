@@ -8,6 +8,7 @@
 #include "BuildingLodController.h"
 #include "NativeEconomyScene.h"
 #include "NativeEconomyTools.h"
+#include "NativeEconomyHud.h"
 #include "openrepublic/economy/checkpoint.h"
 #include "ShowcaseEnvironment.h"
 #include "openrepublic/content/map_placement.h"
@@ -159,6 +160,7 @@ namespace openrepublic
 		openrepublic::economy::RestoredCheckpoint nativeEconomyCheckpoint;
 		openrepublic::preview::NativeEconomyScene nativeEconomyScene;
 		openrepublic::preview::NativeEconomyTools nativeEconomyTools;
+		openrepublic::preview::NativeEconomyHud nativeEconomyHud;
 		bool nativeEconomyFreshWorld = false;
 		bool nativeCoalDemo = false;
 		bool nativeCoalAutoRun = false;
@@ -210,6 +212,7 @@ namespace openrepublic
 		std::optional<openrepublic::runtime::NativeEconomyTransform> regionVehicleTransform;
 		std::optional<openrepublic::economy_api::WorldView> regionEconomySnapshot;
 		std::deque<openrepublic::economy::WorldSnapshot> nativeOverviewHistory;
+		std::optional<openrepublic::economy::WorldSnapshot> nativeHudSnapshot;
 		std::vector<std::uint64_t> regionPendingCommandHandles;
 		std::vector<wi::ecs::Entity> regionTruckEntities;
 		std::string regionEconomyDescription;
@@ -319,6 +322,7 @@ namespace openrepublic
 		wi::gui::Button nativeFrameButton;
 		wi::gui::Button nativeCameraFollowButton;
 		bool nativeCameraFollow = false;
+		bool nativeHudOverview = false;
 		wi::gui::Button nativeStepManyButton;
 		wi::gui::Button nativeRunPauseButton;
 		bool nativeEconomyRunning = false;

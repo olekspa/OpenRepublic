@@ -6,6 +6,7 @@ add_executable(OpenRepublic WIN32
     EconomyOverlay.cpp
     NativeEconomyScene.cpp
     NativeEconomyTools.cpp
+    NativeEconomyHud.cpp
     SyntheticRegionFixture.cpp
     ShowcaseEnvironment.cpp
     ShowcaseProps.cpp
@@ -14,6 +15,7 @@ add_executable(OpenRepublic WIN32
     EconomyOverlay.h
     NativeEconomyScene.h
     NativeEconomyTools.h
+    NativeEconomyHud.h
     ContentPreview.h
     BuildingLodController.h
     LocalEconomyPipeEndpoint.cpp
