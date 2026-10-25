@@ -28,6 +28,10 @@ struct CatalogImportOptions {
     // Diagnostic opt-in for retained $COST_* declarations. The current native
     // economy has no construction-site state, so this never changes the catalog.
     bool constructionCosts = false;
+    // OpenRepublic-only test fleet support for imported regions. When nonzero,
+    // the catalog receives a synthetic depot type that owns this many default
+    // trucks. This does not classify any imported building as a depot.
+    std::uint32_t syntheticRegionFleetCount = 0;
 };
 
 struct SkippedBuilding {

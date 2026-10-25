@@ -218,6 +218,10 @@ bool ImportCatalogFromDefinitions(
     next.options = options;
     next.definitionsSeen = definitions.size();
     report = next;
+    if (options.syntheticRegionFleetCount > 16) {
+        report.error = "synthetic region fleet count exceeds the limit of 16 trucks";
+        return false;
+    }
     auto failImport = [&](const std::string &message) {
         next.success = false;
         next.error = message;
@@ -494,6 +498,15 @@ bool ImportCatalogFromDefinitions(
 
     if (!builder.AddVehicleType("truck", kTruckCapacity, kTruckSpeed, nullptr, catalogError))
         return failImport("could not add OpenRepublic default truck: " + catalogError.message);
+    if (options.syntheticRegionFleetCount > 0) {
+        economy::BuildingTypeId depot{};
+        economy::VehicleTypeId truck{};
+        if (!builder.AddBuildingType("openrepublic_synthetic_fleet_depot", 1, 1, &depot, catalogError) ||
+            !builder.FindVehicleType("truck", truck) ||
+            !builder.SetDepot(depot, true, catalogError) ||
+            !builder.AddFleet(depot, truck, options.syntheticRegionFleetCount, catalogError))
+            return failImport("could not add OpenRepublic synthetic region fleet: " + catalogError.message);
+    }
     economy::Catalog candidate;
     if (!builder.Build(candidate, catalogError))
         return failImport("could not build catalog: " + catalogError.message);
@@ -533,7 +546,8 @@ std::string DescribeImport(const ImportReport &report) {
            << ", defaultFootprint=" << report.options.defaultFootprint
            << ", storageDaysFallback="
            << std::setprecision(std::numeric_limits<double>::max_digits10)
-           << report.options.storageDaysFallback << "\n";
+           << report.options.storageDaysFallback
+           << ", syntheticRegionFleetCount=" << report.options.syntheticRegionFleetCount << "\n";
     output << "OBSERVED in one reviewed build: worker scaling depends on declaration order and "
               "per-second input is multiplied by 60. Rate time base and fallback capacity are "
               "INFERRED; caller-supplied explicit profile factors are experimental, while the "

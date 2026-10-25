@@ -568,5 +568,26 @@ int main() {
                                                  unknownUtilityReport) &&
               economy::WriteCatalogText(unchangedForUtilityError) == firstText,
           "unknown utility resource option fails without changing the output catalog");
+    compat::CatalogImportOptions syntheticFleetOptions;
+    syntheticFleetOptions.syntheticRegionFleetCount = 2;
+    economy::Catalog syntheticFleetCatalog;
+    compat::ImportReport syntheticFleetReport;
+    Check(compat::ImportCatalogFromDefinitions({{"farm", MakeFarm()}}, syntheticFleetOptions,
+                                                syntheticFleetCatalog, syntheticFleetReport),
+          "opt-in synthetic region fleet catalog imports");
+    economy::BuildingTypeId syntheticDepotId{};
+    economy::VehicleTypeId syntheticTruckId{};
+    syntheticFleetCatalog.FindBuildingType("openrepublic_synthetic_fleet_depot", syntheticDepotId);
+    syntheticFleetCatalog.FindVehicleType("truck", syntheticTruckId);
+    const auto *syntheticDepot = syntheticFleetCatalog.BuildingType(syntheticDepotId);
+    Check(syntheticDepot && syntheticDepot->depot && syntheticDepot->fleet.size() == 1 &&
+              syntheticDepot->fleet[0].vehicleType == syntheticTruckId &&
+              syntheticDepot->fleet[0].count == 2,
+          "synthetic fleet adds a separate explicit depot declaration without classifying imported buildings");
+    Check(!compat::ImportCatalogFromDefinitions({{"farm", MakeFarm()}},
+                                                 compat::CatalogImportOptions{24, 4, 10.0, {}, {}, false, 17},
+                                                 syntheticFleetCatalog, syntheticFleetReport) &&
+              syntheticFleetReport.error.find("limit of 16") != std::string::npos,
+          "synthetic fleet count is bounded and rejected clearly");
     return failures == 0 ? 0 : 1;
 }

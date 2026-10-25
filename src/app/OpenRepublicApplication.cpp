@@ -357,12 +357,29 @@ namespace openrepublic
 				world.reset();
 				return false;
 			}
+			std::string fleetDescription;
+			if (catalogOptions.syntheticRegionFleetCount > 0)
+			{
+				economy::BuildingTypeId depotType{};
+				economy::BuildingId depotId{};
+				std::string depotError;
+				if (!catalog.FindBuildingType("openrepublic_synthetic_fleet_depot", depotType) ||
+					!compat::PlaceSyntheticRegionFleetDepot(*world, depotType, depotId, depotError))
+				{
+					error = depotError.empty() ? "synthetic fleet depot type was not created" : depotError;
+					world.reset();
+					return false;
+				}
+				fleetDescription = " OpenRepublic synthetic fleet: " +
+					std::to_string(catalogOptions.syntheticRegionFleetCount) +
+					" trucks at depot #" + std::to_string(depotId) + ".";
+			}
 
 			std::ostringstream summary;
 			summary << "App-owned region economy (experimental): "
 				<< compat::DescribeImport(catalogReport) << " "
 				<< compat::DescribeRegionImport(importReport) << " "
-				<< compat::DescribeRegionRoads(roadReport);
+				<< compat::DescribeRegionRoads(roadReport) << fleetDescription;
 			description = summary.str();
 			return true;
 		}
@@ -2621,6 +2638,16 @@ namespace openrepublic
 			<< regionEconomySnapshot->buildings.size() << " buildings running, "
 			<< regionEconomySnapshot->vehicles.size() << " trucks, "
 			<< regionEconomySnapshot->utilityConnections.size() << " utility links";
+		const auto ownedFleet = std::count_if(regionEconomySnapshot->vehicles.begin(),
+			regionEconomySnapshot->vehicles.end(), [](const auto& vehicle) { return vehicle.ownerDepot != 0; });
+		if (ownedFleet > 0)
+		{
+			const auto parkedFleet = std::count_if(regionEconomySnapshot->vehicles.begin(),
+				regionEconomySnapshot->vehicles.end(), [](const auto& vehicle) {
+					return vehicle.ownerDepot != 0 && vehicle.order == 0;
+				});
+			status << "; synthetic fleet " << parkedFleet << "/" << ownedFleet << " parked";
+		}
 		if (!nativeEconomyCheckpointMode)
 			status << ", " << regionEconomyImport.placedSourceBuildings.size() << " exact placement bindings";
 		regionWorldStatus = status.str();
