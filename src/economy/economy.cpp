@@ -576,6 +576,14 @@ std::vector<std::uint64_t> AssignedWorkers(const State &s) {
                 if (route.stops.size() == state.stops.size()) routePtr = &route;
             }
         }
+        std::vector<Cell> homeAccess;
+        std::vector<std::size_t> homeBuildings;
+        for (std::size_t h = 0; h < s.buildings.size(); ++h) {
+            if (!s.catalog->BuildingType(s.buildings[h].type)->housing) continue;
+            homeAccess.push_back(s.buildings[h].access);
+            homeBuildings.push_back(h);
+        }
+        transit::CommuteIndex commuteIndex(roads, homeAccess);
         for (std::size_t h = 0; h < s.buildings.size(); ++h)
             if (s.catalog->BuildingType(s.buildings[h].type)->housing)
                 available[h] = s.buildings[h].residents;
@@ -584,12 +592,13 @@ std::vector<std::uint64_t> AssignedWorkers(const State &s) {
             const auto *type = s.catalog->BuildingType(work.type);
             if (!type->workers || !work.enabled) continue;
             auto remaining = type->workers;
-            for (std::size_t h = 0; h < s.buildings.size() && remaining; ++h) {
+            const auto candidates = commuteIndex.CandidateHomes(work.access,
+                s.catalog->Transit().roadDistanceThreshold, routePtr,
+                s.catalog->Transit().transferDistance);
+            for (const auto homeIndex : candidates) {
+                if (!remaining) break;
+                const auto h = homeBuildings[homeIndex];
                 if (!available[h]) continue;
-                const auto commute = transit::EvaluateCommute(s.buildings[h].access, work.access,
-                    s.catalog->Transit().roadDistanceThreshold, routePtr, roads,
-                    s.catalog->Transit().transferDistance);
-                if (!commute.eligible) continue;
                 const auto count = std::min(available[h], remaining);
                 available[h] -= count; remaining -= count; assigned[w] += count;
             }
@@ -1705,6 +1714,7 @@ UtilityDiagnostics AdvanceTick(State &s) {
         std::vector<transit::RoadEdge> roads;
         roads.reserve(s.roads.size());
         for (const auto &edge : s.roads) roads.push_back({edge.a, edge.b, edge.enabled});
+        transit::CommuteIndex transferIndex(roads, {});
         for (auto &state : s.transitRoutes) {
             const auto *bus = s.catalog->VehicleType(state.busType);
             if (!bus || state.stops.empty()) continue;
@@ -1722,8 +1732,8 @@ UtilityDiagnostics AdvanceTick(State &s) {
             for (const auto &home : s.buildings) {
                 const auto *type = s.catalog->BuildingType(home.type);
                 if (!type->housing || !home.residents) continue;
-                const auto path = transit::ShortestRoadPath(roads, home.access, state.bus.cell);
-                if (!path.empty() && path.size() - 1 <= s.catalog->Transit().transferDistance)
+                if (transferIndex.WithinDistance(home.access, state.bus.cell,
+                        s.catalog->Transit().transferDistance))
                     waiting = SaturatingAdd(waiting, home.residents);
             }
             transit::AdvanceBus(route, roads, waiting, state.bus);

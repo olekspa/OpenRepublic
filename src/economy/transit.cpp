@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace openrepublic::economy::transit {
 namespace {
@@ -34,11 +35,16 @@ std::uint64_t Distance(const std::vector<Cell>& path) {
 std::vector<Cell> ShortestRoadPath(const std::vector<RoadEdge>& roads, Cell start, Cell goal) {
     if (Equal(start, goal))
         return {start};
-    if (!HasRoad(roads, start) || !HasRoad(roads, goal))
-        return {};
-
+    std::unordered_map<std::uint64_t, std::unordered_set<std::uint64_t>> adjacency;
+    adjacency.reserve(roads.size() * 2);
+    for (const auto& edge : roads) {
+        if (!edge.enabled) continue;
+        adjacency[Key(edge.a)].insert(Key(edge.b));
+        adjacency[Key(edge.b)].insert(Key(edge.a));
+    }
+    if (!adjacency.count(Key(start)) || !adjacency.count(Key(goal))) return {};
     std::unordered_map<std::uint64_t, Cell> previous;
-    previous.reserve(roads.size() * 2);
+    previous.reserve(adjacency.size());
     previous.emplace(Key(start), start);
     std::vector<Cell> queue{start};
     std::size_t head = 0;
@@ -54,13 +60,9 @@ std::vector<Cell> ShortestRoadPath(const std::vector<RoadEdge>& roads, Cell star
                 continue;
             const Cell next{static_cast<std::int32_t>(at.x + d.x),
                             static_cast<std::int32_t>(at.z + d.z)};
-            const bool linked = std::any_of(roads.begin(), roads.end(), [&](const RoadEdge& edge) {
-                if (!edge.enabled)
-                    return false;
-                return (Equal(edge.a, at) && Equal(edge.b, next)) ||
-                       (Equal(edge.b, at) && Equal(edge.a, next));
-            });
-            if (!linked || !previous.emplace(Key(next), at).second)
+            const auto linked = adjacency.find(Key(at));
+            if (linked == adjacency.end() || !linked->second.count(Key(next)) ||
+                !previous.emplace(Key(next), at).second)
                 continue;
             queue.push_back(next);
             if (Equal(next, goal)) {
@@ -79,6 +81,146 @@ std::vector<Cell> ShortestRoadPath(const std::vector<RoadEdge>& roads, Cell star
         }
     }
     return {};
+}
+
+CommuteIndex::CommuteIndex(const std::vector<RoadEdge>& roads, const std::vector<Cell>& homes) : roads_(roads) {
+    adjacency_.reserve(roads.size() * 2);
+    for (const auto& edge : roads_) {
+        if (!edge.enabled) continue;
+        adjacency_[Key(edge.a)].push_back(edge.b);
+        adjacency_[Key(edge.b)].push_back(edge.a);
+    }
+    std::uint64_t nextComponent = 1;
+    std::vector<Cell> queue;
+    for (const auto& entry : adjacency_) {
+        if (component_.count(entry.first)) continue;
+        queue.clear();
+        queue.push_back(Cell{static_cast<std::int32_t>(entry.first >> 32),
+                             static_cast<std::int32_t>(entry.first)});
+        component_.emplace(entry.first, nextComponent);
+        for (std::size_t head = 0; head < queue.size(); ++head) {
+            const auto found = adjacency_.find(Key(queue[head]));
+            if (found == adjacency_.end()) continue;
+            for (const auto neighbor : found->second)
+                if (component_.emplace(Key(neighbor), nextComponent).second)
+                    queue.push_back(neighbor);
+        }
+        ++nextComponent;
+    }
+    for (std::size_t i = 0; i < homes.size(); ++i) homesByCell_[Key(homes[i])].push_back(i);
+}
+
+const CommuteIndex::Distances& CommuteIndex::DistancesFrom(Cell source,
+                                                            std::uint64_t maximumDistance) {
+    const auto sourceKey = Key(source);
+    const auto cached = distanceCache_.find(sourceKey);
+    if (cached != distanceCache_.end() && cacheRadius_[sourceKey] >= maximumDistance)
+        return cached->second;
+    Distances distances;
+    distances.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(
+        adjacency_.size(), maximumDistance > 4096 ? adjacency_.size() : maximumDistance * 2 + 1)));
+    std::vector<Cell> queue{source};
+    distances.emplace(sourceKey, 0);
+    for (std::size_t head = 0; head < queue.size(); ++head) {
+        const auto distance = distances.at(Key(queue[head]));
+        if (distance >= maximumDistance) continue;
+        const auto found = adjacency_.find(Key(queue[head]));
+        if (found == adjacency_.end()) continue;
+        for (const auto neighbor : found->second) {
+            const auto key = Key(neighbor);
+            if (distances.emplace(key, distance + 1).second) queue.push_back(neighbor);
+        }
+    }
+    auto& result = distanceCache_[sourceKey];
+    result = std::move(distances);
+    cacheRadius_[sourceKey] = maximumDistance;
+    return result;
+}
+
+bool CommuteIndex::Eligible(Cell home, Cell workplace, std::uint64_t roadDistanceThreshold,
+                           const Route* route, std::uint64_t transferDistance) {
+    if (Equal(home, workplace)) return true;
+    const auto homeComponent = component_.find(Key(home));
+    const auto workComponent = component_.find(Key(workplace));
+    if (homeComponent == component_.end() || workComponent == component_.end() ||
+        homeComponent->second != workComponent->second)
+        return false;
+    const auto maximum = std::max(roadDistanceThreshold, transferDistance);
+    const auto& fromHome = DistancesFrom(home, maximum);
+    const auto direct = fromHome.find(Key(workplace));
+    if (direct != fromHome.end() && direct->second <= roadDistanceThreshold) return true;
+    if (!route || route->stops.size() < 2) return false;
+    if (validatedRoute_ != route) {
+        routeChecked_ = false;
+        validatedRoute_ = route;
+    }
+    if (!routeChecked_) {
+        std::string ignored;
+        routeValid_ = ValidateRoute(*route, roads_, ignored);
+        routeChecked_ = true;
+    }
+    if (!routeValid_) return false;
+    const auto& homeDistances = DistancesFrom(home, transferDistance);
+    const auto& workDistances = DistancesFrom(workplace, transferDistance);
+    for (std::size_t homeIndex = 0; homeIndex < route->stops.size(); ++homeIndex) {
+        const auto homeStop = homeDistances.find(Key(route->stops[homeIndex]));
+        if (homeStop == homeDistances.end() || homeStop->second > transferDistance) continue;
+        for (std::size_t workIndex = 0; workIndex < route->stops.size(); ++workIndex) {
+            if (homeIndex == workIndex) continue;
+            const auto workStop = workDistances.find(Key(route->stops[workIndex]));
+            if (workStop != workDistances.end() && workStop->second <= transferDistance) return true;
+        }
+    }
+    return false;
+}
+
+bool CommuteIndex::WithinDistance(Cell start, Cell goal, std::uint64_t maximumDistance) {
+    const auto& distances = DistancesFrom(start, maximumDistance);
+    const auto found = distances.find(Key(goal));
+    return found != distances.end() && found->second <= maximumDistance;
+}
+
+std::vector<std::size_t> CommuteIndex::CandidateHomes(Cell workplace,
+                                                       std::uint64_t roadDistanceThreshold,
+                                                       const Route* route,
+                                                       std::uint64_t transferDistance) {
+    std::vector<std::size_t> candidates;
+    const auto& workDistances = DistancesFrom(workplace, std::max(roadDistanceThreshold, transferDistance));
+    auto appendHomes = [&](const Distances& distances, std::uint64_t limit) {
+        for (const auto& entry : distances) {
+            if (entry.second > limit) continue;
+            const auto homes = homesByCell_.find(entry.first);
+            if (homes != homesByCell_.end())
+                candidates.insert(candidates.end(), homes->second.begin(), homes->second.end());
+        }
+    };
+    appendHomes(workDistances, roadDistanceThreshold);
+    if (route && route->stops.size() >= 2) {
+        if (validatedRoute_ != route) { routeChecked_ = false; validatedRoute_ = route; }
+        if (!routeChecked_) {
+            std::string ignored;
+            routeValid_ = ValidateRoute(*route, roads_, ignored);
+            routeChecked_ = true;
+        }
+        if (routeValid_) {
+            std::vector<std::size_t> workStops;
+            for (std::size_t i = 0; i < route->stops.size(); ++i) {
+                const auto found = workDistances.find(Key(route->stops[i]));
+                if (found != workDistances.end() && found->second <= transferDistance)
+                    workStops.push_back(i);
+            }
+            for (std::size_t homeStop = 0; homeStop < route->stops.size(); ++homeStop) {
+                if (std::none_of(workStops.begin(), workStops.end(), [homeStop](std::size_t workStop) {
+                        return workStop != homeStop;
+                    })) continue;
+                const auto& homeDistances = DistancesFrom(route->stops[homeStop], transferDistance);
+                appendHomes(homeDistances, transferDistance);
+            }
+        }
+    }
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+    return candidates;
 }
 
 bool ValidateRoute(const Route& route, const std::vector<RoadEdge>& roads, std::string& error) {

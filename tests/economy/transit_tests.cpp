@@ -25,6 +25,11 @@ int main() {
     const auto path = ShortestRoadPath(roads, {0, 0}, {10, 0});
     check(path.size() == 11 && path.front() == Cell{0, 0} && path.back() == Cell{10, 0},
           "shortest road path includes both endpoints");
+    const std::vector<RoadEdge> tiedRoads{{{0, 0}, {0, 1}, true}, {{0, 1}, {1, 1}, true},
+                                           {{0, 0}, {1, 0}, true}, {{1, 0}, {1, 1}, true}};
+    check(ShortestRoadPath(tiedRoads, {0, 0}, {1, 1}) ==
+              std::vector<Cell>{{0, 0}, {1, 0}, {1, 1}},
+          "road index retains west/east/north/south tie-breaking independent of edge insertion order");
 
     Route route{{{0, 0}, {10, 0}}, 4, 2, 1, 1};
     std::string error;
@@ -51,6 +56,21 @@ int main() {
           "distant commute is eligible when route connects home and workplace stops");
     const auto outsideTransfer = EvaluateCommute({1, 0}, {10, 0}, 4, &route, roads, 0);
     check(!outsideTransfer.eligible, "home away from route stop transfer radius is ineligible");
+
+    CommuteIndex indexedRoads(roads, {{1, 0}, {0, 0}});
+    check(indexedRoads.Eligible({1, 0}, {3, 0}, 3, nullptr),
+          "indexed commute keeps direct short commute eligibility");
+    check(!indexedRoads.Eligible({0, 0}, {10, 0}, 4, nullptr),
+          "indexed commute still requires transit for long trips");
+    check(indexedRoads.Eligible({0, 0}, {10, 0}, 4, &route),
+          "indexed commute accepts a connected transit route");
+    check(!indexedRoads.Eligible({1, 0}, {10, 0}, 4, &route, 0),
+          "indexed commute respects transfer distance");
+    check(indexedRoads.CandidateHomes({10, 0}, 4, &route, 0) == std::vector<std::size_t>{1},
+          "indexed candidates preserve only homes eligible through distinct route stops");
+    check(indexedRoads.WithinDistance({1, 0}, {3, 0}, 2) &&
+          !indexedRoads.WithinDistance({1, 0}, {10, 0}, 2),
+          "bounded road distances answer transfer-radius reachability");
 
     Route busRoute{{{0, 0}, {3, 0}}, 2, 1, 1, 1};
     std::vector<RoadEdge> shortRoads{{{0, 0}, {1, 0}, true}, {{1, 0}, {2, 0}, true},

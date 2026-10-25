@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace openrepublic::economy::transit {
@@ -36,6 +37,32 @@ struct CommuteResult {
     bool requiresTransit{};
     bool routeConnects{};
     bool eligible{};
+};
+
+// A tick-local derived road index used by workforce assignment. Distances are
+// cached per queried cell and limited to the commute or transfer radius.
+class CommuteIndex final {
+public:
+    CommuteIndex(const std::vector<RoadEdge>& roads, const std::vector<Cell>& homes);
+    bool Eligible(Cell home, Cell workplace, std::uint64_t roadDistanceThreshold,
+                  const Route* route, std::uint64_t transferDistance = 0);
+    bool WithinDistance(Cell start, Cell goal, std::uint64_t maximumDistance);
+    std::vector<std::size_t> CandidateHomes(Cell workplace, std::uint64_t roadDistanceThreshold,
+                                             const Route* route,
+                                             std::uint64_t transferDistance = 0);
+
+private:
+    using Distances = std::unordered_map<std::uint64_t, std::uint64_t>;
+    const Distances& DistancesFrom(Cell source, std::uint64_t maximumDistance);
+    std::vector<RoadEdge> roads_;
+    std::unordered_map<std::uint64_t, std::vector<Cell>> adjacency_;
+    std::unordered_map<std::uint64_t, std::uint64_t> component_;
+    std::unordered_map<std::uint64_t, Distances> distanceCache_;
+    std::unordered_map<std::uint64_t, std::uint64_t> cacheRadius_;
+    std::unordered_map<std::uint64_t, std::vector<std::size_t>> homesByCell_;
+    const Route* validatedRoute_{};
+    bool routeChecked_{};
+    bool routeValid_{};
 };
 
 // Homes at or below the threshold can commute over the road network directly.
