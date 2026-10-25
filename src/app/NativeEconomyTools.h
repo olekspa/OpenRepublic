@@ -45,6 +45,8 @@ namespace openrepublic::preview
 		/** Positions the construction and haul rows below the caller's top row.
 		 *  Returns the y-coordinate available for the next status/control row. */
 		float Layout(float viewportWidth, float startY);
+		void SetExpanded(bool expanded);
+		bool IsExpanded() const noexcept { return expanded_; }
 
 		/** Rebuilds the resource dropdown only when its eligible resource IDs
 		 *  change, preserving the current resource when it remains eligible. */
@@ -126,5 +128,6 @@ namespace openrepublic::preview
 		bool nativeConstruction_ = true;
 		bool dispatchControls_ = true;
 		bool railControls_ = false;
+		bool expanded_ = false;
 	};
 }

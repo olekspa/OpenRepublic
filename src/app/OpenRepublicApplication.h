@@ -201,6 +201,7 @@ namespace openrepublic
 		wi::gui::Label nativeObjectiveLabel;
 		wi::gui::Button nativeQuitButton;
 		wi::gui::Button nativeGameMenuButton;
+		wi::gui::Button nativeToolsButton;
 		std::array<wi::gui::Button, 3> nativeNewGameButtons;
 		std::array<wi::gui::Button, 8> nativeSaveSlotButtons;
 		std::array<wi::gui::Button, 2> nativeSavePageButtons;

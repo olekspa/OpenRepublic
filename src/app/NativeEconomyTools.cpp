@@ -388,6 +388,23 @@ namespace openrepublic::preview
 		}
 
 		RegisterWidgets(gui);
+		SetExpanded(expanded_);
+	}
+
+	void NativeEconomyTools::SetExpanded(bool expanded)
+	{
+		expanded_ = expanded;
+		const std::array<wi::gui::Widget*, 30> widgets = {
+			&buildingType_, &resource_, &vehicleType_, &order_, &roadChoice_, &utilityResource_,
+			&dispatchVehicle_, &dispatchSource_, &dispatchDestination_, &dispatchResource_, &dispatchAmount_,
+			&trainType_, &trainSource_, &trainDestination_, &trainResource_, &place_, &road_, &placeStation_,
+			&rail_, &cancel_, &remove_, &retargetOrder_, &cancelOrder_, &toggleRoad_, &connectUtility_,
+			&disconnectUtility_, &dispatch_, &buyCoal_, &autoRun_, &dispatchTrain_
+		};
+		for (wi::gui::Widget* widget : widgets)
+		{
+			widget->SetVisible(expanded && widget->IsEnabled());
+		}
 	}
 
 	float NativeEconomyTools::Layout(float viewportWidth, float startY)
@@ -395,6 +412,11 @@ namespace openrepublic::preview
 		if (!std::isfinite(viewportWidth)) viewportWidth = 0.0f;
 		if (!std::isfinite(startY)) startY = 0.0f;
 		viewportWidth = std::max(0.0f, viewportWidth);
+		if (!expanded_)
+		{
+			hasLayout_ = true;
+			return startY;
+		}
 		const float left = std::min(kLeft, viewportWidth * 0.5f);
 		const float available = std::max(1.0f, viewportWidth - 2.0f * left);
 
@@ -559,8 +581,8 @@ namespace openrepublic::preview
 	}
 	void NativeEconomyTools::SetAutoRun(bool enabled) { autoRunEnabled_=enabled; autoRun_.SetText(enabled ? "Auto-run logistics: on" : "Auto-run logistics: off"); }
 	void NativeEconomyTools::SetCoalDemoControls(bool enabled) {
-		buyCoal_.SetVisible(enabled); buyCoal_.SetEnabled(enabled);
-		autoRun_.SetVisible(enabled); autoRun_.SetEnabled(enabled);
+		buyCoal_.SetEnabled(enabled); buyCoal_.SetVisible(expanded_ && enabled);
+		autoRun_.SetEnabled(enabled); autoRun_.SetVisible(expanded_ && enabled);
 	}
 
 	void NativeEconomyTools::RefreshOrders(const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog)
