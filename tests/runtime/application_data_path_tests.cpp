@@ -30,8 +30,24 @@ int main()
 	const auto cwd = root / "unrelated";
 	const auto executable = root / "build" / "bin" / "OpenRepublic.exe";
 	const auto packaged = root / relative;
+	const auto exeDirectory = root / "build" / "bin";
 	try
 	{
+		std::filesystem::create_directories(root / "third_party" / "WickedEngine" / "WickedEngine" / "shaders");
+		std::filesystem::create_directories(exeDirectory);
+		Require(openrepublic::runtime::ResolveEngineWorkingDirectory(executable) == root,
+			"engine working-directory resolver did not find the nearest ancestor with engine shaders");
+		std::filesystem::create_directories(exeDirectory / "WickedEngine" / "shaders");
+		Require(openrepublic::runtime::ResolveEngineWorkingDirectory(executable) == exeDirectory,
+			"engine working-directory resolver did not prefer the nearest resource tree");
+		std::filesystem::remove_all(exeDirectory / "WickedEngine");
+		const auto fallbackRoot = std::filesystem::temp_directory_path() /
+			("OpenRepublicApplicationDataPathFallbackTests-" + std::to_string(unique));
+		const auto fallbackExe = fallbackRoot / "bin" / "OpenRepublic.exe";
+		std::filesystem::create_directories(fallbackExe.parent_path());
+		Require(openrepublic::runtime::ResolveEngineWorkingDirectory(fallbackExe) == fallbackExe.parent_path(),
+			"engine working-directory resolver did not fall back to executable directory");
+		std::filesystem::remove_all(fallbackRoot);
 		WriteFile(packaged);
 		const auto fallback = openrepublic::runtime::ResolveApplicationDataPath(relative, cwd, executable);
 		Require(fallback == packaged, "resolver did not find packaged data by walking up from executable directory");
