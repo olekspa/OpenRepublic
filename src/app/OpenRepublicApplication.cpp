@@ -26,6 +26,7 @@
 #include "openrepublic/compat/catalog_import.h"
 #include "openrepublic/compat/region_roads.h"
 #include "openrepublic/runtime/native_toolbar_layout.h"
+#include "openrepublic/runtime/panel_layout.h"
 
 #ifdef OPENREPUBLIC_WITH_LUA_RULES
 #include "openrepublic/scripting/lua_rules_loader.h"
@@ -2216,7 +2217,8 @@ namespace openrepublic
 			if (!nativeHudSnapshot) nativeHudSnapshot = nativeEconomyCheckpoint.world->Snapshot();
 			const float uiScale = std::max(1.0f, renderPath->GetDPIScaling());
 			nativeEconomyHud.Layout(static_cast<float>(renderPath->GetLogicalWidth()) / uiScale,
-				static_cast<float>(renderPath->GetLogicalHeight()) / uiScale, nativeStatusTop + 4.0f);
+				static_cast<float>(renderPath->GetLogicalHeight()) / uiScale, nativeStatusTop + 4.0f,
+				nativeGameMenuExpanded || nativeOverviewExpanded);
 			std::string hoverText;
 			if (!guiHasFocus && renderPath->camera)
 			{
@@ -2773,6 +2775,20 @@ namespace openrepublic
 			const float desiredHeight = measuredTextHeight + 4.0f + simulationStatus.margin_top + simulationStatus.margin_bottom;
 			const float statusHeight = std::max(60.0f, std::min(statusHeightCap, desiredHeight));
 			simulationStatus.SetSize(XMFLOAT2(statusWidth, statusHeight));
+			if (nativeOverviewExpanded && ownedStatus)
+			{
+				const float panelTop = nativeStatusTop + 88.0f;
+				const auto panels = runtime::LayoutPanels(viewportWidth, viewportHeight, 1.0f, {
+					{"game", {0.0f, panelTop, std::min(560.0f, viewportWidth * 0.42f), std::min(360.0f, viewportHeight - panelTop - 32.0f)}, runtime::PanelDock::Right, 100, nativeGameMenuExpanded, true},
+					{"overview", {18.0f, panelTop, std::min(520.0f, viewportWidth * 0.38f), std::min(360.0f, viewportHeight - panelTop - 32.0f)}, runtime::PanelDock::Left, 90, true, true}
+				});
+				for (const auto& panel : panels.panels) if (panel.visible && panel.id == "overview")
+				{
+					simulationStatus.SetPos(XMFLOAT2(panel.rect.x, panel.rect.y));
+					simulationStatus.SetSize(XMFLOAT2(panel.rect.width, panel.rect.height));
+					simulationStatus.font.params.h_wrap = panel.rect.width - simulationStatus.margin_left - simulationStatus.margin_right;
+				}
+			}
 		}
 	}
 
@@ -3184,8 +3200,8 @@ namespace openrepublic
 		if (nativeObjectiveSet)
 		{
 			const float viewportHeight = static_cast<float>(renderPath->GetLogicalHeight()) / uiScale;
-			nativeObjectiveLabel.SetPos(XMFLOAT2(18.0f, std::max(18.0f, viewportHeight - 174.0f)));
-			nativeObjectiveLabel.SetVisible(!nativeGameMenuExpanded);
+			nativeObjectiveLabel.SetPos(XMFLOAT2(18.0f, std::max(nativeStatusTop + 12.0f, viewportHeight - 174.0f)));
+			nativeObjectiveLabel.SetVisible(!nativeGameMenuExpanded && !nativeOverviewExpanded);
 		}
 		float menuY = nativeStatusTop + 8.0f;
 		for (auto& button : nativeNewGameButtons)
@@ -3199,17 +3215,43 @@ namespace openrepublic
 		nativeQuitButton.SetVisible(nativeGameMenuExpanded);
 		nativeQuitButton.SetPos(XMFLOAT2(18.0f, menuY + 32.0f));
 		menuY += 64.0f;
+		const float viewportHeight = static_cast<float>(renderPath->GetLogicalHeight()) / uiScale;
+		const float viewportWidth = static_cast<float>(renderPath->GetLogicalWidth()) / uiScale;
+		const float panelTop = nativeStatusTop + 88.0f;
+		const float gameWidth = std::min(560.0f, std::max(360.0f, viewportWidth * 0.42f));
+		const float gameHeight = std::min(360.0f, std::max(180.0f, viewportHeight - panelTop - 32.0f));
+		const auto panelLayout = runtime::LayoutPanels(viewportWidth, viewportHeight, 1.0f, {
+			{"game", {0.0f, panelTop, gameWidth, gameHeight}, runtime::PanelDock::Right, 100, nativeGameMenuExpanded, true},
+			{"overview", {18.0f, panelTop, std::min(520.0f, viewportWidth * 0.38f), std::min(360.0f, viewportHeight - panelTop - 32.0f)}, runtime::PanelDock::Left, 90, nativeOverviewExpanded, true}
+		});
+		for (const auto& panel : panelLayout.panels) if (panel.visible && panel.id == "game") {
+			menuY = panel.rect.y;
+			float leftMenuY = menuY;
+			for (auto& button : nativeNewGameButtons) {
+				button.SetPos(XMFLOAT2(panel.rect.x + 8.0f, leftMenuY));
+				leftMenuY += 32.0f;
+			}
+			nativeSaveButton.SetPos(XMFLOAT2(panel.rect.x + 8.0f, leftMenuY));
+			nativeQuitButton.SetPos(XMFLOAT2(panel.rect.x + 8.0f, leftMenuY + 32.0f));
+			menuY += 8.0f;
+		}
 		for (auto& button : nativeSaveSlotButtons)
 		{
-			button.SetVisible(nativeGameMenuExpanded && !nativeSaveSlots.empty());
-			button.SetPos(XMFLOAT2(218.0f, menuY));
+			button.SetVisible(nativeGameMenuExpanded && nativeSaveSlotOffset + static_cast<std::size_t>(&button - nativeSaveSlotButtons.data()) < nativeSaveSlots.size());
+			button.SetPos(XMFLOAT2(viewportWidth - gameWidth + 190.0f, menuY));
+			button.SetSize(XMFLOAT2(std::max(150.0f, gameWidth - 210.0f), 28.0f));
 			menuY += 32.0f;
 		}
 		for (std::size_t i = 0; i < nativeSavePageButtons.size(); ++i)
 		{
 			nativeSavePageButtons[i].SetVisible(nativeGameMenuExpanded &&
 				(i == 0 ? nativeSaveSlotOffset > 0 : nativeSaveSlotOffset + nativeSaveSlotButtons.size() < nativeSaveSlots.size()));
-			nativeSavePageButtons[i].SetPos(XMFLOAT2(18.0f + 138.0f * static_cast<float>(i), menuY));
+			nativeSavePageButtons[i].SetPos(XMFLOAT2(viewportWidth - gameWidth + 8.0f + 138.0f * static_cast<float>(i), menuY));
+		}
+		for (const auto& panel : panelLayout.panels) if (panel.visible && panel.id == "overview") {
+			simulationStatus.SetPos(XMFLOAT2(panel.rect.x + 8.0f, panel.rect.y + 8.0f));
+			simulationStatus.SetSize(XMFLOAT2(panel.rect.width - 16.0f, panel.rect.height - 16.0f));
+			simulationStatus.font.params.h_wrap = panel.rect.width - 40.0f;
 		}
 	}
 
@@ -3423,7 +3465,10 @@ namespace openrepublic
 			const auto slotIndex = nativeSaveSlotOffset + i;
 			if (slotIndex >= nativeSaveSlots.size()) { button.SetVisible(false); continue; }
 			const auto& slot = nativeSaveSlots[slotIndex];
-			std::string label = "Load: " + slot.name;
+			std::string slotLabel = slot.name;
+			const std::string prefix = "NativeEconomySaveSlot";
+			if (slotLabel.rfind(prefix, 0) == 0) slotLabel = "Save Slot " + slotLabel.substr(prefix.size());
+			std::string label = "Load: " + slotLabel;
 			if (slot.savedAtUnixSeconds != 0 && slot.savedAtUnixSeconds <= static_cast<std::uint64_t>(std::numeric_limits<std::time_t>::max()))
 			{
 				const std::time_t stamp = static_cast<std::time_t>(slot.savedAtUnixSeconds);
@@ -3432,8 +3477,7 @@ namespace openrepublic
 				char date[32]{};
 				std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M", &local);
 				label += " | " + std::string(date);
-				if (slot.hasMetadata) label += " | tick " + std::to_string(slot.tick) +
-					" | buildings " + std::to_string(slot.buildingCount);
+				if (slot.hasMetadata) label += " | tick " + std::to_string(slot.tick);
 			}
 			button.SetText(label);
 			button.SetVisible(true);
