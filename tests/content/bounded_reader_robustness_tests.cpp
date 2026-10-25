@@ -86,6 +86,19 @@ void TestDeterministicMutationCorpus() {
         for (unsigned i = 0; i < 4; ++i) oversized[i] = static_cast<char>(count >> (8u * i));
         Exercise(oversized);
     }
+
+    // Exhaust truncation points of minimal complete framing examples for the
+    // public road/header and worker walkers as well.
+    std::string emptyRoad(12, '\0');
+    for (std::size_t length = 0; length < emptyRoad.size(); ++length) Exercise(emptyRoad.substr(0, length));
+    std::string prefix(8, '\0');
+    prefix[4] = 'x';
+    for (std::size_t length = 0; length < prefix.size(); ++length) Exercise(prefix.substr(0, length));
+    std::string fixed(0x20c, '\0');
+    fixed[0] = 121;
+    for (std::size_t length = 0; length < fixed.size(); ++length) Exercise(fixed.substr(0, length));
+    std::string emptyWorkers(4, '\0');
+    for (std::size_t length = 0; length < emptyWorkers.size(); ++length) Exercise(emptyWorkers.substr(0, length));
 }
 
 void TestCatalogImportTransaction() {
