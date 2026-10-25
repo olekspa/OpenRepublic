@@ -7,6 +7,7 @@
 #include "openrepublic/runtime/ambient_traffic.h"
 #include "openrepublic/procgeo/vehicles.h"
 #include "openrepublic/runtime/synthetic_terrain.h"
+#include "openrepublic/runtime/native_traffic_polish.h"
 
 #include <optional>
 #include <array>
@@ -33,6 +34,7 @@ namespace openrepublic::preview
 		void UpdateVehicleMotion(wi::scene::Scene& scene, double alpha,
 			const std::function<double(double, double)>& groundHeight = {});
 		void SetAmbientTraffic(bool enabled) noexcept { ambientTrafficEnabled_ = enabled; }
+		void SetTrafficPolish(bool enabled) noexcept { trafficPolishEnabled_ = enabled; }
 		void SetDarkLighting(bool dark) noexcept { darkLighting_ = dark; }
 		// Re-centers native geometry around the current snapshot. The caller can use
 		// this for an explicit framing action while leaving ordinary Sync frozen.
@@ -118,6 +120,7 @@ namespace openrepublic::preview
 		std::unordered_map<economy::VehicleId, VehicleVisual> vehicles_;
 		std::vector<AmbientVehicleVisual> ambientVehicles_;
 		bool ambientTrafficEnabled_ = false;
+		bool trafficPolishEnabled_ = false;
 		bool darkLighting_ = false;
 		bool SyncAmbientTraffic(wi::scene::Scene& scene, const economy::WorldSnapshot& snapshot, std::string& error);
 		std::unordered_map<economy::BuildingId, BuildingEffect> buildingEffects_;
