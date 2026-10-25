@@ -1889,7 +1889,7 @@ namespace openrepublic
 			}
 			else if (nativeEconomyRunClock.Advance(static_cast<double>(dt)) != 0)
 			{
-				const bool stepSucceeded = QueueRegionStep(1, true);
+				const bool stepSucceeded = QueueRegionStep(nativeEconomySpeed, true);
 				if (!stepSucceeded || !nativeEconomyPresentationValid)
 				{
 					nativeEconomyRunning = false;
@@ -2019,9 +2019,32 @@ namespace openrepublic
 			else if (activeFacilityPlacement.has_value() || activeStoragePlacement) CancelFacilityPlacement();
 			else SelectBuilding(wi::ecs::INVALID_ENTITY);
 		}
+		if (nativeEconomyCheckpointMode && !guiHasFocus) {
+			if (wi::input::Press(static_cast<wi::input::BUTTON>('B'))) BeginNativeBuildingPlacement();
+			else if (wi::input::Press(static_cast<wi::input::BUTTON>('R'))) BeginNativeRoadPlacement();
+			else if (wi::input::Press(static_cast<wi::input::BUTTON>('X'))) { CancelNativeConstruction(); nativeConstructionMode = NativeConstructionMode::Remove; uiNotice = "Bulldoze: click a building under the pointer. Road removal is not yet supported by the economy API."; UpdateRegionStatus(); }
+			else if (wi::input::Press(wi::input::KEYBOARD_BUTTON_SPACE)) ToggleNativeRunPause();
+			else if (wi::input::Press(static_cast<wi::input::BUTTON>('1'))) nativeEconomySpeed = 1;
+			else if (wi::input::Press(static_cast<wi::input::BUTTON>('2'))) nativeEconomySpeed = 2;
+			else if (wi::input::Press(static_cast<wi::input::BUTTON>('3'))) nativeEconomySpeed = 3;
+			else if (wi::input::Press(static_cast<wi::input::BUTTON>('4'))) nativeEconomySpeed = 4;
+		}
 		if (!guiHasFocus && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT))
 		{
-			PickAtPointer();
+			if (nativeEconomyCheckpointMode && nativeConstructionMode == NativeConstructionMode::Remove) {
+				const auto cell = NativeCellAtPointer();
+				if (cell && regionEconomySnapshot) {
+					const auto nativeSnapshot = nativeEconomyCheckpoint.world->Snapshot();
+					const auto it = std::find_if(nativeSnapshot.buildings.begin(), nativeSnapshot.buildings.end(), [&](const auto& b) {
+						const auto* type = nativeEconomyCheckpoint.catalog->BuildingType(b.type);
+						return type && cell->x >= b.origin.x && cell->z >= b.origin.z && cell->x < b.origin.x + static_cast<std::int32_t>(type->width) && cell->z < b.origin.z + static_cast<std::int32_t>(type->depth);
+					});
+					if (it != nativeSnapshot.buildings.end()) {
+						TrackNativeSubmission(regionEconomyApi->RemoveBuilding(regionEconomySnapshot->revision, it->id), "bulldoze building");
+						CancelNativeConstruction();
+					}
+				}
+			} else PickAtPointer();
 		}
 		if (guiHasFocus)
 		{
@@ -2044,7 +2067,7 @@ namespace openrepublic
 		if (isDownOrPressed(static_cast<wi::input::BUTTON>('S')) || isDownOrPressed(wi::input::KEYBOARD_BUTTON_DOWN)) movement = XMVectorSubtract(movement, forward);
 		if (isDownOrPressed(static_cast<wi::input::BUTTON>('D')) || isDownOrPressed(wi::input::KEYBOARD_BUTTON_RIGHT)) movement = XMVectorAdd(movement, right);
 		if (isDownOrPressed(static_cast<wi::input::BUTTON>('A')) || isDownOrPressed(wi::input::KEYBOARD_BUTTON_LEFT)) movement = XMVectorSubtract(movement, right);
-		if (isDownOrPressed(wi::input::KEYBOARD_BUTTON_SPACE)) movement = XMVectorAdd(movement, XMVectorSet(0, 1, 0, 0));
+		if (isDownOrPressed(wi::input::KEYBOARD_BUTTON_SPACE) && !nativeEconomyCheckpointMode) movement = XMVectorAdd(movement, XMVectorSet(0, 1, 0, 0));
 		if (isDownOrPressed(wi::input::KEYBOARD_BUTTON_LCONTROL)) movement = XMVectorSubtract(movement, XMVectorSet(0, 1, 0, 0));
 
 		bool cameraMoved = false;
@@ -2284,9 +2307,13 @@ namespace openrepublic
 			}
 			else if (nativeConstructionMode == NativeConstructionMode::Road)
 			{
-				text << "\nRoad: choose two cells on one row or column (up to 64 segments); step to apply. Esc cancels.";
-				if (nativeRoadStart) text << " Start: (" << nativeRoadStart->x << ", " << nativeRoadStart->z << ").";
+				text << "\nRoad: choose two cells on one row or column (up to 64 segments); cost unavailable in this economy model. Esc cancels.";
+				if (nativeRoadStart) {
+					text << " Start: (" << nativeRoadStart->x << ", " << nativeRoadStart->z << ").";
+					if (nativeHoverCell) text << " Preview length: " << std::abs(nativeHoverCell->x - nativeRoadStart->x) + std::abs(nativeHoverCell->z - nativeRoadStart->z) << " segments.";
+				}
 			}
+			text << "\nB building | R road | X bulldoze | Esc cancel | Space pause/run | 1-4 speed (" << nativeEconomySpeed << " ticks/step)";
 			const auto orders = nativeEconomyCheckpoint.world->Snapshot().orders;
 			const auto chosen = nativeEconomyTools.SelectedOrder();
 			const auto order = std::find_if(orders.begin(), orders.end(),
@@ -3240,6 +3267,18 @@ namespace openrepublic
 		float width = 4.0f, depth = 4.0f;
 		const auto center = nativeEconomyScene.CellPosition(*cell);
 		float x = center.x, z = center.z;
+		bool roadDraftValid = false;
+		if (nativeConstructionMode == NativeConstructionMode::Road && nativeRoadStart) {
+			const auto dx = static_cast<std::int64_t>(cell->x) - nativeRoadStart->x;
+			const auto dz = static_cast<std::int64_t>(cell->z) - nativeRoadStart->z;
+			const auto length = std::abs(dx) + std::abs(dz);
+			roadDraftValid = (dx == 0 || dz == 0) && length > 0 && length <= 64;
+			width = 4.0f * static_cast<float>(std::max<std::int64_t>(1, std::abs(dx) + (dx != 0 ? 1 : 0)));
+			depth = 4.0f * static_cast<float>(std::max<std::int64_t>(1, std::abs(dz) + (dz != 0 ? 1 : 0)));
+			const auto startCenter = nativeEconomyScene.CellPosition(*nativeRoadStart);
+			x = (center.x + startCenter.x) * 0.5f;
+			z = (center.z + startCenter.z) * 0.5f;
+		}
 		if (nativeConstructionMode == NativeConstructionMode::Building)
 		{
 			const auto* type = nativeEconomyCheckpoint.world->GetCatalog().BuildingType(nativePlacementType);
@@ -3250,11 +3289,16 @@ namespace openrepublic
 		if (nativeConstructionPreview == wi::ecs::INVALID_ENTITY)
 		{
 			nativeConstructionPreview = previewWorld.Entity_CreateCube("Native construction draft");
-			if (auto* material = previewWorld.materials.GetComponent(nativeConstructionPreview))
-			{
-				material->SetBaseColor(XMFLOAT4(0.95f, 0.72f, 0.20f, 0.65f));
-				material->CreateRenderData(true);
-			}
+		}
+		if (auto* material = previewWorld.materials.GetComponent(nativeConstructionPreview))
+		{
+			bool valid = false;
+			if (nativeConstructionMode == NativeConstructionMode::Building)
+				valid = runtime::ValidateNativeBuildingPlacement(nativeEconomyCheckpoint.world->Snapshot(),
+					nativeEconomyCheckpoint.world->GetCatalog(), nativePlacementType, *cell).Valid();
+			else if (nativeConstructionMode == NativeConstructionMode::Road) valid = roadDraftValid || !nativeRoadStart;
+			material->SetBaseColor(valid ? XMFLOAT4(0.10f, 0.90f, 0.25f, 0.42f) : XMFLOAT4(0.95f, 0.12f, 0.08f, 0.48f));
+			material->CreateRenderData(true);
 		}
 		if (auto* transform = previewWorld.transforms.GetComponent(nativeConstructionPreview))
 		{
