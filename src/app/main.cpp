@@ -8,6 +8,7 @@
 #include "openrepublic/compat/storage_profile.h"
 #include "openrepublic/compat/catalog_import.h"
 #include "openrepublic/runtime/native_objectives.h"
+#include "openrepublic/runtime/play_options.h"
 #include "json.hpp"
 
 #include <windows.h>
@@ -190,6 +191,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 
 	int argumentCount = 0;
 	LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+	std::vector<std::wstring> rawArguments;
+	for (int i = 1; arguments != nullptr && i < argumentCount; ++i) rawArguments.emplace_back(arguments[i]);
+	const auto playOptions = openrepublic::runtime::ResolvePlayOptions(rawArguments);
+	if (!playOptions.error.empty())
+	{
+		LocalFree(arguments);
+		return LogNativeEconomyStartupError(playOptions.error);
+	}
 	std::filesystem::path sceneProbePath;
 	std::filesystem::path glbProbePath;
 	std::filesystem::path nmfProbePath;
@@ -254,6 +263,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::wstring nativeObjectivesArgument;
 	std::optional<openrepublic::runtime::NativeObjectiveSet> nativeObjectiveSet;
 	bool ambientTrafficArgumentSeen = false;
+	bool nativeTrafficPolishArgumentSeen = false;
 	bool nativeTerrainArgumentSeen = false;
 	bool nativeContentCatalogArgumentSeen = false;
 	std::filesystem::path nativeContentCatalogPath;
@@ -337,6 +347,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				else nativeObjectivesArgument = arguments[++i];
 			}
 			else if (argument == L"--ambient-traffic") ambientTrafficArgumentSeen = true;
+			else if (argument == L"--native-traffic-polish") nativeTrafficPolishArgumentSeen = true;
 			else if (argument == L"--scene-probe" && i + 1 < argumentCount)
 			{
 				sceneProbePath = arguments[++i];
@@ -883,6 +894,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		}
 		LocalFree(arguments);
 	}
+	if (playOptions.selected)
+	{
+		// The resolver prepends the selected preset's existing switches; the
+		// original parser has already handled caller-supplied unrelated options.
+		nativeEconomyArgumentSeen = true;
+		nativeTerrainArgumentSeen = true;
+		ambientTrafficArgumentSeen = true;
+		for (const auto& option : playOptions.arguments)
+		{
+			if (option == L"--native-coal-demo") nativeCoalDemoArgumentSeen = true;
+			else if (option == L"--native-construction-sites") nativeConstructionSitesArgumentSeen = true;
+			else if (option == L"--native-objectives") continue;
+			else if (option.rfind(L"builtin:", 0) == 0) nativeObjectivesArgument = option;
+		}
+	}
 	if (!nativeObjectivesArgument.empty() && !economyCheckpointArgumentSeen) nativeEconomyArgumentSeen = true;
 	if (!nativeEconomyArgumentError.empty())
 	{
@@ -949,6 +975,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		return LogNativeEconomyStartupError("--native-catalog-from-content cannot be combined with synthetic coal-demo or construction-site catalogs");
 	if (ambientTrafficArgumentSeen && !nativeEconomyArgumentSeen)
 		return LogNativeEconomyStartupError("--ambient-traffic requires --native-economy");
+	if (nativeTrafficPolishArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
+		return LogNativeEconomyStartupError("--native-traffic-polish requires --native-economy or --economy-checkpoint");
 	if (nativeTerrainArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
 		return LogNativeEconomyStartupError("--native-terrain requires --native-economy or --economy-checkpoint");
 	if ((nativeEconomyArgumentSeen || economyCheckpointArgumentSeen) && !economyCheckpointIncompatibleOptions.empty())
@@ -1463,6 +1491,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	application.SetTerrainProbePath(std::move(terrainProbePath));
 	application.SetTerrainProbeTransform(std::move(terrainProbeTransform), std::move(terrainProbeTransformError));
 	application.SetAmbientTraffic(ambientTrafficArgumentSeen);
+	application.SetNativeTrafficPolish(nativeTrafficPolishArgumentSeen);
 
 	WNDCLASSEXW windowClass{};
 	windowClass.cbSize = sizeof(windowClass);
