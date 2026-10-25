@@ -259,6 +259,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool economyCheckpointArgumentSeen = false;
 	bool nativeEconomyArgumentSeen = false;
 	bool nativeConstructionSitesArgumentSeen = false;
+	bool nativeRailArgumentSeen = false;
 	bool nativeCoalDemoArgumentSeen = false;
 	bool nativeTownDemoArgumentSeen = false;
 	std::wstring nativeObjectivesArgument;
@@ -321,6 +322,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				// Opt-in synthetic catalog with planks/bricks and `build` requirements (requires --native-economy).
 				nativeConstructionSitesArgumentSeen = true;
 			}
+			else if (argument == L"--native-rail") nativeRailArgumentSeen = true;
 			else if (argument == L"--native-terrain") nativeTerrainArgumentSeen = true;
 			else if (argument == L"--native-coal-demo") nativeCoalDemoArgumentSeen = true;
 			else if (argument == L"--native-town-demo") nativeTownDemoArgumentSeen = true;
@@ -925,6 +927,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		return LogNativeEconomyStartupError("--native-coal-demo requires --native-economy");
 	if (nativeContentCatalogArgumentSeen && !nativeEconomyArgumentSeen)
 		return LogNativeEconomyStartupError("--native-catalog-from-content requires --native-economy");
+	if (nativeRailArgumentSeen && !nativeEconomyArgumentSeen)
+		return LogNativeEconomyStartupError("--native-rail requires --native-economy");
 	if (!nativeObjectivesArgument.empty())
 	{
 		std::wstring fileArgument = nativeObjectivesArgument;
@@ -986,8 +990,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		if (nativeObjectiveSet->id == "coal_demo") nativeCoalDemoArgumentSeen = true;
 		else if (nativeObjectiveSet->id == "construction_sites_demo") nativeConstructionSitesArgumentSeen = true;
 	}
-	if (nativeContentCatalogArgumentSeen && (nativeCoalDemoArgumentSeen || nativeConstructionSitesArgumentSeen || nativeTownDemoArgumentSeen))
+	if (nativeContentCatalogArgumentSeen && (nativeCoalDemoArgumentSeen || nativeConstructionSitesArgumentSeen || nativeTownDemoArgumentSeen || nativeRailArgumentSeen))
 		return LogNativeEconomyStartupError("--native-catalog-from-content cannot be combined with synthetic demo catalogs");
+	if (nativeRailArgumentSeen && (nativeCoalDemoArgumentSeen || nativeConstructionSitesArgumentSeen || nativeTownDemoArgumentSeen))
+		return LogNativeEconomyStartupError("--native-rail cannot be combined with other synthetic demo catalogs");
 	if (ambientTrafficArgumentSeen && !nativeEconomyArgumentSeen)
 		return LogNativeEconomyStartupError("--ambient-traffic requires --native-economy");
 	if (nativeTrafficPolishArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
@@ -1061,10 +1067,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		else
 		{
 			economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>(
-				nativeCoalDemoArgumentSeen ? openrepublic::economy::MakeSyntheticCoalCatalog() :
+				nativeRailArgumentSeen ? openrepublic::economy::MakeSyntheticRailCatalog() :
+				(nativeCoalDemoArgumentSeen ? openrepublic::economy::MakeSyntheticCoalCatalog() :
 				(nativeConstructionSitesArgumentSeen ? openrepublic::economy::MakeSyntheticConstructionCatalog() :
 				 (nativeTownDemoArgumentSeen ? openrepublic::economy::MakeSyntheticTownCatalog()
-				                             : openrepublic::economy::MakeSyntheticCatalog())));
+				                             : openrepublic::economy::MakeSyntheticCatalog()))));
 		}
 		economyCheckpoint->world = std::make_unique<openrepublic::economy::World>(
 			*economyCheckpoint->catalog, 64, 64);
@@ -1459,6 +1466,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		if (nativeObjectiveSet) application.SetNativeObjectives(std::move(*nativeObjectiveSet));
 		application.SetEconomyCheckpoint(std::move(*economyCheckpoint), nativeEconomyArgumentSeen);
 		application.SetNativeTerrainEnabled(nativeTerrainArgumentSeen);
+		application.SetNativeRailEnabled(nativeRailArgumentSeen);
 	}
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));

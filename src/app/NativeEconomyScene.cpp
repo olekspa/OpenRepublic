@@ -1,5 +1,6 @@
 #include "NativeEconomyScene.h"
 #include "ShowcaseProps.h"
+#include "openrepublic/procgeo/props.h"
 #include "ShowcaseEnvironment.h"
 #include "openrepublic/runtime/native_economy_tools.h"
 #include "openrepublic/runtime/ambient_traffic.h"
@@ -492,6 +493,36 @@ namespace openrepublic::preview
 			addedBuildings.push_back({ primitive.buildingId, { entity, pad, primitive.typeId, primitive.centerX,
 				primitive.centerZ, primitive.width, primitive.depth, primitive.height } });
 		}
+		std::unordered_set<economy::RailId> seenRails;
+		std::vector<std::pair<economy::RailSnapshot, wi::ecs::Entity>> addedRails;
+		seenRails.reserve(snapshot.rails.size());
+		for (const auto& rail : snapshot.rails)
+		{
+			if (!rail.id || !seenRails.insert(rail.id).second)
+			{
+				rollback(); error = "native economy snapshot contains a zero or duplicate rail ID"; return false;
+			}
+			const auto old = rails_.find(rail.id);
+			if (old != rails_.end() && old->second.a == rail.a && old->second.b == rail.b) continue;
+			runtime::NativeRailGeometry geometry;
+			if (!runtime::MapNativeRailGeometry(rail.a, rail.b, plan.transform, geometry))
+			{
+				rollback(); error = "native economy snapshot contains invalid rail geometry"; return false;
+			}
+			const auto entity = CreateProceduralMeshEntity(scene, ("OpenRepublic native rail " + std::to_string(rail.id)).c_str(),
+				openrepublic::procgeo::MakeRailSegment(static_cast<float>(geometry.length)), 0.82f, 0.18f);
+			auto* transform = scene.transforms.GetComponent(entity);
+			float x, z;
+			if (entity == wi::ecs::INVALID_ENTITY || !transform || !ToFloat(geometry.center.x, x) || !ToFloat(geometry.center.z, z))
+			{
+				if (entity != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(entity);
+				rollback(); error = "Wicked Engine could not create a native procedural rail segment"; return false;
+			}
+			transform->Rotate(XMQuaternionRotationAxis(XMVectorSet(0, 1, 0, 0), static_cast<float>(geometry.yawRadians)));
+			transform->Translate(XMFLOAT3(x, static_cast<float>(GroundHeight(x, z)) + kRoadSurfaceY, z));
+			createdEntities.push_back(entity);
+			addedRails.emplace_back(rail, entity);
+		}
 		for (const RoadPrimitive& primitive : plan.roads)
 		{
 			auto old = roads_.find(primitive.roadId);
@@ -595,11 +626,21 @@ namespace openrepublic::preview
 					"OpenRepublic native truck ID " + std::to_string(vehicle.id));
 				for (wi::ecs::Entity& wheel : visual.wheels)
 					wheel = CreateVehicleNode(scene, wheelMesh_, "OpenRepublic native truck wheel " + std::to_string(vehicle.id));
+				if (visual.kind == openrepublic::procgeo::VehicleKind::Locomotive)
+					for (std::size_t wagon = 0; wagon < visual.wagons.size(); ++wagon)
+					{
+						visual.wagonMeshes[wagon] = CreateProceduralMeshEntity(scene, "OpenRepublic native train wagon mesh",
+							openrepublic::procgeo::MakeTrainWagon(static_cast<std::uint32_t>(vehicle.id + wagon)), 0.56f, 0.08f);
+						visual.wagons[wagon] = CreateVehicleNode(scene, visual.wagonMeshes[wagon],
+							"OpenRepublic native train wagon " + std::to_string(vehicle.id) + " " + std::to_string(wagon + 1));
+					}
 				if (visual.body == wi::ecs::INVALID_ENTITY || visual.load == wi::ecs::INVALID_ENTITY ||
 					visual.headlights == wi::ecs::INVALID_ENTITY || visual.brakeLights == wi::ecs::INVALID_ENTITY ||
 					visual.exhaust == wi::ecs::INVALID_ENTITY ||
 					visual.labelMesh == wi::ecs::INVALID_ENTITY || visual.label == wi::ecs::INVALID_ENTITY ||
-					std::any_of(visual.wheels.begin(), visual.wheels.end(), [](wi::ecs::Entity e) { return e == wi::ecs::INVALID_ENTITY; }))
+					std::any_of(visual.wheels.begin(), visual.wheels.end(), [](wi::ecs::Entity e) { return e == wi::ecs::INVALID_ENTITY; }) ||
+					(visual.kind == openrepublic::procgeo::VehicleKind::Locomotive &&
+					 std::any_of(visual.wagons.begin(), visual.wagons.end(), [](wi::ecs::Entity e) { return e == wi::ecs::INVALID_ENTITY; })))
 				{
 					if (visual.body != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.body);
 					if (visual.bodyMesh != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.bodyMesh);
@@ -610,6 +651,8 @@ namespace openrepublic::preview
 					if (visual.label != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.label);
 					if (visual.labelMesh != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(visual.labelMesh);
 					for (wi::ecs::Entity wheel : visual.wheels) if (wheel != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(wheel);
+					for (wi::ecs::Entity wagon : visual.wagons) if (wagon != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(wagon);
+					for (wi::ecs::Entity mesh : visual.wagonMeshes) if (mesh != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(mesh);
 					rollback(); error = "Wicked Engine could not create a native vehicle node"; return false;
 				}
 				createdEntities.push_back(visual.body);
@@ -620,6 +663,8 @@ namespace openrepublic::preview
 				createdEntities.push_back(visual.label);
 				createdEntities.push_back(visual.labelMesh);
 				createdEntities.insert(createdEntities.end(), visual.wheels.begin(), visual.wheels.end());
+				createdEntities.insert(createdEntities.end(), visual.wagons.begin(), visual.wagons.end());
+				createdEntities.insert(createdEntities.end(), visual.wagonMeshes.begin(), visual.wagonMeshes.end());
 				if (wi::scene::MaterialComponent* material = scene.materials.GetComponent(visual.load))
 				{
 					material->SetBaseColor(XMFLOAT4(1, 1, 1, 1));
@@ -850,6 +895,14 @@ namespace openrepublic::preview
 			}
 			else ++it;
 		}
+		for (auto it = rails_.begin(); it != rails_.end();)
+		{
+			const bool replaced = std::any_of(snapshot.rails.begin(), snapshot.rails.end(), [&](const auto& rail) {
+				return rail.id == it->first && (rail.a != it->second.a || rail.b != it->second.b);
+			});
+			if (!seenRails.count(it->first) || replaced) { scene.Entity_Remove(it->second.entity); it = rails_.erase(it); }
+			else ++it;
+		}
 		for (auto it = vehicles_.begin(); it != vehicles_.end();)
 		{
 			if (seenVehicles.find(it->first) == seenVehicles.end())
@@ -863,6 +916,8 @@ namespace openrepublic::preview
 				scene.Entity_Remove(it->second.labelMesh);
 				for (wi::ecs::Entity wheel : it->second.wheels) scene.Entity_Remove(wheel);
 				scene.Entity_Remove(it->second.bodyMesh);
+				for (wi::ecs::Entity wagon : it->second.wagons) scene.Entity_Remove(wagon);
+				for (wi::ecs::Entity mesh : it->second.wagonMeshes) scene.Entity_Remove(mesh);
 				it = vehicles_.erase(it);
 			}
 			else ++it;
@@ -889,6 +944,7 @@ namespace openrepublic::preview
 			buildings_.emplace(item.id, item.visual);
 		}
 		for (NewRoad& item : addedRoads) roads_.emplace(item.id, item.visual);
+		for (const auto& rail : addedRails) rails_[rail.first.id] = RailVisual{rail.second, rail.first.a, rail.first.b};
 		for (NewVehicle& item : addedVehicles)
 		{
 			auto old = vehicles_.find(item.id);
@@ -1074,8 +1130,11 @@ namespace openrepublic::preview
 		followingSamples.reserve(vehicles_.size());
 		for (const auto& entry : vehicles_)
 		{
-			const auto sample = runtime::InterpolateNativeVehicleMotion(entry.second.previous,
-				entry.second.current, alpha, entry.second.yaw, *transform_);
+			const auto sample = entry.second.kind == openrepublic::procgeo::VehicleKind::Locomotive
+				? runtime::InterpolateNativeRailMotion(entry.second.previous, entry.second.current, alpha,
+					entry.second.yaw, *transform_)
+				: runtime::InterpolateNativeVehicleMotion(entry.second.previous,
+					entry.second.current, alpha, entry.second.yaw, *transform_);
 			trafficSamples.push_back({ entry.first, sample.position });
 			const auto a = entry.second.previous;
 			const auto b = entry.second.current;
@@ -1106,8 +1165,9 @@ namespace openrepublic::preview
 			VehicleVisual& visual = entry.second;
 			const float modelScale = static_cast<float>(runtime::NativeVehicleDisplayScale(
 				openrepublic::procgeo::VehicleLength(visual.kind)));
-			const runtime::NativeVehicleMotion motion = runtime::InterpolateNativeVehicleMotion(
-				visual.previous, visual.current, alpha, visual.yaw, *transform_, 0.48 * modelScale);
+			const runtime::NativeVehicleMotion motion = visual.kind == openrepublic::procgeo::VehicleKind::Locomotive
+				? runtime::InterpolateNativeRailMotion(visual.previous, visual.current, alpha, visual.yaw, *transform_, 0.48 * modelScale)
+				: runtime::InterpolateNativeVehicleMotion(visual.previous, visual.current, alpha, visual.yaw, *transform_, 0.48 * modelScale);
 			runtime::NativePoint polishedPosition = motion.position;
 			double polishedYaw = motion.yawRadians;
 			if (trafficPolishEnabled_ && motion.moving)
@@ -1154,6 +1214,10 @@ namespace openrepublic::preview
 				node->Translate(XMFLOAT3(x, groundY + localY * modelScale, z)); node->UpdateTransform();
 			};
 			positionNode(visual.body, 0, 0, 0, XMFLOAT3(modelScale, modelScale, modelScale), yawRotation);
+			for (std::size_t wagon = 0; wagon < visual.wagons.size(); ++wagon)
+				if (visual.wagons[wagon] != wi::ecs::INVALID_ENTITY)
+					positionNode(visual.wagons[wagon], 0, 0, -4.5f - 4.0f * static_cast<float>(wagon),
+						XMFLOAT3(modelScale, modelScale, modelScale), yawRotation);
 			float frontZ = 3.78f, rearZ = -3.78f, lampY = 0.96f;
 			if (visual.kind == openrepublic::procgeo::VehicleKind::Car) { frontZ = 1.89f; rearZ = -1.89f; lampY = 0.75f; }
 			else if (visual.kind == openrepublic::procgeo::VehicleKind::Bus) { frontZ = 3.67f; rearZ = -3.67f; lampY = 0.94f; }
@@ -1188,8 +1252,15 @@ namespace openrepublic::preview
 			XMFLOAT4 combined;
 			XMStoreFloat4(&combined, XMQuaternionMultiply(XMLoadFloat4(&yawRotation), XMLoadFloat4(&rollRotation)));
 			for (std::size_t i = 0; i < visual.wheels.size(); ++i)
+			{
+				if (visual.kind == openrepublic::procgeo::VehicleKind::Locomotive)
+				{
+					if (wi::scene::ObjectComponent* wheel = scene.objects.GetComponent(visual.wheels[i])) wheel->SetRenderable(false);
+					continue;
+				}
 				positionNode(visual.wheels[i], wheelOffsets[i][0], radius, wheelOffsets[i][1],
 					XMFLOAT3(modelScale, modelScale, modelScale), combined);
+			}
 		}
 	}
 
@@ -1214,8 +1285,9 @@ namespace openrepublic::preview
 		const auto found = vehicles_.find(id);
 		if (found == vehicles_.end()) return std::nullopt;
 		const VehicleVisual& visual = found->second;
-		const runtime::NativeVehicleMotion motion = runtime::InterpolateNativeVehicleMotion(
-			visual.previous, visual.current, alpha, visual.yaw, *transform_);
+		const runtime::NativeVehicleMotion motion = visual.kind == openrepublic::procgeo::VehicleKind::Locomotive
+			? runtime::InterpolateNativeRailMotion(visual.previous, visual.current, alpha, visual.yaw, *transform_)
+			: runtime::InterpolateNativeVehicleMotion(visual.previous, visual.current, alpha, visual.yaw, *transform_);
 		float x = 0.0f, z = 0.0f;
 		if (!ToFloat(motion.position.x, x) || !ToFloat(motion.position.z, z)) return std::nullopt;
 		return DirectX::XMFLOAT3(x, static_cast<float>(GroundHeight(x, z)) + 0.15f, z);
