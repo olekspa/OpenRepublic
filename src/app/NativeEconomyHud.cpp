@@ -33,6 +33,10 @@ namespace openrepublic::preview
 		overviewButton_.SetText("Overview map");
 		overviewButton_.SetTooltip("Toggle a top-down view of the native economy world.");
 		overviewButton_.SetSize(XMFLOAT2(150, 30));
+		overviewButton_.SetColor(wi::Color(36, 60, 80, 255), wi::gui::IDLE);
+		overviewButton_.SetColor(wi::Color(52, 88, 116, 255), wi::gui::FOCUS);
+		overviewButton_.SetColor(wi::Color(28, 46, 62, 255), wi::gui::ACTIVE);
+		overviewButton_.font.params.color = wi::Color(242, 247, 255, 255);
 		overviewButton_.OnClick([toggleOverview](const wi::gui::EventArgs&) { if (toggleOverview) toggleOverview(); });
 		gui.AddWidget(&overviewButton_);
 		created_ = true;

@@ -57,6 +57,11 @@ add_custom_command(TARGET OpenRepublic POST_BUILD
         "$<TARGET_FILE_DIR:OpenRepublic>/startup.lua"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:OpenRepublic>/data/rules"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:OpenRepublic>/data/ui_scripts"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${PROJECT_SOURCE_DIR}/data/ui_scripts"
+        "$<TARGET_FILE_DIR:OpenRepublic>/data/ui_scripts"
     VERBATIM
 )
 
