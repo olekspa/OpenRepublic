@@ -8,11 +8,14 @@ OpenRepublic.exe --native-economy --native-catalog-from-content "C:\path\to\medi
 
 Pass a directory containing `buildings_types`, a `media_soviet` directory
 containing `buildings_types`, or the `buildings_types` directory itself. The
-loader reads regular files directly inside that directory, using each filename
-stem as the exact economy type name. Inputs stay local and are opened read-only.
-Definition files are bounded to 4 MiB each and 8,192 files total. Duplicate
-stems, unreadable files, and malformed definitions fail startup before world
-creation.
+loader considers regular `.ini` files directly inside that directory and
+ignores other extensions such as binary `.bbox` files. With the native sandbox's
+exact-name allowlist enabled, only allowlisted stems are opened and parsed;
+other `.ini` stems are logged as skipped without reading their contents. Inputs
+stay local and are opened read-only. Definition files are bounded to 4 MiB each
+and 8,192 `.ini` files total. Duplicate allowlisted stems, unreadable allowlisted
+files, and malformed allowlisted definitions fail startup before world creation.
+The import summary also lists allowlisted stems whose `.ini` files are absent.
 
 The catalog currently allows only these exact names: `bakery`, `coal_mine`,
 `farm`, `heating_plant`, `power_plant`, and `storage`. Other definitions appear
