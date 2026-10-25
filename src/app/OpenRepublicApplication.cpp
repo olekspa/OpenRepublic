@@ -1988,6 +1988,7 @@ namespace openrepublic
 			if (nativeCoalDemo) nativeCoalAutoRun = true;
 			ToggleNativeRunPause();
 		}
+		if (autoplayActive) UpdateNativeObjectivePlanner();
 		while (nextUiScriptAction < uiScript.actions.size() && uiScript.actions[nextUiScriptAction].frame <= uiScriptFrame)
 		{
 			const auto& action = uiScript.actions[nextUiScriptAction++];
@@ -3699,6 +3700,27 @@ namespace openrepublic
 		else
 			TrackNativeSubmission(regionEconomyApi->DispatchTruck(snapshot.revision, action->vehicle, action->source,
 				action->destination, "coal", action->amount), "auto dispatch truck #" + std::to_string(action->vehicle));
+	}
+
+	void OpenRepublicApplication::UpdateNativeObjectivePlanner()
+	{
+		if (nativeCoalDemo || !nativeObjectiveSet || !regionEconomyApi || !nativeEconomyCheckpoint.world ||
+			!nativeEconomyCheckpoint.catalog || !regionPendingCommandHandles.empty()) return;
+		const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
+		const auto command = runtime::NextObjectivePlannerCommand(snapshot,
+			*nativeEconomyCheckpoint.catalog, *nativeObjectiveSet);
+		if (!command) return;
+		economy_api::Submission submitted;
+		switch (command->kind)
+		{
+		case runtime::PlannerCommandKind::PlaceBuilding:
+			submitted = regionEconomyApi->PlaceBuilding(snapshot.revision, command->buildingType, command->a); break;
+		case runtime::PlannerCommandKind::PlaceConstructionSite:
+			submitted = regionEconomyApi->PlaceConstructionSite(snapshot.revision, command->buildingType, command->a); break;
+		case runtime::PlannerCommandKind::BuildRoad:
+			submitted = regionEconomyApi->BuildRoad(snapshot.revision, command->a, command->b); break;
+		}
+		TrackNativeSubmission(submitted, "autoplay objective planner: " + command->buildingType);
 	}
 
 	bool OpenRepublicApplication::CanQueueNativeCommand()

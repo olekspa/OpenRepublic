@@ -3,7 +3,12 @@
 OpenRepublic's desktop autoplay is an opt-in convenience for observing the
 independent native economy. It reuses the existing `EconomyApi` run/step path.
 For the coal preset it enables the authored baseline coal logistics planner,
-which imports coal when funded and dispatches the existing trucks. All rules,
+which imports coal when funded and dispatches the existing trucks. Other
+objective sets use an additional bounded planner for unmet building-count,
+housing-count, and construction-site-count goals: it proposes one deterministic
+free cell at a time and submits placement through `EconomyApi`. It does not yet
+plan resource chains, trade, truck dispatch, or utility topology for arbitrary
+objectives, so some objectives can remain incomplete. All rules,
 catalogs, planner decisions and outcomes are OpenRepublic synthetic behavior;
 WRSR parity remains **UNKNOWN**.
 
@@ -13,8 +18,9 @@ OpenRepublic.exe --play coal --autoplay --autoplay-speed 100
 
 `--autoplay-speed N` sets the maximum number of economy ticks submitted per
 app update (1 through 10,000; default 1). The speed changes throughput only; it
-does not add simulation rules. Non-coal presets currently advance their
-existing synthetic worlds without a general objective planner.
+does not add simulation rules. Planning is limited to the objective types above;
+it is not a general campaign solver. Check objective completion against the
+visible checklist or a scenario-specific result.
 
 `--ui-script <file.json>` runs a bounded ordered list of actions at app update
 frames. The first supported actions are button-label invocation and PNG
@@ -53,9 +59,9 @@ for a one-shot capture, defaulting to the first update frame; the current
 backbuffer is written to the requested PNG path.
 
 The current parser deliberately rejects unknown actions/properties. Dropdown
-selection, building placement, road drawing, and click-on-details controls are
-not implemented in this first UI-script slice. Startup, build and script-parser
-checks do not by themselves prove WRSR behavior. Visual acceptance requires
-reviewing the generated PNGs; traffic movement and objective progress are
-synthetic observations only.
+selection, building placement, road drawing, click-on-details controls,
+objective assertions, and a staged smoke runner are not implemented yet.
+Startup, build and script-parser checks do not by themselves prove WRSR
+behavior. Visual acceptance requires reviewing the generated PNGs; traffic
+movement and objective progress are synthetic observations only.
 
