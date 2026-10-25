@@ -60,6 +60,8 @@ namespace openrepublic::preview
 			wi::ecs::Entity pad = wi::ecs::INVALID_ENTITY;
 			economy::BuildingTypeId typeId{};
 			double centerX{}, centerZ{}, width{}, depth{}, height{};
+			double progress{1.0};
+			bool constructionSite{};
 		};
 		struct RoadVisual
 		{

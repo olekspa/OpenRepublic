@@ -5,6 +5,7 @@
 #include "openrepublic/runtime/native_economy_tools.h"
 #include "openrepublic/runtime/ambient_traffic.h"
 #include "openrepublic/procgeo/vehicles.h"
+#include "openrepublic/procgeo/buildings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -36,10 +37,10 @@ namespace openrepublic::preview
 
 		bool IsSmokePolicyBuilding(std::string_view name)
 		{
-			// OpenRepublic presentation policy: authored heating-plant names smoke
-			// only while a recipe is actively counting down.
-			return name.find("heating_plant") != std::string_view::npos ||
-				name.find("heatingplant") != std::string_view::npos;
+			// OpenRepublic presentation policy: production sites emit only while a
+			// recipe is actively counting down in the authoritative snapshot.
+			return name.find("heating") != std::string_view::npos || name.find("power_plant") != std::string_view::npos ||
+				name.find("powerplant") != std::string_view::npos || name.find("boiler") != std::string_view::npos;
 		}
 
 		bool ToFloat(double value, float& out) noexcept
@@ -60,18 +61,6 @@ namespace openrepublic::preview
 			const double ulp = std::max(std::abs(static_cast<double>(out) - lower),
 				std::abs(static_cast<double>(upper) - out));
 			return std::isfinite(ulp) && ulp <= 0.125;
-		}
-
-		XMFLOAT4 BuildingColor(economy::BuildingTypeId type)
-		{
-			// A stable debug palette keyed only by the native type ID. It is a visual
-			// distinction, not an attempted interpretation of game materials.
-		static const XMFLOAT4 palette[] = {
-				XMFLOAT4(0.72f, 0.49f, 0.30f, 1.0f), XMFLOAT4(0.47f, 0.61f, 0.70f, 1.0f),
-				XMFLOAT4(0.68f, 0.66f, 0.43f, 1.0f), XMFLOAT4(0.65f, 0.48f, 0.58f, 1.0f),
-				XMFLOAT4(0.44f, 0.63f, 0.51f, 1.0f), XMFLOAT4(0.71f, 0.58f, 0.39f, 1.0f),
-			};
-			return palette[type % (sizeof(palette) / sizeof(palette[0]))];
 		}
 
 		XMFLOAT4 UtilityColor(economy::ResourceId resource)
@@ -95,29 +84,32 @@ namespace openrepublic::preview
 			return true;
 		}
 
-		wi::ecs::Entity CreateBuilding(wi::scene::Scene& scene, const BuildingPrimitive& primitive, double groundY)
+		wi::ecs::Entity CreateBuilding(wi::scene::Scene& scene, const BuildingPrimitive& primitive,
+			std::string_view name, double groundY, bool site, double progress, bool dark)
 		{
-			const wi::ecs::Entity entity = scene.Entity_CreateCube(
-				"OpenRepublic native building " + std::to_string(primitive.buildingId));
+			const auto model = openrepublic::procgeo::MakeBuilding(name, static_cast<float>(primitive.width),
+				static_cast<float>(primitive.depth), static_cast<std::uint32_t>(primitive.typeId ^ primitive.buildingId),
+				site, static_cast<float>(progress), dark);
+			const std::string meshName = "OpenRepublic native building " + std::to_string(primitive.buildingId);
+			const wi::ecs::Entity entity = CreateProceduralMeshEntity(scene, meshName.c_str(), model, 0.88f);
 			if (entity == wi::ecs::INVALID_ENTITY)
 				return wi::ecs::INVALID_ENTITY;
 
-			float x, z, halfWidth, halfDepth, halfHeight;
-			if (!ToFloat(primitive.centerX, x) || !ToFloat(primitive.centerZ, z) ||
-				!ToFloat(primitive.width * 0.5, halfWidth) || !ToFloat(primitive.depth * 0.5, halfDepth) ||
-				!ToFloat(primitive.height * 0.5, halfHeight))
+			float x, z;
+			if (!ToFloat(primitive.centerX, x) || !ToFloat(primitive.centerZ, z))
 			{
 				scene.Entity_Remove(entity);
 				return wi::ecs::INVALID_ENTITY;
 			}
 			wi::scene::TransformComponent* transform = scene.transforms.GetComponent(entity);
-			if (transform == nullptr || !SetMaterialColor(scene, entity, BuildingColor(primitive.typeId)))
+			wi::scene::ObjectComponent* object = scene.objects.GetComponent(entity);
+			if (transform == nullptr || object == nullptr)
 			{
 				scene.Entity_Remove(entity);
 				return wi::ecs::INVALID_ENTITY;
 			}
-			transform->Scale(XMFLOAT3(halfWidth, halfHeight, halfDepth));
-			transform->Translate(XMFLOAT3(x, static_cast<float>(groundY) + halfHeight, z));
+			object->SetRenderable(true);
+			transform->Translate(XMFLOAT3(x, static_cast<float>(groundY), z));
 			return entity;
 		}
 
@@ -470,9 +462,18 @@ namespace openrepublic::preview
 		for (const BuildingPrimitive& primitive : plan.buildings)
 		{
 			auto old = buildings_.find(primitive.buildingId);
-			if (old != buildings_.end() && sameBuilding(old->second, primitive)) continue;
+			const auto state = std::find_if(snapshot.buildings.begin(), snapshot.buildings.end(),
+				[&](const auto& item) { return item.id == primitive.buildingId; });
+			const auto* type = catalog.BuildingType(primitive.typeId);
+			const bool site = state != snapshot.buildings.end() && state->constructionSite;
+			const double progress = site ? state->constructionProgress : 1.0;
+			const bool modelChanged = old == buildings_.end() || !sameBuilding(old->second, primitive) ||
+				old->second.constructionSite != site || (site && std::abs(old->second.progress - progress) >= 0.10);
+			if (!modelChanged) continue;
 			const wi::ecs::Entity entity = CreateBuilding(scene, primitive,
-				terrainEnabled_ ? terrain_.HeightAt(primitive.centerX, primitive.centerZ) : 0.0);
+				type ? std::string_view(type->name) : std::string_view{},
+				terrainEnabled_ ? terrain_.HeightAt(primitive.centerX, primitive.centerZ) : 0.0,
+				site, progress, darkLighting_);
 			if (entity == wi::ecs::INVALID_ENTITY)
 			{
 				rollback();
@@ -491,7 +492,7 @@ namespace openrepublic::preview
 				createdEntities.push_back(pad);
 			}
 			addedBuildings.push_back({ primitive.buildingId, { entity, pad, primitive.typeId, primitive.centerX,
-				primitive.centerZ, primitive.width, primitive.depth, primitive.height } });
+				primitive.centerZ, primitive.width, primitive.depth, primitive.height, progress, site } });
 		}
 		std::unordered_set<economy::RailId> seenRails;
 		std::vector<std::pair<economy::RailSnapshot, wi::ecs::Entity>> addedRails;
