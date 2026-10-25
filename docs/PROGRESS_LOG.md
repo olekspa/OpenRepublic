@@ -591,3 +591,5 @@ Tool-neutral running log for Claude and Codex/Luna sessions. Times are America/N
 
 - **2026-10-25 06:18** Merged PLAY-HUD (top-bar HUD, event log, overview from existing snapshot fields; docs/DESKTOP_HUD.md). I resolved only additive CMake list conflicts and the progress log by hand (no code conflicts); merged main: 0 compile errors, CTest 98/98. Not GUI-checked.
 - **2026-10-25 06:22 EDT** PLAY-REALCATALOG merged updated `main` (`585bd43`, PLAY-HUD) after PLAY-OBJECTIVES; retained both `--native-catalog-from-content` and `--native-objectives`, including additive HUD runtime/app/test sources. Headless Release, `OpenRepublic` client target, and default full Release builds succeeded with 0 compile errors. CTest passed 97/97 headless and 98/98 client. No desktop app or original game launched; imported-content GUI behavior remains unverified and WRSR parity remains UNKNOWN.
+
+- **2026-10-25 06:23** Merged PLAY-REALCATALOG (--native-economy --native-catalog-from-content: allowlisted real building definitions, 4x4 fallback footprint, bounded loader, synthetic fixture test). Merged main: 0 compile errors, CTest 98/98.
