@@ -244,6 +244,26 @@ class ScenarioHostIntegrationTests(unittest.TestCase):
         self.assertEqual(scenario_score._default_rounds(scenario, 1500), 60)
 
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
+    def test_coal_to_heat_logistics_challenge_rewards_responsive_dispatch_cadence(self):
+        scenario = scenario_score.resolve_scenario("coal_to_heat_logistics")
+        ticks = 1500
+        baseline = scenario_score.run_scenario(
+            HOST_EXE, scenario, ticks, exact_ticks=True)
+        responsive = scenario_score.run_scenario(
+            HOST_EXE, scenario, ticks, exact_ticks=True, rounds=ticks)
+
+        # At this horizon the default bounds depot scenarios to 60 planning
+        # rounds. Per-tick replanning lets the same controller send returned
+        # trucks sooner without changing the economy or its catalog.
+        self.assertEqual(scenario_score._default_rounds(scenario, ticks), 60)
+        self.assertEqual(baseline["scoreBreakdown"]["heatUnits"], 148)
+        self.assertEqual(responsive["tick"], baseline["tick"])
+        self.assertGreaterEqual(
+            responsive["scoreBreakdown"]["heatUnits"],
+            baseline["scoreBreakdown"]["heatUnits"] + 100)
+        self.assertEqual(responsive["autopilot"]["accepted_depot_dispatches"], 56)
+
+    @unittest.skipUnless(HOST_EXE, "host executable argument is required")
     def test_live_jsonl_host_runs_every_fixture_and_repeats_hash(self):
         scenarios = [scenario_score.load_scenario(path)
                      for path in sorted(scenario_score.SCENARIO_DIR.glob("*.json"))]
