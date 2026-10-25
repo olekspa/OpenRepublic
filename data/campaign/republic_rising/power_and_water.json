@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "power_and_water",
+  "name": "Power and water utilities",
+  "description": "Operate separate synthetic electricity and water networks and deliver their output to two production buildings.",
+  "catalog": "openrepublic-economy 1\nresource potable_water\nresource electric_parts\nutility water\nutility power\nbuilding water_tower 1 1\n  recipe pump every 1 out water:4\nend\nbuilding waterworks 1 1\n  store potable_water 128\n  recipe treat every 1 in water:2 out potable_water:2\nend\nbuilding power_plant 1 1\n  recipe generate every 1 out power:4\nend\nbuilding parts_factory 1 1\n  store electric_parts 128\n  recipe assemble every 1 in power:2 out electric_parts:2\nend\n",
+  "roads": [],
+  "buildings": [
+    {
+      "type": "water_tower",
+      "x": 1,
+      "z": 1
+    },
+    {
+      "type": "waterworks",
+      "x": 4,
+      "z": 1
+    },
+    {
+      "type": "power_plant",
+      "x": 7,
+      "z": 1
+    },
+    {
+      "type": "parts_factory",
+      "x": 10,
+      "z": 1
+    }
+  ],
+  "utilityConnections": [
+    {
+      "resource": "water",
+      "aBuilding": 0,
+      "bBuilding": 1
+    },
+    {
+      "resource": "power",
+      "aBuilding": 2,
+      "bBuilding": 3
+    }
+  ],
+  "score": {
+    "metric": "combined_multi_objective",
+    "objectives": [
+      "throughputUnits",
+      "unmetDemandUnits"
+    ]
+  }
+}

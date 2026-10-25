@@ -18,6 +18,7 @@
 #include "openrepublic/runtime/economy_overview.h"
 #include "openrepublic/runtime/native_coal_demo.h"
 #include "openrepublic/runtime/native_objectives.h"
+#include "openrepublic/runtime/campaign.h"
 #include "openrepublic/runtime/save_slots.h"
 #include "openrepublic/runtime/native_construction.h"
 #include "openrepublic/content/terrain_dds.h"
@@ -67,6 +68,9 @@ namespace openrepublic
 		void SetNativeTerrainEnabled(bool enabled);
 		void SetNativeRailEnabled(bool enabled) noexcept { nativeRailEnabled = enabled; }
 		void SetNativeObjectives(openrepublic::runtime::NativeObjectiveSet objectiveSet);
+		void SetCampaignProgress(openrepublic::runtime::CampaignDefinition campaign,
+			openrepublic::runtime::CampaignProgress progress, std::string missionId,
+			std::filesystem::path progressPath, std::uint64_t score);
 		void SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees);
 		void SetScenePipeName(std::wstring name);
 		void SetSceneScriptPath(std::filesystem::path path);
@@ -171,6 +175,12 @@ namespace openrepublic
 		bool nativeCoalAutoRun = false;
 		std::optional<openrepublic::runtime::NativeObjectiveSet> nativeObjectiveSet;
 		std::string nativeObjectiveBaseline;
+		std::optional<openrepublic::runtime::CampaignDefinition> nativeCampaign;
+		std::optional<openrepublic::runtime::CampaignProgress> nativeCampaignProgress;
+		std::string nativeCampaignMissionId;
+		std::filesystem::path nativeCampaignProgressPath;
+		std::uint64_t nativeCampaignParScore{};
+		bool nativeCampaignCompletionHandled = false;
 		openrepublic::economy::BuildingId coalDemoBorder{}, coalDemoDepot{}, coalDemoStorage{}, coalDemoPlant{};
 		openrepublic::economy::ResourceId coalDemoResource{};
 		openrepublic::economy::ResourceId coalDemoGrain{};

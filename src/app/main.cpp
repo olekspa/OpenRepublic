@@ -9,6 +9,7 @@
 #include "openrepublic/compat/catalog_import.h"
 #include "openrepublic/runtime/native_objectives.h"
 #include "openrepublic/runtime/play_options.h"
+#include "openrepublic/runtime/campaign.h"
 #include "json.hpp"
 
 #include <windows.h>
@@ -91,6 +92,25 @@ namespace
 		if (name == L"transpose-flip-z") return RasterOrientation::TransposeFlipZ;
 		if (name == L"transpose-rotate-180") return RasterOrientation::TransposeRotate180;
 		return std::nullopt;
+	}
+
+	std::filesystem::path ResolveApplicationDirectory(const std::filesystem::path& requested,
+		const std::filesystem::path& workingDirectory, const std::filesystem::path& executablePath)
+	{
+		std::error_code error;
+		const auto workingCandidate = workingDirectory / requested;
+		if (std::filesystem::is_directory(workingCandidate, error) && !error) return workingCandidate;
+		auto directory = executablePath.parent_path();
+		while (!directory.empty())
+		{
+			error.clear();
+			const auto candidate = directory / requested;
+			if (std::filesystem::is_directory(candidate, error) && !error) return candidate;
+			const auto parent = directory.parent_path();
+			if (parent == directory) break;
+			directory = parent;
+		}
+		return workingCandidate;
 	}
 
 	bool PathIsSameOrWithinDirectory(const std::filesystem::path& candidate,
@@ -207,6 +227,105 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
 	std::vector<std::wstring> rawArguments;
 	for (int i = 1; arguments != nullptr && i < argumentCount; ++i) rawArguments.emplace_back(arguments[i]);
+	std::optional<openrepublic::runtime::CampaignDefinition> campaignDefinition;
+	std::optional<openrepublic::runtime::CampaignProgress> campaignProgress;
+	std::optional<openrepublic::runtime::CampaignMission> campaignMission;
+	std::filesystem::path campaignProgressPath;
+	std::string campaignArgumentError;
+	std::wstring campaignIdArgument;
+	std::size_t campaignArgumentCount = 0;
+	for (std::size_t i = 0; i < rawArguments.size(); ++i)
+	{
+		if (rawArguments[i] != L"--campaign") continue;
+		++campaignArgumentCount;
+		if (campaignArgumentCount > 1 || i + 1 >= rawArguments.size() ||
+			rawArguments[i + 1].empty() || rawArguments[i + 1].rfind(L"--", 0) == 0)
+		{
+			campaignArgumentError = "--campaign requires exactly one campaign ID or list";
+			break;
+		}
+		campaignIdArgument = rawArguments[++i];
+	}
+	if (!campaignArgumentError.empty())
+	{
+		LocalFree(arguments);
+		return LogNativeEconomyStartupError(campaignArgumentError);
+	}
+	if (!campaignIdArgument.empty())
+	{
+		if (rawArguments.size() != 2)
+		{
+			LocalFree(arguments);
+			return LogNativeEconomyStartupError("--campaign cannot be combined with other startup options");
+		}
+		std::vector<wchar_t> executablePathBuffer(32768);
+		const DWORD executablePathLength = GetModuleFileNameW(nullptr, executablePathBuffer.data(),
+			static_cast<DWORD>(executablePathBuffer.size()));
+		const std::filesystem::path executablePath = executablePathLength > 0 &&
+			executablePathLength < executablePathBuffer.size()
+			? std::filesystem::path(std::wstring(executablePathBuffer.data(), executablePathLength))
+			: std::filesystem::path{};
+		std::error_code currentPathError;
+		const auto workingDirectory = std::filesystem::current_path(currentPathError);
+		const auto campaignRoot = currentPathError || executablePath.empty()
+			? std::filesystem::path("data/campaign")
+			: ResolveApplicationDirectory("data/campaign", workingDirectory, executablePath);
+		if (campaignIdArgument == L"list")
+		{
+			std::vector<std::string> ids;
+			std::string error;
+			if (!openrepublic::runtime::ListCampaigns(campaignRoot, ids, error))
+			{
+				LocalFree(arguments);
+				return LogNativeEconomyStartupError(error);
+			}
+			for (const auto& id : ids) std::fprintf(stdout, "%s\n", id.c_str());
+			LocalFree(arguments);
+			return 0;
+		}
+		std::string campaignId;
+		for (const wchar_t character : campaignIdArgument)
+		{
+			if (character > 127) { campaignArgumentError = "campaign ID must be ASCII"; break; }
+			campaignId.push_back(static_cast<char>(character));
+		}
+		if (campaignArgumentError.empty())
+		{
+			const auto manifestPath = campaignRoot / campaignId / "campaign.txt";
+			campaignDefinition.emplace();
+			std::string error;
+			if (!openrepublic::runtime::LoadCampaign(manifestPath, *campaignDefinition, error))
+				campaignArgumentError = error;
+			else if (campaignDefinition->id != campaignId)
+				campaignArgumentError = "campaign directory ID does not match its manifest";
+			else
+			{
+				campaignProgressPath = openrepublic::runtime::DefaultCampaignProgressPath(campaignDefinition->id);
+				campaignProgress.emplace();
+				if (!openrepublic::runtime::LoadCampaignProgress(campaignProgressPath,
+					*campaignDefinition, *campaignProgress, error)) campaignArgumentError = error;
+				else
+				{
+					for (const auto& mission : campaignDefinition->missions)
+					{
+						const auto found = std::find_if(campaignProgress->missions.begin(), campaignProgress->missions.end(),
+							[&mission](const auto& item) { return item.first == mission.id; });
+						if (found == campaignProgress->missions.end() || !found->second.completed)
+						{
+							campaignMission = mission;
+							break;
+						}
+					}
+					if (!campaignMission) campaignArgumentError = "all campaign missions are already complete";
+				}
+			}
+		}
+		if (!campaignArgumentError.empty())
+		{
+			LocalFree(arguments);
+			return LogNativeEconomyStartupError(campaignArgumentError);
+		}
+	}
 	const auto playOptions = openrepublic::runtime::ResolvePlayOptions(rawArguments);
 	if (!playOptions.error.empty())
 	{
@@ -278,6 +397,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool nativeTownDemoArgumentSeen = false;
 	std::wstring nativeObjectivesArgument;
 	std::optional<openrepublic::runtime::NativeObjectiveSet> nativeObjectiveSet;
+	std::optional<nlohmann::json> campaignScenario;
+	std::string campaignBriefing;
 	bool ambientTrafficArgumentSeen = false;
 	bool nativeTrafficPolishArgumentSeen = false;
 	bool nativeTerrainArgumentSeen = false;
@@ -928,6 +1049,43 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			else if (option.rfind(L"builtin:", 0) == 0) nativeObjectivesArgument = option;
 		}
 	}
+	if (campaignMission)
+	{
+		if (campaignMission->startingTreasury != 0)
+			return LogNativeEconomyStartupError("campaign missions currently require a zero starting treasury");
+		nativeEconomyArgumentSeen = true;
+		nativeTerrainArgumentSeen = true;
+		ambientTrafficArgumentSeen = true;
+		nativeObjectivesArgument = (campaignDefinition->directory / campaignMission->objectivesFile).wstring();
+		const auto scenarioPath = campaignDefinition->directory / campaignMission->scenarioFile;
+		std::error_code fileError;
+		const auto scenarioSize = std::filesystem::file_size(scenarioPath, fileError);
+		if (fileError || scenarioSize == 0 || scenarioSize > 256 * 1024)
+			return LogNativeEconomyStartupError("campaign scenario JSON is unavailable or exceeds 256 KiB");
+		try
+		{
+			std::ifstream scenarioFile(scenarioPath, std::ios::binary);
+			if (!scenarioFile) throw std::runtime_error("could not open campaign scenario JSON");
+			campaignScenario = nlohmann::json::parse(scenarioFile);
+			if (!campaignScenario->is_object() || !campaignScenario->contains("catalog") ||
+				!campaignScenario->at("catalog").is_string() || !campaignScenario->contains("roads") ||
+				!campaignScenario->at("roads").is_array() || !campaignScenario->contains("buildings") ||
+				!campaignScenario->at("buildings").is_array())
+				throw std::runtime_error("scenario must contain catalog, roads, and buildings");
+			const auto briefingPath = campaignDefinition->directory / campaignMission->briefingFile;
+			const auto briefingSize = std::filesystem::file_size(briefingPath, fileError);
+			if (fileError || briefingSize == 0 || briefingSize > 16 * 1024)
+				throw std::runtime_error("campaign briefing is unavailable or exceeds 16 KiB");
+			std::ifstream briefingFile(briefingPath, std::ios::binary);
+			if (!briefingFile) throw std::runtime_error("could not open campaign briefing");
+			campaignBriefing.assign(std::istreambuf_iterator<char>(briefingFile), {});
+			if (briefingFile.bad()) throw std::runtime_error("could not read campaign briefing completely");
+		}
+		catch (const std::exception& error)
+		{
+			return LogNativeEconomyStartupError(std::string("invalid campaign mission data: ") + error.what());
+		}
+	}
 	if (!nativeObjectivesArgument.empty() && !economyCheckpointArgumentSeen) nativeEconomyArgumentSeen = true;
 	if (!nativeEconomyArgumentError.empty())
 	{
@@ -1003,6 +1161,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		}
 		if (nativeObjectiveSet->id == "coal_demo") nativeCoalDemoArgumentSeen = true;
 		else if (nativeObjectiveSet->id == "construction_sites_demo") nativeConstructionSitesArgumentSeen = true;
+		if (campaignMission)
+			nativeObjectiveSet->title = campaignMission->title + "\n" + campaignBriefing;
 	}
 	if (nativeContentCatalogArgumentSeen && (nativeCoalDemoArgumentSeen || nativeConstructionSitesArgumentSeen || nativeTownDemoArgumentSeen || nativeRailArgumentSeen))
 		return LogNativeEconomyStartupError("--native-catalog-from-content cannot be combined with synthetic demo catalogs");
@@ -1080,16 +1240,87 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		}
 		else
 		{
-			economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>(
-				nativeRailArgumentSeen ? openrepublic::economy::MakeSyntheticRailCatalog() :
-				(nativeCoalDemoArgumentSeen ? openrepublic::economy::MakeSyntheticCoalCatalog() :
-				(nativeConstructionSitesArgumentSeen ? openrepublic::economy::MakeSyntheticConstructionCatalog() :
-				 (nativeTownDemoArgumentSeen ? openrepublic::economy::MakeSyntheticTownCatalog()
-				                             : openrepublic::economy::MakeSyntheticCatalog()))));
+			if (campaignScenario)
+			{
+				economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>();
+				openrepublic::economy::ParseError parseError;
+				if (!openrepublic::economy::ParseCatalogText(campaignScenario->at("catalog").get<std::string>(),
+					*economyCheckpoint->catalog, parseError))
+					return LogNativeEconomyStartupError("campaign catalog is invalid: " + parseError.message);
+			}
+			else
+			{
+				economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>(
+					nativeRailArgumentSeen ? openrepublic::economy::MakeSyntheticRailCatalog() :
+					(nativeCoalDemoArgumentSeen ? openrepublic::economy::MakeSyntheticCoalCatalog() :
+					(nativeConstructionSitesArgumentSeen ? openrepublic::economy::MakeSyntheticConstructionCatalog() :
+					 (nativeTownDemoArgumentSeen ? openrepublic::economy::MakeSyntheticTownCatalog()
+					                             : openrepublic::economy::MakeSyntheticCatalog()))));
+			}
 		}
 		economyCheckpoint->world = std::make_unique<openrepublic::economy::World>(
 			*economyCheckpoint->catalog, 64, 64);
-		if (nativeCoalDemoArgumentSeen)
+		if (campaignScenario)
+		{
+			auto& world = *economyCheckpoint->world;
+			const auto& catalog = *economyCheckpoint->catalog;
+			std::vector<openrepublic::economy::CommandId> setupCommands;
+			for (const auto& item : campaignScenario->at("buildings"))
+			{
+				const auto typeName = item.at("type").get<std::string>();
+				openrepublic::economy::BuildingTypeId type{};
+				if (!catalog.FindBuildingType(typeName, type))
+					return LogNativeEconomyStartupError("campaign placement references an unknown building type");
+				const openrepublic::economy::Cell cell{item.at("x").get<std::int32_t>(), item.at("z").get<std::int32_t>()};
+				const auto command = item.value("constructionSite", false)
+					? world.PlaceConstructionSite(type, cell) : world.PlaceBuilding(type, cell);
+				if (!command) return LogNativeEconomyStartupError("campaign building placement could not be queued");
+				setupCommands.push_back(command);
+			}
+			for (const auto& item : campaignScenario->at("roads"))
+			{
+				const openrepublic::economy::Cell a{item.at("a").at("x").get<std::int32_t>(),
+					item.at("a").at("z").get<std::int32_t>()};
+				const openrepublic::economy::Cell b{item.at("b").at("x").get<std::int32_t>(),
+					item.at("b").at("z").get<std::int32_t>()};
+				const auto dx = std::abs(a.x - b.x);
+				const auto dz = std::abs(a.z - b.z);
+				if (dx + dz != 1) return LogNativeEconomyStartupError("campaign roads must be adjacent grid cells");
+				const auto command = world.BuildRoad(a, b);
+				if (!command) return LogNativeEconomyStartupError("campaign road could not be queued");
+				setupCommands.push_back(command);
+			}
+			if (!setupCommands.empty() && !world.Step(1).accepted)
+				return LogNativeEconomyStartupError("campaign starting buildings and roads could not be applied");
+			for (const auto command : setupCommands)
+				if (world.GetCommandResult(command).state != openrepublic::economy::CommandState::Accepted)
+					return LogNativeEconomyStartupError("campaign starting buildings or roads were rejected by the world");
+			if (campaignScenario->contains("utilityConnections"))
+			{
+				std::vector<openrepublic::economy::CommandId> utilityCommands;
+				for (const auto& item : campaignScenario->at("utilityConnections"))
+				{
+					const auto indexA = item.at("aBuilding").get<std::size_t>();
+					const auto indexB = item.at("bBuilding").get<std::size_t>();
+					if (indexA >= campaignScenario->at("buildings").size() || indexB >= campaignScenario->at("buildings").size())
+						return LogNativeEconomyStartupError("campaign utility connection references an unknown building");
+					openrepublic::economy::ResourceId resource{};
+					if (!catalog.FindResource(item.at("resource").get<std::string>(), resource))
+						return LogNativeEconomyStartupError("campaign utility connection references an unknown resource");
+					const auto command = world.ConnectUtility(resource,
+						static_cast<openrepublic::economy::BuildingId>(indexA + 1),
+						static_cast<openrepublic::economy::BuildingId>(indexB + 1));
+					if (!command) return LogNativeEconomyStartupError("campaign utility connection could not be queued");
+					utilityCommands.push_back(command);
+				}
+				if (!utilityCommands.empty() && !world.Step(1).accepted)
+					return LogNativeEconomyStartupError("campaign utility connections could not be applied");
+				for (const auto command : utilityCommands)
+					if (world.GetCommandResult(command).state != openrepublic::economy::CommandState::Accepted)
+						return LogNativeEconomyStartupError("campaign utility connection was rejected by the world");
+			}
+		}
+		else if (nativeCoalDemoArgumentSeen)
 		{
 			auto& world = *economyCheckpoint->world;
 			const auto& catalog = *economyCheckpoint->catalog;
@@ -1479,6 +1710,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		if (nativeObjectiveSet) application.SetNativeObjectives(std::move(*nativeObjectiveSet));
 		application.SetEconomyCheckpoint(std::move(*economyCheckpoint), nativeEconomyArgumentSeen);
+		if (campaignDefinition && campaignProgress && campaignMission)
+			application.SetCampaignProgress(std::move(*campaignDefinition), std::move(*campaignProgress),
+				campaignMission->id, std::move(campaignProgressPath), 0);
 		application.SetNativeTerrainEnabled(nativeTerrainArgumentSeen);
 		application.SetNativeRailEnabled(nativeRailArgumentSeen);
 	}

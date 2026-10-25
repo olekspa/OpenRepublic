@@ -1,0 +1,24 @@
+{
+  "id": "coal_to_heat",
+  "title": "Coal to heat",
+  "objectives": [
+    {
+      "id": "coal_at_plant",
+      "title": "Deliver coal to the heating plant",
+      "hint": "Export grain, buy coal, then dispatch a depot truck to the heating plant.",
+      "metric": "delivered_at_least",
+      "building_type": "heating_plant",
+      "resource": "coal",
+      "target": 1
+    },
+    {
+      "id": "heat_reserve",
+      "title": "Store 100 heat units",
+      "hint": "Keep the heating plant supplied until it stores 100 heat units.",
+      "metric": "inventory_at_least",
+      "building_type": "heating_plant",
+      "resource": "heat",
+      "target": 100
+    }
+  ]
+}

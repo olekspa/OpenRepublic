@@ -92,3 +92,8 @@ target_link_libraries(OpenRepublicApplicationDataPathTests PRIVATE OpenRepublicR
 target_compile_features(OpenRepublicApplicationDataPathTests PRIVATE cxx_std_17)
 
 add_test(NAME RuntimeApplicationDataPath COMMAND OpenRepublicApplicationDataPathTests)
+
+add_executable(OpenRepublicCampaignTests campaign_tests.cpp)
+target_link_libraries(OpenRepublicCampaignTests PRIVATE OpenRepublicRuntime)
+target_compile_features(OpenRepublicCampaignTests PRIVATE cxx_std_17)
+add_test(NAME RuntimeCampaign COMMAND OpenRepublicCampaignTests)
