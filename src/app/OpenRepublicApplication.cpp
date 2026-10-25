@@ -1748,7 +1748,7 @@ namespace openrepublic
 						FrameNativeEconomyWorld();
 						if (!renderPath || !renderPath->camera) return;
 						const auto target = nativeEconomyScene.CameraTarget();
-						const float distance = nativeEconomyScene.CameraDistance() * (nativeCoalDemo ? 0.68f : 1.0f);
+						const float distance = nativeEconomyScene.CameraDistance();
 						wi::scene::TransformComponent cameraTransform;
 						cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 1.25f, target.z));
 						cameraTransform.RotateRollPitchYaw(XMFLOAT3(1.5707963f, 0, 0));
@@ -1825,7 +1825,11 @@ namespace openrepublic
 						nativeObjectiveRestartButton.OnClick([this](const wi::gui::EventArgs&) { RestartNativeObjectives(); });
 						gui.AddWidget(&nativeObjectiveRestartButton);
 						nativeObjectiveLabel.Create("NativeObjectivesChecklist");
-						nativeObjectiveLabel.SetSize(XMFLOAT2(540, 142));
+						nativeObjectiveLabel.SetSize(XMFLOAT2(460, 150));
+						nativeObjectiveLabel.SetColor(wi::Color(20, 29, 38, 232));
+						nativeObjectiveLabel.font.params.color = wi::Color(245, 248, 250, 255);
+						nativeObjectiveLabel.margin_left = 10;
+						nativeObjectiveLabel.margin_top = 8;
 						nativeObjectiveLabel.SetText(nativeObjectiveSet->title);
 						gui.AddWidget(&nativeObjectiveLabel);
 					}
@@ -1845,6 +1849,17 @@ namespace openrepublic
 						UpdateRegionStatus();
 					});
 					gui.AddWidget(&nativeGameMenuButton);
+					nativeToolsButton.Create("NativeEconomyToolsButton");
+					nativeToolsButton.SetText("Tools");
+					StyleButton(nativeToolsButton);
+					nativeToolsButton.SetSize(XMFLOAT2(132, 28));
+					nativeToolsButton.SetTooltip("Show or hide construction, haul, dispatch and utility controls.");
+					nativeToolsButton.OnClick([this](const wi::gui::EventArgs&) {
+						nativeEconomyTools.SetExpanded(!nativeEconomyTools.IsExpanded());
+						nativeToolsButton.SetText(nativeEconomyTools.IsExpanded() ? "Hide tools" : "Tools");
+						LayoutNativeControls();
+					});
+					gui.AddWidget(&nativeToolsButton);
 					const std::array<const char*, 3> newGameLabels{{"New sandbox", "New coal demo", "New construction game"}};
 					const std::array<const wchar_t*, 3> newGameArguments{{L"--native-economy", L"--native-economy --native-coal-demo", L"--native-economy --native-construction-sites"}};
 					for (std::size_t i = 0; i < nativeNewGameButtons.size(); ++i)
@@ -3103,7 +3118,7 @@ namespace openrepublic
 		float x = 18.0f, y = 18.0f;
 		for (auto* button : { &regionStepOneButton, &regionStepButton, &regionToggleButton,
 			&regionHaulSourceButton, &regionHaulButton, &nativeFrameButton, &nativeCameraFollowButton, &nativeStepManyButton, &nativeRunPauseButton,
-			&nativeDetailsButton, &nativeOverviewButton, &nativeGameMenuButton, &nativeObjectiveRestartButton })
+			&nativeDetailsButton, &nativeOverviewButton, &nativeGameMenuButton, &nativeToolsButton, &nativeObjectiveRestartButton })
 		{
 			if (!nativeObjectiveSet && button == &nativeObjectiveRestartButton) continue;
 			if (!nativeEconomyCheckpointMode) continue;
@@ -3114,7 +3129,8 @@ namespace openrepublic
 		nativeStatusTop = nativeEconomyTools.Layout(width, y + 36.0f);
 		if (nativeObjectiveSet)
 		{
-			nativeObjectiveLabel.SetPos(XMFLOAT2(18.0f, nativeStatusTop + 6.0f));
+			const float viewportHeight = static_cast<float>(renderPath->GetLogicalHeight());
+			nativeObjectiveLabel.SetPos(XMFLOAT2(18.0f, std::max(18.0f, viewportHeight - 170.0f)));
 			nativeObjectiveLabel.SetVisible(!nativeGameMenuExpanded);
 		}
 		float menuY = nativeStatusTop + 8.0f;
@@ -3915,7 +3931,7 @@ namespace openrepublic
 			}
 		}
 		const auto target = nativeEconomyScene.CameraTarget();
-		const float distance = nativeEconomyScene.CameraDistance() * (nativeCoalDemo ? 0.68f : 1.0f);
+		const float distance = nativeEconomyScene.CameraDistance();
 		wi::scene::TransformComponent cameraTransform;
 		cameraTransform.Translate(XMFLOAT3(target.x, target.y + distance * 0.55f, target.z - distance * 0.85f));
 		cameraTransform.RotateRollPitchYaw(XMFLOAT3(0.6f, 0, 0));

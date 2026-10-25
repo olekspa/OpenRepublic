@@ -9,12 +9,24 @@ namespace openrepublic::preview
 	{
 		topBar_.Create("NativeEconomyHudTopBar");
 		topBar_.SetSize(XMFLOAT2(1150, 34));
+		topBar_.SetColor(wi::Color(20, 29, 38, 232));
+		topBar_.font.params.color = wi::Color(245, 248, 250, 255);
+		topBar_.margin_left = 10;
+		topBar_.margin_top = 7;
 		gui.AddWidget(&topBar_);
 		resourceTicker_.Create("NativeEconomyHudResourceTicker");
 		resourceTicker_.SetSize(XMFLOAT2(1150, 42));
+		resourceTicker_.SetColor(wi::Color(20, 29, 38, 232));
+		resourceTicker_.font.params.color = wi::Color(245, 248, 250, 255);
+		resourceTicker_.margin_left = 10;
+		resourceTicker_.margin_top = 7;
 		gui.AddWidget(&resourceTicker_);
 		eventLog_.Create("NativeEconomyHudEventLog");
 		eventLog_.SetSize(XMFLOAT2(920, 150));
+		eventLog_.SetColor(wi::Color(20, 29, 38, 232));
+		eventLog_.font.params.color = wi::Color(245, 248, 250, 255);
+		eventLog_.margin_left = 10;
+		eventLog_.margin_top = 8;
 		eventLog_.scrollbar.SetEnabled(true);
 		gui.AddWidget(&eventLog_);
 		overviewButton_.Create("NativeEconomyHudOverviewButton");
