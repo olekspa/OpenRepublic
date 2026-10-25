@@ -462,6 +462,11 @@ namespace openrepublic
 		mapRegionPreview = nativeEconomyCheckpointMode;
 	}
 
+	void OpenRepublicApplication::SetNativeTerrainEnabled(bool enabled)
+	{
+		nativeTerrainEnabled = enabled;
+	}
+
 	void OpenRepublicApplication::SetMapShowcaseCapture(std::filesystem::path outputPath, bool enhancedLook,
 		float cameraYawDegrees, float cameraElevationDegrees, float cameraDistanceScale,
 		bool vegetationWind, bool grassLayer)
@@ -768,7 +773,7 @@ namespace openrepublic
 			std::string error;
 			const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
 			if (nativeEconomyScene.Initialize(previewWorld, snapshot, *nativeEconomyCheckpoint.catalog,
-				regionInstances, error))
+				regionInstances, error, nativeTerrainEnabled))
 			{
 				nativeEconomyPresentationValid = true;
 				nmfPreviewCameraTarget = nativeEconomyScene.CameraTarget();
@@ -779,9 +784,11 @@ namespace openrepublic
 				regionEconomyDescription = nativeEconomyFreshWorld
 					? "Native economy sandbox — authored catalog, 64 x 64 cells"
 					: "Native economy checkpoint — grid view";
+				if (nativeTerrainEnabled) regionEconomyDescription += " — synthetic terrain (seed 20261025)";
 				uiNotice = nativeEconomyFreshWorld
 					? "Choose a building and Place building, then click a ground cell. Commands apply when you step."
 					: "Restored native economy; pending commands apply on the next step. Display scale: 4 units per cell.";
+				if (nativeTerrainEnabled) uiNotice += " Terrain uses OpenRepublic synthetic rules; WRSR parity UNKNOWN.";
 				RefreshRegionEconomy();
 				UpdateRegionEconomyPresentation();
 				StartLocalEconomyEndpoint();
@@ -3186,7 +3193,15 @@ namespace openrepublic
 		if (pointer.x < 0 || pointer.y < 0 || pointer.x >= renderPath->GetLogicalWidth() || pointer.y >= renderPath->GetLogicalHeight()) return std::nullopt;
 		const auto ray = wi::renderer::GetPickRay(static_cast<long>(pointer.x), static_cast<long>(pointer.y), *renderPath, *renderPath->camera);
 		if (!std::isfinite(ray.origin.y) || !std::isfinite(ray.direction.y) || std::abs(ray.direction.y) < 1e-6f) return std::nullopt;
-		const double distance = -static_cast<double>(ray.origin.y) / ray.direction.y;
+		double targetY = 0.0;
+		double distance = -static_cast<double>(ray.origin.y) / ray.direction.y;
+		for (int iteration = 0; iteration < (nativeTerrainEnabled ? 5 : 1); ++iteration)
+		{
+			const double x = ray.origin.x + static_cast<double>(ray.direction.x) * distance;
+			const double z = ray.origin.z + static_cast<double>(ray.direction.z) * distance;
+			targetY = nativeEconomyScene.GroundHeight(x, z);
+			distance = (targetY - static_cast<double>(ray.origin.y)) / ray.direction.y;
+		}
 		if (!std::isfinite(distance) || distance < ray.TMin || distance > ray.TMax) return std::nullopt;
 		const double worldX = ray.origin.x + static_cast<double>(ray.direction.x) * distance;
 		const double worldZ = ray.origin.z + static_cast<double>(ray.direction.z) * distance;
@@ -3204,6 +3219,11 @@ namespace openrepublic
 		{
 			const auto* type = nativeEconomyCheckpoint.world->GetCatalog().BuildingType(nativePlacementType);
 			if (!type) return;
+			if (nativeTerrainEnabled && !nativeEconomyScene.CanPlaceFootprint(cell, type->width, type->depth))
+			{
+				uiNotice = "Placement rejected: terrain gradient exceeds the synthetic 0.22 rise/run limit or the footprint intersects the lake.";
+				UpdateRegionStatus(); return;
+			}
 			// A type with a synthetic `build ... work N` declaration starts as a construction site that
 			// needs material hauls; other types keep the instant placement path (OpenRepublic policy).
 			const bool asSite = type->constructionWorkTicks > 0;
@@ -3243,8 +3263,23 @@ namespace openrepublic
 					economy::Cell a = start;
 					std::size_t queued = 0;
 					std::string submissionIssue;
+					if (nativeTerrainEnabled)
+					{
+						economy::Cell probe = start;
+						for (std::int64_t i = 0; i <= length; ++i)
+						{
+							if (!nativeEconomyScene.CanPlaceFootprint(probe, 1, 1))
+							{
+								submissionIssue = "road rejected: terrain gradient exceeds the synthetic 0.22 rise/run limit or intersects the lake";
+								break;
+							}
+							probe.x += dx > 0 ? 1 : dx < 0 ? -1 : 0;
+							probe.z += dz > 0 ? 1 : dz < 0 ? -1 : 0;
+						}
+					}
 					for (std::int64_t i = 0; i < length; ++i)
 					{
+						if (!submissionIssue.empty()) break;
 						const economy::Cell b{ a.x + (dx > 0 ? 1 : dx < 0 ? -1 : 0), a.z + (dz > 0 ? 1 : dz < 0 ? -1 : 0) };
 						if (!TrackNativeSubmission(regionEconomyApi->BuildRoad(regionEconomySnapshot->revision, a, b), "road segment"))
 						{
@@ -3313,24 +3348,30 @@ namespace openrepublic
 			width *= type->width; depth *= type->depth;
 			x += (width - 4.0f) * 0.5f; z += (depth - 4.0f) * 0.5f;
 		}
+		const std::uint32_t footprintWidth = nativeConstructionMode == NativeConstructionMode::Building
+			? nativeEconomyCheckpoint.world->GetCatalog().BuildingType(nativePlacementType)->width : 1u;
+		const std::uint32_t footprintDepth = nativeConstructionMode == NativeConstructionMode::Building
+			? nativeEconomyCheckpoint.world->GetCatalog().BuildingType(nativePlacementType)->depth : 1u;
+		const bool terrainValid = nativeEconomyScene.CanPlaceFootprint(*cell, footprintWidth, footprintDepth);
 		if (nativeConstructionPreview == wi::ecs::INVALID_ENTITY)
 		{
 			nativeConstructionPreview = previewWorld.Entity_CreateCube("Native construction draft");
 		}
 		if (auto* material = previewWorld.materials.GetComponent(nativeConstructionPreview))
 		{
-			bool valid = false;
+			bool valid = terrainValid;
 			if (nativeConstructionMode == NativeConstructionMode::Building)
-				valid = runtime::ValidateNativeBuildingPlacement(nativeEconomyCheckpoint.world->Snapshot(),
+				valid = valid && runtime::ValidateNativeBuildingPlacement(nativeEconomyCheckpoint.world->Snapshot(),
 					nativeEconomyCheckpoint.world->GetCatalog(), nativePlacementType, *cell).Valid();
-			else if (nativeConstructionMode == NativeConstructionMode::Road) valid = roadDraftValid || !nativeRoadStart;
+			else if (nativeConstructionMode == NativeConstructionMode::Road) valid = valid && (roadDraftValid || !nativeRoadStart);
 			material->SetBaseColor(valid ? XMFLOAT4(0.10f, 0.90f, 0.25f, 0.42f) : XMFLOAT4(0.95f, 0.12f, 0.08f, 0.48f));
 			material->CreateRenderData(true);
 		}
 		if (auto* transform = previewWorld.transforms.GetComponent(nativeConstructionPreview))
 		{
 			transform->scale_local = XMFLOAT3(width * 0.5f, 0.08f, depth * 0.5f);
-			transform->translation_local = XMFLOAT3(x, 0.12f, z);
+			transform->translation_local = XMFLOAT3(x,
+				static_cast<float>(nativeEconomyScene.GroundHeight(x, z)) + 0.12f, z);
 			transform->UpdateTransform();
 		}
 	}

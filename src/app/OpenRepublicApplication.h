@@ -57,6 +57,7 @@ namespace openrepublic
 			bool dynamicLod = false, float lodNearDistance = 250.0f, float lodFarDistance = 700.0f);
 		void SetSyntheticRegionFixture();
 		void SetEconomyCheckpoint(openrepublic::economy::RestoredCheckpoint checkpoint, bool freshWorld = false);
+		void SetNativeTerrainEnabled(bool enabled);
 		void SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees);
 		void SetScenePipeName(std::wstring name);
 		void SetSceneScriptPath(std::filesystem::path path);
@@ -192,6 +193,7 @@ namespace openrepublic
 		bool mapRegionPreview = false;
 		bool syntheticRegionFixtureMode = false;
 		bool nativeEconomyCheckpointMode = false;
+		bool nativeTerrainEnabled = false;
 		bool nativeEconomyPresentationValid = false;
 		double syntheticRegionCenterX = 0.0;
 		double syntheticRegionCenterZ = 0.0;

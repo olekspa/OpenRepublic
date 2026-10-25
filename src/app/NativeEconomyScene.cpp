@@ -1,5 +1,6 @@
 #include "NativeEconomyScene.h"
 #include "ShowcaseProps.h"
+#include "ShowcaseEnvironment.h"
 #include "openrepublic/runtime/native_economy_tools.h"
 #include "openrepublic/procgeo/vehicles.h"
 
@@ -93,7 +94,7 @@ namespace openrepublic::preview
 			return true;
 		}
 
-		wi::ecs::Entity CreateBuilding(wi::scene::Scene& scene, const BuildingPrimitive& primitive)
+		wi::ecs::Entity CreateBuilding(wi::scene::Scene& scene, const BuildingPrimitive& primitive, double groundY)
 		{
 			const wi::ecs::Entity entity = scene.Entity_CreateCube(
 				"OpenRepublic native building " + std::to_string(primitive.buildingId));
@@ -115,11 +116,28 @@ namespace openrepublic::preview
 				return wi::ecs::INVALID_ENTITY;
 			}
 			transform->Scale(XMFLOAT3(halfWidth, halfHeight, halfDepth));
-			transform->Translate(XMFLOAT3(x, halfHeight, z));
+			transform->Translate(XMFLOAT3(x, static_cast<float>(groundY) + halfHeight, z));
 			return entity;
 		}
 
-		wi::ecs::Entity CreateRoad(wi::scene::Scene& scene, const RoadPrimitive& primitive)
+		wi::ecs::Entity CreateBuildingPad(wi::scene::Scene& scene, const BuildingPrimitive& primitive, double groundY)
+		{
+			const wi::ecs::Entity entity = scene.Entity_CreateCube("OpenRepublic levelled building pad");
+			if (entity == wi::ecs::INVALID_ENTITY) return entity;
+			const float halfHeight = 0.08f;
+			wi::scene::TransformComponent* transform = scene.transforms.GetComponent(entity);
+			if (transform == nullptr || !SetMaterialColor(scene, entity, XMFLOAT4(0.36f, 0.34f, 0.28f, 1.0f)))
+			{
+				scene.Entity_Remove(entity); return wi::ecs::INVALID_ENTITY;
+			}
+			transform->Scale(XMFLOAT3(static_cast<float>(primitive.width * 0.5), halfHeight,
+				static_cast<float>(primitive.depth * 0.5)));
+			transform->Translate(XMFLOAT3(static_cast<float>(primitive.centerX),
+				static_cast<float>(groundY) - halfHeight, static_cast<float>(primitive.centerZ)));
+			return entity;
+		}
+
+		wi::ecs::Entity CreateRoad(wi::scene::Scene& scene, const RoadPrimitive& primitive, double groundY)
 		{
 			const wi::ecs::Entity entity = scene.Entity_CreateCube(
 				"OpenRepublic native road " + std::to_string(primitive.roadId));
@@ -143,7 +161,7 @@ namespace openrepublic::preview
 				return wi::ecs::INVALID_ENTITY;
 			}
 			transform->Scale(XMFLOAT3(halfWidth, roadHalfHeight, halfDepth));
-			transform->Translate(XMFLOAT3(x, roadHalfHeight, z));
+			transform->Translate(XMFLOAT3(x, static_cast<float>(groundY) + roadHalfHeight, z));
 			return entity;
 		}
 
@@ -178,8 +196,70 @@ namespace openrepublic::preview
 			return entity;
 		}
 
-		wi::ecs::Entity CreateGround(wi::scene::Scene& scene, const Plan& plan)
+		wi::ecs::Entity CreateGround(wi::scene::Scene& scene, const Plan& plan, bool terrainEnabled,
+			const runtime::SyntheticTerrain& terrain)
 		{
+			if (terrainEnabled)
+			{
+				constexpr std::uint32_t samples = 129;
+				const double half = std::max({ 136.0, std::abs(plan.minX), std::abs(plan.maxX),
+					std::abs(plan.minZ), std::abs(plan.maxZ) }) + 12.0;
+				std::vector<XMFLOAT3> positions(samples * samples);
+				std::vector<std::uint32_t> colors(samples * samples);
+				std::vector<XMFLOAT2> uvs(samples * samples);
+				std::vector<std::uint32_t> indices;
+				indices.reserve((samples - 1) * (samples - 1) * 6);
+				preview::ShowcaseTerrainData shade;
+				shade.centerX = 0.0; shade.centerZ = 0.0; shade.nearHalfExtent = 18.0;
+				shade.hasWater = true; shade.waterLevel = static_cast<float>(terrain.waterLevel);
+				shade.grid.minHeight = -6.0f; shade.grid.maxHeight = 9.0f;
+				for (std::uint32_t z = 0; z < samples; ++z)
+				{
+					for (std::uint32_t x = 0; x < samples; ++x)
+					{
+						const double wx = -half + 2.0 * half * x / (samples - 1);
+						const double wz = -half + 2.0 * half * z / (samples - 1);
+						const double h = terrain.HeightAt(wx, wz);
+						const auto color = ShadeShowcaseTerrain(shade, wx, wz, static_cast<float>(h),
+							static_cast<float>(terrain.SlopeAt(wx, wz)));
+						const std::size_t i = static_cast<std::size_t>(z) * samples + x;
+						positions[i] = XMFLOAT3(static_cast<float>(wx), static_cast<float>(h), static_cast<float>(wz));
+						colors[i] = wi::Color::fromFloat4(XMFLOAT4(color.x, color.y, color.z, 1.0f));
+						uvs[i] = XMFLOAT2(static_cast<float>(wx / 22.0), static_cast<float>(wz / 22.0));
+					}
+				}
+				for (std::uint32_t z = 0; z + 1 < samples; ++z)
+					for (std::uint32_t x = 0; x + 1 < samples; ++x)
+					{
+						const std::uint32_t a = z * samples + x, b = a + 1, c = a + samples, d = c + 1;
+						indices.insert(indices.end(), { a, b, c, b, d, c });
+					}
+				const wi::ecs::Entity entity = scene.Entity_CreateMeshFromData("OpenRepublic seeded native terrain",
+					indices.size(), indices.data(), positions.size(), positions.data());
+				wi::scene::MeshComponent* mesh = scene.meshes.GetComponent(entity);
+				wi::scene::MaterialComponent* material = scene.materials.GetComponent(entity);
+				if (mesh == nullptr || material == nullptr)
+				{
+					scene.Entity_Remove(entity); return wi::ecs::INVALID_ENTITY;
+				}
+				mesh->vertex_colors = std::move(colors); mesh->vertex_uvset_0 = std::move(uvs);
+				mesh->vertex_normals.resize(positions.size());
+				for (std::uint32_t z = 0; z < samples; ++z)
+					for (std::uint32_t x = 0; x < samples; ++x)
+					{
+						const auto l = x == 0 ? x : x - 1, r = std::min(x + 1, samples - 1);
+						const auto d = z == 0 ? z : z - 1, u = std::min(z + 1, samples - 1);
+						const float hx = positions[static_cast<std::size_t>(z) * samples + r].y - positions[static_cast<std::size_t>(z) * samples + l].y;
+						const float hz = positions[static_cast<std::size_t>(u) * samples + x].y - positions[static_cast<std::size_t>(d) * samples + x].y;
+						XMFLOAT3 n(-hx, 4.25f, -hz); const float length = std::sqrt(n.x*n.x+n.y*n.y+n.z*n.z);
+						mesh->vertex_normals[static_cast<std::size_t>(z) * samples + x] = XMFLOAT3(n.x/length,n.y/length,n.z/length);
+					}
+				mesh->CreateRenderData(); material->SetUseVertexColors(true); material->SetBaseColor(XMFLOAT4(1,1,1,1));
+				material->SetRoughness(0.96f); material->SetReflectance(0.02f); preview::ApplyShowcaseGrass(*material, false);
+				material->CreateRenderData(true);
+				if (wi::scene::ObjectComponent* object = scene.objects.GetComponent(entity)) object->SetCastShadow(false);
+				return entity;
+			}
 			const wi::ecs::Entity entity = scene.Entity_CreatePlane("OpenRepublic native grid ground");
 			if (entity == wi::ecs::INVALID_ENTITY)
 				return wi::ecs::INVALID_ENTITY;
@@ -203,6 +283,33 @@ namespace openrepublic::preview
 			}
 			transform->Scale(XMFLOAT3(halfWidth, 1.0f, halfDepth));
 			transform->Translate(XMFLOAT3(x, 0.0f, z));
+			return entity;
+		}
+
+		wi::ecs::Entity CreateNativeLake(wi::scene::Scene& scene, const runtime::SyntheticTerrain& terrain)
+		{
+			constexpr std::uint32_t segments = 96;
+			constexpr float cx = 38.0f, cz = -27.0f, rx = 14.0f, rz = 9.8f;
+			std::vector<XMFLOAT3> positions;
+			std::vector<std::uint32_t> indices;
+			positions.reserve(segments + 1); indices.reserve(segments * 3);
+			positions.emplace_back(cx, static_cast<float>(terrain.waterLevel), cz);
+			for (std::uint32_t i = 0; i < segments; ++i)
+			{
+				const float angle = 6.28318530718f * i / segments;
+				positions.emplace_back(cx + rx * std::cos(angle), static_cast<float>(terrain.waterLevel),
+					cz + rz * std::sin(angle));
+				indices.insert(indices.end(), { 0u, i + 1, (i + 1) % segments + 1 });
+			}
+			const wi::ecs::Entity entity = scene.Entity_CreateMeshFromData("OpenRepublic synthetic lake",
+				indices.size(), indices.data(), positions.size(), positions.data());
+			if (auto* material = scene.materials.GetComponent(entity))
+			{
+				material->SetBaseColor(XMFLOAT4(0.035f, 0.16f, 0.23f, 0.92f));
+				material->SetRoughness(0.16f); material->SetReflectance(0.72f); material->CreateRenderData(true);
+			}
+			else { scene.Entity_Remove(entity); return wi::ecs::INVALID_ENTITY; }
+			if (auto* object = scene.objects.GetComponent(entity)) object->SetCastShadow(false);
 			return entity;
 		}
 
@@ -242,7 +349,8 @@ namespace openrepublic::preview
 	}
 
 	bool NativeEconomyScene::Initialize(wi::scene::Scene& scene, const economy::WorldSnapshot& snapshot,
-		const economy::Catalog& catalog, std::vector<RegionInstance>& outInstances, std::string& error)
+		const economy::Catalog& catalog, std::vector<RegionInstance>& outInstances, std::string& error,
+		bool nativeTerrain)
 	{
 		error.clear();
 		if (initialized_)
@@ -250,6 +358,7 @@ namespace openrepublic::preview
 			error = "native economy scene is already initialized";
 			return false;
 		}
+		terrainEnabled_ = nativeTerrain;
 		Plan plan;
 		if (!runtime::BuildNativeEconomyScenePlan(snapshot, catalog, plan, error) || !ValidateRendererPlan(plan, error))
 		{
@@ -361,7 +470,8 @@ namespace openrepublic::preview
 		{
 			auto old = buildings_.find(primitive.buildingId);
 			if (old != buildings_.end() && sameBuilding(old->second, primitive)) continue;
-			const wi::ecs::Entity entity = CreateBuilding(scene, primitive);
+			const wi::ecs::Entity entity = CreateBuilding(scene, primitive,
+				terrainEnabled_ ? terrain_.HeightAt(primitive.centerX, primitive.centerZ) : 0.0);
 			if (entity == wi::ecs::INVALID_ENTITY)
 			{
 				rollback();
@@ -369,14 +479,25 @@ namespace openrepublic::preview
 				return false;
 			}
 			createdEntities.push_back(entity);
-			addedBuildings.push_back({ primitive.buildingId, { entity, primitive.typeId, primitive.centerX,
+			wi::ecs::Entity pad = wi::ecs::INVALID_ENTITY;
+			if (terrainEnabled_)
+			{
+				pad = CreateBuildingPad(scene, primitive, terrain_.HeightAt(primitive.centerX, primitive.centerZ));
+				if (pad == wi::ecs::INVALID_ENTITY)
+				{
+					rollback(); error = "Wicked Engine could not create a levelled terrain pad"; return false;
+				}
+				createdEntities.push_back(pad);
+			}
+			addedBuildings.push_back({ primitive.buildingId, { entity, pad, primitive.typeId, primitive.centerX,
 				primitive.centerZ, primitive.width, primitive.depth, primitive.height } });
 		}
 		for (const RoadPrimitive& primitive : plan.roads)
 		{
 			auto old = roads_.find(primitive.roadId);
 			if (old != roads_.end() && sameRoad(old->second, primitive)) continue;
-			const wi::ecs::Entity entity = CreateRoad(scene, primitive);
+			const wi::ecs::Entity entity = CreateRoad(scene, primitive,
+				terrainEnabled_ ? terrain_.HeightAt(primitive.centerX, primitive.centerZ) : 0.0);
 			if (entity == wi::ecs::INVALID_ENTITY)
 			{
 				rollback();
@@ -480,7 +601,8 @@ namespace openrepublic::preview
 			if (geometry == presentationBuildings.end()) continue;
 			const auto& shape = *geometry->second;
 			const wi::ecs::Entity emitterEntity = scene.Entity_CreateEmitter("OpenRepublic active production smoke",
-				XMFLOAT3(static_cast<float>(shape.centerX), static_cast<float>(shape.height + 0.3), static_cast<float>(shape.centerZ)));
+				XMFLOAT3(static_cast<float>(shape.centerX), static_cast<float>(GroundHeight(shape.centerX, shape.centerZ) + shape.height + 0.3),
+					static_cast<float>(shape.centerZ)));
 			if (emitterEntity == wi::ecs::INVALID_ENTITY)
 			{
 				rollback(); error = "Wicked Engine could not create a production smoke emitter"; return false;
@@ -538,7 +660,8 @@ namespace openrepublic::preview
 			const double length = std::hypot(dx, dz);
 			const double centerX = a->second->centerX + dx * 0.5;
 			const double centerZ = a->second->centerZ + dz * 0.5;
-			const double centerY = std::max(a->second->height, b->second->height) + 0.25;
+			const double centerY = std::max(GroundHeight(a->second->centerX, a->second->centerZ) + a->second->height,
+				GroundHeight(b->second->centerX, b->second->centerZ) + b->second->height) + 0.25;
 			const double yaw = std::atan2(-dz, dx);
 			float ignored;
 			if (!std::isfinite(length) || length <= 0.0 || !ToPreciseFloat(centerX, ignored) ||
@@ -581,7 +704,7 @@ namespace openrepublic::preview
 		wi::ecs::Entity newGround = wi::ecs::INVALID_ENTITY;
 		if (groundEntity_ == wi::ecs::INVALID_ENTITY)
 		{
-			newGround = CreateGround(scene, plan);
+			newGround = CreateGround(scene, plan, terrainEnabled_, terrain_);
 			if (newGround == wi::ecs::INVALID_ENTITY)
 			{
 				rollback();
@@ -589,6 +712,16 @@ namespace openrepublic::preview
 				return false;
 			}
 			createdEntities.push_back(newGround);
+		}
+		wi::ecs::Entity newWater = wi::ecs::INVALID_ENTITY;
+		if (terrainEnabled_ && waterEntity_ == wi::ecs::INVALID_ENTITY)
+		{
+			newWater = CreateNativeLake(scene, terrain_);
+			if (newWater == wi::ecs::INVALID_ENTITY)
+			{
+				rollback(); error = "Wicked Engine could not create the synthetic lake"; return false;
+			}
+			createdEntities.push_back(newWater);
 		}
 		const wi::ecs::Entity targetGround = newGround != wi::ecs::INVALID_ENTITY ? newGround : groundEntity_;
 		wi::scene::TransformComponent* groundTransform = scene.transforms.GetComponent(targetGround);
@@ -645,6 +778,7 @@ namespace openrepublic::preview
 			{
 				buildingByEntity_.erase(it->second.entity);
 				scene.Entity_Remove(it->second.entity);
+				if (it->second.pad != wi::ecs::INVALID_ENTITY) scene.Entity_Remove(it->second.pad);
 				it = buildings_.erase(it);
 			}
 			else ++it;
@@ -699,9 +833,13 @@ namespace openrepublic::preview
 		for (NewVehicle& item : addedVehicles) vehicles_[item.id] = item.visual;
 		for (const auto& desired : desiredEffects) buildingEffects_[desired.first] = desired.second;
 		if (newGround != wi::ecs::INVALID_ENTITY) groundEntity_ = newGround;
-		groundTransform->scale_local = XMFLOAT3(groundHalfWidth, 1.0f, groundHalfDepth);
-		groundTransform->translation_local = XMFLOAT3(groundX, 0.0f, groundZ);
-		groundTransform->UpdateTransform();
+		if (newWater != wi::ecs::INVALID_ENTITY) waterEntity_ = newWater;
+		if (!terrainEnabled_)
+		{
+			groundTransform->scale_local = XMFLOAT3(groundHalfWidth, 1.0f, groundHalfDepth);
+			groundTransform->translation_local = XMFLOAT3(groundX, 0.0f, groundZ);
+			groundTransform->UpdateTransform();
+		}
 
 		outInstances = std::move(instances);
 		cameraDistance_ = static_cast<float>(plan.cameraDistance);
@@ -718,13 +856,14 @@ namespace openrepublic::preview
 		for (auto& entry : vehicles_)
 		{
 			VehicleVisual& visual = entry.second;
-			const runtime::NativeVehicleMotion motion = runtime::InterpolateNativeVehicleMotion(
+				const runtime::NativeVehicleMotion motion = runtime::InterpolateNativeVehicleMotion(
 				visual.previous, visual.current, alpha, visual.yaw, *transform_, 0.48 * kTruckScale);
 			if (motion.moving) visual.yaw = static_cast<float>(motion.yawRadians);
 			visual.wheelRotation = visual.wheelRotationBase + static_cast<float>(motion.wheelRotationRadians);
 			XMFLOAT4 yawRotation;
 			XMStoreFloat4(&yawRotation, XMQuaternionRotationAxis(XMVectorSet(0, 1, 0, 0), visual.yaw));
-			const auto positionNode = [&](wi::ecs::Entity entity, float localX, float localY, float localZ,
+				const float groundY = static_cast<float>(GroundHeight(motion.position.x, motion.position.z)) + kRoadSurfaceY;
+				const auto positionNode = [&](wi::ecs::Entity entity, float localX, float localY, float localZ,
 				const XMFLOAT3& scale, const XMFLOAT4& rotation)
 			{
 				wi::scene::TransformComponent* node = scene.transforms.GetComponent(entity);
@@ -734,7 +873,7 @@ namespace openrepublic::preview
 				const float z = static_cast<float>(motion.position.z) +
 					(-std::sin(visual.yaw) * localX + std::cos(visual.yaw) * localZ) * kTruckScale;
 				node->ClearTransform(); node->Scale(scale); node->Rotate(rotation);
-				node->Translate(XMFLOAT3(x, kRoadSurfaceY + localY * kTruckScale, z)); node->UpdateTransform();
+				node->Translate(XMFLOAT3(x, groundY + localY * kTruckScale, z)); node->UpdateTransform();
 			};
 			positionNode(visual.body, 0, 0, 0, XMFLOAT3(kTruckScale, kTruckScale, kTruckScale), yawRotation);
 			const float loadY = visual.loaded ? 1.55f : -10000.0f;
@@ -744,7 +883,7 @@ namespace openrepublic::preview
 			{
 				label->ClearTransform(); label->Scale(XMFLOAT3(0.82f, 0.82f, 0.82f));
 				label->Translate(XMFLOAT3(static_cast<float>(motion.position.x),
-					kRoadSurfaceY + 5.0f * kTruckScale, static_cast<float>(motion.position.z)));
+					groundY + 5.0f * kTruckScale, static_cast<float>(motion.position.z)));
 				label->UpdateTransform();
 			}
 			if (wi::scene::ObjectComponent* object = scene.objects.GetComponent(visual.body))
@@ -772,7 +911,7 @@ namespace openrepublic::preview
 		const runtime::NativePoint point = transform_->CellCenter(cell);
 		float x, z;
 		if (!ToFloat(point.x, x) || !ToFloat(point.z, z)) return DirectX::XMFLOAT3(0, 0, 0);
-		return DirectX::XMFLOAT3(x, 0.15f, z);
+		return DirectX::XMFLOAT3(x, static_cast<float>(GroundHeight(x, z)) + 0.15f, z);
 	}
 
 	std::optional<DirectX::XMFLOAT3> NativeEconomyScene::VehiclePosition(economy::VehicleId id, double alpha) const
@@ -785,7 +924,22 @@ namespace openrepublic::preview
 			visual.previous, visual.current, alpha, visual.yaw, *transform_);
 		float x = 0.0f, z = 0.0f;
 		if (!ToFloat(motion.position.x, x) || !ToFloat(motion.position.z, z)) return std::nullopt;
-		return DirectX::XMFLOAT3(x, 0.15f, z);
+		return DirectX::XMFLOAT3(x, static_cast<float>(GroundHeight(x, z)) + 0.15f, z);
+	}
+
+	double NativeEconomyScene::GroundHeight(double worldX, double worldZ) const noexcept
+	{
+		return terrainEnabled_ ? terrain_.HeightAt(worldX, worldZ) : 0.0;
+	}
+
+	bool NativeEconomyScene::CanPlaceFootprint(economy::Cell cell, std::uint32_t width,
+		std::uint32_t depth) const noexcept
+	{
+		if (!terrainEnabled_) return true;
+		if (!transform_) return false;
+		const runtime::NativePoint center = transform_->FootprintCenter(cell, width, depth);
+		return terrain_.IsBuildable(center.x, center.z, width * runtime::NativeEconomyTransform::DisplayUnitsPerCell,
+			depth * runtime::NativeEconomyTransform::DisplayUnitsPerCell);
 	}
 
 	float NativeEconomyScene::CameraDistance() const noexcept { return cameraDistance_; }
