@@ -318,6 +318,18 @@ bool BuildNativeEconomyScenePlan(const economy::WorldSnapshot &snapshot,
     return true;
 }
 
+bool BuildNativeEconomyFrameBounds(const economy::WorldSnapshot& snapshot,
+                                   const economy::Catalog& catalog,
+                                   NativeEconomyFrameBounds& outBounds,
+                                   std::string& error)
+{
+    NativeEconomyScenePlan plan;
+    if (!BuildNativeEconomyScenePlan(snapshot, catalog, plan, error)) return false;
+    outBounds = { plan.minX, plan.minZ, plan.maxX, plan.maxZ, plan.cameraDistance };
+    error.clear();
+    return true;
+}
+
 bool NativeEconomyPlanFitsFloatPrecision(const NativeEconomyScenePlan &plan,
                                          std::string &error) {
     constexpr double maxConversionError = 0.0625;

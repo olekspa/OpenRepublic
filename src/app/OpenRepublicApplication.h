@@ -18,6 +18,7 @@
 #include "openrepublic/runtime/economy_overview.h"
 #include "openrepublic/runtime/native_coal_demo.h"
 #include "openrepublic/runtime/native_objectives.h"
+#include "openrepublic/runtime/native_economy_layout.h"
 #include "openrepublic/runtime/objective_planner.h"
 #include "openrepublic/runtime/campaign.h"
 #include "openrepublic/runtime/save_slots.h"
@@ -186,6 +187,7 @@ namespace openrepublic
 		std::uint32_t uiScriptFrame = 0;
 		std::size_t nextUiScriptAction = 0;
 		openrepublic::runtime::UiScript uiScript;
+		std::optional<openrepublic::runtime::NativeEconomyFrameBounds> nativeCameraFrameBounds;
 		std::optional<openrepublic::runtime::NativeObjectiveSet> nativeObjectiveSet;
 		std::string nativeObjectiveBaseline;
 		std::optional<openrepublic::runtime::CampaignDefinition> nativeCampaign;

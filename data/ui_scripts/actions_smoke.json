@@ -1,0 +1,47 @@
+{
+    "actions":  [
+                    {
+                        "frame":  1,
+                        "action":  "select",
+                        "label":  "NativeEconomyBuildingType",
+                        "entry":  "home (1x1)"
+                    },
+                    {
+                        "frame":  2,
+                        "action":  "place_building",
+                        "type":  "home",
+                        "x":  18,
+                        "z":  18
+                    },
+                    {
+                        "frame":  3,
+                        "action":  "build_road",
+                        "x":  18,
+                        "z":  17,
+                        "x2":  19,
+                        "z2":  17
+                    },
+                    {
+                        "frame":  4,
+                        "action":  "wait_ticks",
+                        "ticks":  4
+                    },
+                    {
+                        "frame":  5,
+                        "action":  "click_cell",
+                        "x":  18,
+                        "z":  18
+                    },
+                    {
+                        "frame":  6,
+                        "action":  "screenshot",
+                        "path":  "actions_smoke-final.png"
+                    },
+                    {
+                        "frame":  7,
+                        "action":  "assert_text",
+                        "widget":  "NativeObjectivesChecklist",
+                        "text":  "Grow a town"
+                    }
+                ]
+}

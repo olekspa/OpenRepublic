@@ -72,6 +72,19 @@ int main() {
 
     Check(runtime::BuildNativeEconomyScenePlan(snapshot, catalog, plan, error),
           "build full native plan: " + error);
+    runtime::NativeEconomyFrameBounds bounds;
+    Check(runtime::BuildNativeEconomyFrameBounds(snapshot, catalog, bounds, error),
+          "build pure frame bounds: " + error);
+    Check(Near(bounds.minX, plan.minX) && Near(bounds.maxX, plan.maxX) &&
+              Near(bounds.minZ, plan.minZ) && Near(bounds.maxZ, plan.maxZ) && bounds.cameraDistance > 0,
+          "camera frame bounds include the complete initial world plan");
+    auto expandedSnapshot = snapshot;
+    expandedSnapshot.buildings.push_back(Building(900001, 0, {90, 80}, {90, 79}));
+    runtime::NativeEconomyFrameBounds expandedBounds;
+    Check(runtime::BuildNativeEconomyFrameBounds(expandedSnapshot, catalog, expandedBounds, error) &&
+              expandedBounds.maxX > bounds.maxX && expandedBounds.maxZ > bounds.maxZ &&
+              expandedBounds.cameraDistance > bounds.cameraDistance,
+          "camera bounds and distance grow when the world gains distant geometry");
     Check(plan.buildings.size() == 3 && plan.roads.size() == 2,
           "all buildings and roads are represented");
     Check(plan.buildings[0].buildingId == 7 && plan.buildings[1].buildingId == 500 &&

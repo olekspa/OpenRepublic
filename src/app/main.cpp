@@ -256,11 +256,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	if (!campaignIdArgument.empty())
 	{
-		if (rawArguments.size() != 2)
+		bool validCampaignArguments = true;
+		for (std::size_t i = 0; i < rawArguments.size(); ++i)
 		{
-			LocalFree(arguments);
-			return LogNativeEconomyStartupError("--campaign cannot be combined with other startup options");
+			if (rawArguments[i] == L"--campaign") { ++i; continue; }
+			if (rawArguments[i] == L"--autoplay") continue;
+			if (rawArguments[i] == L"--autoplay-speed" || rawArguments[i] == L"--ui-script")
+			{
+				if (i + 1 >= rawArguments.size() || rawArguments[i + 1].rfind(L"--", 0) == 0) { validCampaignArguments = false; break; }
+				++i; continue;
+			}
+			validCampaignArguments = false; break;
 		}
+		if (!validCampaignArguments) { LocalFree(arguments); return LogNativeEconomyStartupError("--campaign allows only --autoplay, --autoplay-speed, and --ui-script options"); }
 		std::vector<wchar_t> executablePathBuffer(32768);
 		const DWORD executablePathLength = GetModuleFileNameW(nullptr, executablePathBuffer.data(),
 			static_cast<DWORD>(executablePathBuffer.size()));
@@ -1407,6 +1415,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			if (!catalog.FindResource("grain", grain) || !world.TradeExport(2, grain, 4, 4) ||
 				!world.Step(1).accepted || world.Treasury() < 4)
 				return LogNativeEconomyStartupError("coal demo could not fund synthetic coal imports");
+		}
+		else if (nativeTownDemoArgumentSeen)
+		{
+			auto& world = *economyCheckpoint->world;
+			const auto& catalog = *economyCheckpoint->catalog;
+			const std::array<const char*, 7> names{{"home", "farm", "mill", "bakery", "market", "boiler", "road_depot"}};
+			const std::array<std::int32_t, 7> x{{1, 3, 5, 7, 9, 11, 13}};
+			for (std::size_t i = 0; i < names.size(); ++i)
+			{
+				openrepublic::economy::BuildingTypeId type{};
+				if (!catalog.FindBuildingType(names[i], type) || !world.PlaceBuilding(type, {x[i], 2}))
+					return LogNativeEconomyStartupError("town demo catalog or building setup failed");
+			}
+			for (std::int32_t cell = 1; cell < 14; ++cell)
+				if (!world.BuildRoad({cell,1}, {cell+1,1})) return LogNativeEconomyStartupError("town demo road setup failed");
+			if (!world.Step(1).accepted) return LogNativeEconomyStartupError("town demo buildings and roads could not be applied");
+			openrepublic::economy::ResourceId heat{};
+			if (!catalog.FindResource("heat", heat) || !world.ConnectUtility(heat, 1, 6) || !world.Step(1).accepted)
+				return LogNativeEconomyStartupError("town demo heat connection setup failed");
 		}
 		openrepublic::runtime::NativeEconomyScenePlan plan;
 		std::string layoutError;
