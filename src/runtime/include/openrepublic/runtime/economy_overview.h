@@ -40,6 +40,9 @@ namespace openrepublic::runtime
 		std::uint64_t treasury{};
 		bool populationAvailable{};
 		std::uint64_t population{}, housingCapacity{}, workersAssigned{}, workersRequired{};
+		bool citizensAvailable{};
+		std::uint64_t happyResidents{};
+		std::uint32_t happiness{};
 		std::size_t truckCount{};
 		std::uint64_t heatProduced{};
 		std::vector<EconomyOverviewResource> resources;

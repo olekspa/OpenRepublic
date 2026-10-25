@@ -24,9 +24,12 @@ EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
         result.calendarMonth = snapshot.calendarMonth; result.calendarSeason = snapshot.calendarSeason;
     }
     result.population = snapshot.population;
+    result.happyResidents = snapshot.happyResidents;
+    result.happiness = snapshot.happiness;
+    result.citizensEnabled = catalog.CitizensEnabled();
     result.workersAssigned = snapshot.workersAssigned;
     result.workersRequired = snapshot.workersRequired;
-    result.populationEnabled = catalog.Food().resource != economy::InvalidResourceId;
+    result.populationEnabled = catalog.CitizensEnabled() || catalog.Food().resource != economy::InvalidResourceId;
     for (const auto& type : catalog.BuildingTypes()) {
         result.populationEnabled = result.populationEnabled || type.housing != 0;
         result.populationEnabled = result.populationEnabled || type.workers != 0;
@@ -100,6 +103,8 @@ EconomySummary MakeEconomySummary(const economy::Catalog& catalog,
         text << result.workersAssigned << "/" << result.workersRequired;
     else
         text << "unavailable";
+    if (result.citizensEnabled)
+        text << '\n' << "Citizen happiness: " << result.happiness << "/100 (" << result.happyResidents << " happy residents)";
     text << '\n' << "Stock:";
     for (const auto& item : result.stock)
         text << '\n' << "  " << item.resource << ": " << item.amount;

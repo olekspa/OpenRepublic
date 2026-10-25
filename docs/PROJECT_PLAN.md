@@ -2,6 +2,12 @@
 
 Latest consolidated status and handoff: [HANDOFF_2026-10-24.md](HANDOFF_2026-10-24.md).
 
+**Citizen needs increment (25 October 2026):** the opt-in synthetic `citizens`
+catalog rule adds deterministic need happiness, migration, and happiness-scaled
+workforce availability; `thriving_town` scores happy residents. Headless Release
+CTest passes **82/82** and the scenario reaches 4 happy residents at 500 ticks.
+See [CITIZENS.md](CITIZENS.md). WRSR parity remains UNKNOWN.
+
 **Native desktop save slots:** named user-data saves, bounded metadata listing,
 three rotating simulation-time autosaves, new-game catalog choices, and a
 load/quit flow are documented in [DESKTOP_SAVES.md](DESKTOP_SAVES.md). The

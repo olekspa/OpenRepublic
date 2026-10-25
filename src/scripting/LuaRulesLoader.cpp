@@ -441,6 +441,10 @@ namespace openrepublic::scripting
 		{
 			return failed();
 		}
+		if (base.CitizensEnabled() && !builder.EnableCitizens(info))
+		{
+			return failed();
+		}
 		for (const auto& t : base.BuildingTypes())
 		{
 			const auto found = buildingTuning.find(t.name);

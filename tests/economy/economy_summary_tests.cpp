@@ -63,5 +63,15 @@ int main() {
           "summary copies population and workforce totals from the snapshot");
     Check(populationSummary.text.find("Population: 14\nWorkers: 6/10") != std::string::npos,
           "opt-in summary text reports residents and assigned/required workers");
+    economy::Catalog citizenCatalog;
+    economy::ParseError citizenParse;
+    Check(economy::ParseCatalogText("openrepublic-economy 1\nresource bread\nfood bread 1 every 1\ncitizens\nbuilding home 1 1\n housing 2\n end\n",
+                                    citizenCatalog, citizenParse), "citizen summary catalog parses");
+    populationSnapshot.happiness = 82;
+    populationSnapshot.happyResidents = 11;
+    const auto citizenSummary = economy_api::MakeEconomySummary(citizenCatalog, populationSnapshot);
+    Check(citizenSummary.citizensEnabled && citizenSummary.happiness == 82 &&
+          citizenSummary.happyResidents == 11 && citizenSummary.text.find("82/100") != std::string::npos,
+          "summary exposes happiness and happy residents only for opt-in citizens");
     std::cout << "Economy summary contracts passed\n";
 }
