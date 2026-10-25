@@ -22,4 +22,8 @@ namespace openrepublic::runtime
 	// then from the executable directory and its parents.
 	std::filesystem::path ResolveApplicationDataPath(const std::filesystem::path& requested,
 		const std::filesystem::path& workingDirectory, const std::filesystem::path& executablePath);
+
+	// Find the nearest executable ancestor containing the engine shader resources.
+	// Falls back to the executable directory if no resource tree is present.
+	std::filesystem::path ResolveEngineWorkingDirectory(const std::filesystem::path& executablePath);
 }

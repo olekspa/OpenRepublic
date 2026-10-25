@@ -207,6 +207,20 @@ namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 {
+	std::array<wchar_t, 32768> executablePath{};
+	const DWORD executableLength = GetModuleFileNameW(nullptr, executablePath.data(),
+		static_cast<DWORD>(executablePath.size()));
+	if (executableLength > 0 && static_cast<std::size_t>(executableLength) < executablePath.size())
+	{
+		const auto workingDirectory = openrepublic::runtime::ResolveEngineWorkingDirectory(
+			std::filesystem::path(executablePath.data(), executablePath.data() + executableLength));
+		if (!workingDirectory.empty() && !SetCurrentDirectoryW(workingDirectory.c_str()))
+		{
+			std::fprintf(stderr, "OpenRepublic could not set its working directory (Windows error %lu).\n",
+				static_cast<unsigned long>(GetLastError()));
+			return 2;
+		}
+	}
 	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
 	int argumentCount = 0;
