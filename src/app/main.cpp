@@ -264,6 +264,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::wstring nativeObjectivesArgument;
 	std::optional<openrepublic::runtime::NativeObjectiveSet> nativeObjectiveSet;
 	bool ambientTrafficArgumentSeen = false;
+	bool nativeTrafficPolishArgumentSeen = false;
 	bool nativeTerrainArgumentSeen = false;
 	bool nativeContentCatalogArgumentSeen = false;
 	std::filesystem::path nativeContentCatalogPath;
@@ -348,6 +349,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				else nativeObjectivesArgument = arguments[++i];
 			}
 			else if (argument == L"--ambient-traffic") ambientTrafficArgumentSeen = true;
+			else if (argument == L"--native-traffic-polish") nativeTrafficPolishArgumentSeen = true;
 			else if (argument == L"--scene-probe" && i + 1 < argumentCount)
 			{
 				sceneProbePath = arguments[++i];
@@ -988,6 +990,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		return LogNativeEconomyStartupError("--native-catalog-from-content cannot be combined with synthetic demo catalogs");
 	if (ambientTrafficArgumentSeen && !nativeEconomyArgumentSeen)
 		return LogNativeEconomyStartupError("--ambient-traffic requires --native-economy");
+	if (nativeTrafficPolishArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
+		return LogNativeEconomyStartupError("--native-traffic-polish requires --native-economy or --economy-checkpoint");
 	if (nativeTerrainArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
 		return LogNativeEconomyStartupError("--native-terrain requires --native-economy or --economy-checkpoint");
 	if ((nativeEconomyArgumentSeen || economyCheckpointArgumentSeen) && !economyCheckpointIncompatibleOptions.empty())
@@ -1503,6 +1507,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	application.SetTerrainProbePath(std::move(terrainProbePath));
 	application.SetTerrainProbeTransform(std::move(terrainProbeTransform), std::move(terrainProbeTransformError));
 	application.SetAmbientTraffic(ambientTrafficArgumentSeen);
+	application.SetNativeTrafficPolish(nativeTrafficPolishArgumentSeen);
 
 	WNDCLASSEXW windowClass{};
 	windowClass.cbSize = sizeof(windowClass);
