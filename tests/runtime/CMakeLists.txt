@@ -79,3 +79,11 @@ target_link_libraries(OpenRepublicPlayOptionsTests PRIVATE OpenRepublicRuntime)
 target_compile_features(OpenRepublicPlayOptionsTests PRIVATE cxx_std_17)
 
 add_test(NAME RuntimePlayOptions COMMAND OpenRepublicPlayOptionsTests)
+
+add_executable(OpenRepublicApplicationDataPathTests application_data_path_tests.cpp)
+
+target_link_libraries(OpenRepublicApplicationDataPathTests PRIVATE OpenRepublicRuntime)
+
+target_compile_features(OpenRepublicApplicationDataPathTests PRIVATE cxx_std_17)
+
+add_test(NAME RuntimeApplicationDataPath COMMAND OpenRepublicApplicationDataPathTests)

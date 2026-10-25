@@ -1,5 +1,7 @@
 #include "openrepublic/runtime/play_options.h"
 
+#include <system_error>
+
 namespace openrepublic::runtime
 {
 	PlayOptions ResolvePlayOptions(const std::vector<std::wstring>& arguments)
@@ -31,7 +33,7 @@ namespace openrepublic::runtime
 		{
 			if (argument == L"--native-economy" || argument == L"--native-coal-demo" ||
 				argument == L"--native-construction-sites" || argument == L"--native-objectives" ||
-				argument == L"--native-terrain" || argument == L"--ambient-traffic")
+				argument == L"--native-town-demo" || argument == L"--native-terrain" || argument == L"--ambient-traffic")
 			{
 				result.error = "--play cannot be combined with options it supplies";
 				return result;
@@ -52,6 +54,7 @@ namespace openrepublic::runtime
 		}
 		else if (preset == L"town")
 		{
+			result.arguments.push_back(L"--native-town-demo");
 			result.arguments.push_back(L"--native-objectives");
 			result.arguments.push_back(L"builtin:growth_town");
 		}
@@ -63,5 +66,25 @@ namespace openrepublic::runtime
 		}
 		result.arguments.insert(result.arguments.end(), passthrough.begin(), passthrough.end());
 		return result;
+	}
+
+	std::filesystem::path ResolveApplicationDataPath(const std::filesystem::path& requested,
+		const std::filesystem::path& workingDirectory, const std::filesystem::path& executablePath)
+	{
+		if (requested.is_absolute()) return requested;
+		std::error_code error;
+		const auto workingCandidate = workingDirectory / requested;
+		if (std::filesystem::is_regular_file(workingCandidate, error) && !error) return workingCandidate;
+		auto directory = executablePath.parent_path();
+		while (!directory.empty())
+		{
+			error.clear();
+			const auto candidate = directory / requested;
+			if (std::filesystem::is_regular_file(candidate, error) && !error) return candidate;
+			const auto parent = directory.parent_path();
+			if (parent == directory) break;
+			directory = parent;
+		}
+		return workingCandidate;
 	}
 }
