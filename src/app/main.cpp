@@ -47,8 +47,7 @@ namespace
 			L"--showcase-camera", L"--showcase-wind", L"--showcase-grass", L"--scene-pipe-name", L"--showcase-sun", L"--building-type",
 			L"--building-lod", L"--nmf-texture-root", L"--nmf-unlit-preview",
 			L"--nmf-material-unlit-preview", L"--capture-preview", L"--capture-preview-zoom",
-			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform", L"--storage-profile", L"--utility-resource",
-			L"--native-catalog-from-content" };
+			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform", L"--storage-profile", L"--utility-resource" };
 		return std::find(std::begin(incompatible), std::end(incompatible), argument) != std::end(incompatible);
 	}
 
