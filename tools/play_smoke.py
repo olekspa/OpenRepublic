@@ -35,7 +35,8 @@ def main():
         result = subprocess.run(command, check=True, capture_output=True, text=True)
         score = json.loads(result.stdout)
         breakdown = score.get("scoreBreakdown", {})
-        print(f"[{preset}] scenario={scenario_name} ticks={score.get('controllerTicks', args.ticks or default_ticks)} score={score.get('scoreUnits', score.get('scoreMicroUnits'))}")
+        score_field = {"coal": "heatUnits", "sites": "completedSites", "town": "happyResidents"}[preset]
+        print(f"[{preset}] scenario={scenario_name} ticks={score.get('controllerTicks', args.ticks or default_ticks)} score={breakdown.get(score_field, 'n/a')}")
         for objective in objectives:
             oid = objective["id"]
             if preset == "coal":
@@ -51,10 +52,15 @@ def main():
                 if oid == "housing":
                     print(f"  {oid}: not measured by scenario_score.py objective telemetry")
                     continue
-                field, target = "population", 100
+                field, target = "population", objective["target"]
                 value = breakdown.get(field, 0)
             state = "complete" if value >= target else "incomplete"
             print(f"  {oid}: {state} ({value}/{target}; proxy={field})")
+        if preset == "town":
+            happy = breakdown.get("happyResidents", 0)
+            print(f"  happyResidents: {happy}")
+            if happy <= 0:
+                raise RuntimeError("town baseline did not produce any happy residents")
         print(f"  source=OBSERVED OpenRepublic synthetic host score; WRSR parity UNKNOWN")
     return 0
 

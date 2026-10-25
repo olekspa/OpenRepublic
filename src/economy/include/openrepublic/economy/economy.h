@@ -242,6 +242,8 @@ Catalog MakeSyntheticCatalog();
 Catalog MakeSyntheticConstructionCatalog();
 /** OpenRepublic-only border coal, depot fleet, storage, and heating fixture. */
 Catalog MakeSyntheticCoalCatalog();
+/** OpenRepublic synthetic citizen town catalog corresponding to thriving_town. */
+Catalog MakeSyntheticTownCatalog();
 
 enum class StallReason : std::uint8_t {
     Running = 0,

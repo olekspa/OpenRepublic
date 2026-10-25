@@ -10,7 +10,7 @@
 
 `--play coal` composes the native economy, authored coal catalog/demo, coal objectives,
 synthetic terrain, and ambient traffic. `sites` selects the construction catalog and
-objectives. `town` selects the generic sandbox catalog and growth objectives. Native
+objectives. `town` selects the authored citizen town catalog and growth objectives. Native
 HUD and save controls are part of the native economy desktop UI. The option resolver
 preserves unrelated arguments and leaves every command line without `--play`
 unchanged. A preset rejects additional flags that it owns to avoid duplicate/conflicting
@@ -28,17 +28,14 @@ shows the current preset's checklist and hints. **Frame world** recenters the ca
 
 These are small, deterministic OpenRepublic synthetic sandboxes. Coal starts with a
 border post, depot, storage and heating plant. Sites starts with construction material
-producers; place sites, deliver materials, then allow work to advance. Town starts with
-the generic production sandbox and presents the authored growth checklist, although
-its objective types are not currently in that catalog. Ambient traffic is presentation
-activity and does not carry simulation cargo. Terrain, prices, recipes, citizen rules,
-vehicle timing and objectives are project-authored.
+producers; place sites, deliver materials, then allow work to advance. Town includes
+home, farm, mill, bakery, market, and boiler types with the synthetic citizens rule.
+Place the food and heat chain, connect home heat, and add homes to grow the town.
+Ambient traffic is presentation activity and does not carry simulation cargo. Terrain,
+prices, recipes, citizen rules, vehicle timing and objectives are project-authored.
 
 ## Known gaps
 
-- `town` currently uses the generic native catalog, which has neither the
-  `residential_building` type nor the synthetic citizen needs/migration rule. Its growth
-  objectives are not reachable from the desktop preset yet.
 - Headless scenario fixtures exercise related but not identical worlds. The smoke
   harness reports only objective fields exposed by `scenario_score.py`; unmeasured
   objective steps are called out rather than inferred.

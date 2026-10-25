@@ -2731,6 +2731,26 @@ Catalog MakeSyntheticConstructionCatalog() {
     return out;
 }
 
+Catalog MakeSyntheticTownCatalog() {
+    static constexpr std::string_view text =
+        "openrepublic-economy 1\n"
+        "resource grain\nresource flour\nresource bread\n"
+        "food bread 1 every 2\nutility heat\ncitizens\n"
+        "building home 1 1\n  housing 12\n  recipe warmth every 1 in heat:1\nend\n"
+        "building farm 1 1\n  store grain 64\n  recipe harvest every 1 out grain:4\nend\n"
+        "building mill 1 1\n  store grain 64\n  store flour 64\n"
+        "  recipe grind every 1 in grain:2 out flour:2\nend\n"
+        "building bakery 1 1\n  store flour 64\n  store bread 64\n"
+        "  recipe bake every 1 in flour:2 out bread:2\nend\n"
+        "building market 1 1\n  store bread 64\nend\n"
+        "building boiler 1 1\n  recipe heat every 1 out heat:2\nend\n"
+        "vehicle truck capacity 8 speed 2\n";
+    Catalog result;
+    ParseError error;
+    if (!ParseCatalogText(text, result, error)) throw std::runtime_error("invalid built-in synthetic town catalog: " + error.message);
+    return result;
+}
+
 Catalog MakeSyntheticCoalCatalog() {
     static constexpr std::string_view text =
         "openrepublic-economy 1\n"

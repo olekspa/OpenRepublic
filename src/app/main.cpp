@@ -260,6 +260,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool nativeEconomyArgumentSeen = false;
 	bool nativeConstructionSitesArgumentSeen = false;
 	bool nativeCoalDemoArgumentSeen = false;
+	bool nativeTownDemoArgumentSeen = false;
 	std::wstring nativeObjectivesArgument;
 	std::optional<openrepublic::runtime::NativeObjectiveSet> nativeObjectiveSet;
 	bool ambientTrafficArgumentSeen = false;
@@ -321,6 +322,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			}
 			else if (argument == L"--native-terrain") nativeTerrainArgumentSeen = true;
 			else if (argument == L"--native-coal-demo") nativeCoalDemoArgumentSeen = true;
+			else if (argument == L"--native-town-demo") nativeTownDemoArgumentSeen = true;
 			else if (argument == L"--native-catalog-from-content")
 			{
 				if (nativeContentCatalogArgumentSeen)
@@ -903,6 +905,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		{
 			if (option == L"--native-coal-demo") nativeCoalDemoArgumentSeen = true;
 			else if (option == L"--native-construction-sites") nativeConstructionSitesArgumentSeen = true;
+			else if (option == L"--native-town-demo") nativeTownDemoArgumentSeen = true;
 			else if (option == L"--native-objectives") continue;
 			else if (option.rfind(L"builtin:", 0) == 0) nativeObjectivesArgument = option;
 		}
@@ -925,7 +928,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		std::wstring fileArgument = nativeObjectivesArgument;
 		if (fileArgument.rfind(L"builtin:", 0) == 0)
 			fileArgument = L"data/objectives/" + fileArgument.substr(8) + L".json";
-		const std::filesystem::path objectivePath(fileArgument);
+		const std::filesystem::path requestedObjectivePath(fileArgument);
+		std::vector<wchar_t> executablePathBuffer(32768);
+		const DWORD executablePathLength = GetModuleFileNameW(nullptr, executablePathBuffer.data(),
+			static_cast<DWORD>(executablePathBuffer.size()));
+		const std::filesystem::path executablePath = executablePathLength > 0 &&
+			executablePathLength < executablePathBuffer.size()
+			? std::filesystem::path(std::wstring(executablePathBuffer.data(), executablePathLength))
+			: std::filesystem::path{};
+		std::error_code currentPathError;
+		const auto workingDirectory = std::filesystem::current_path(currentPathError);
+		const std::filesystem::path objectivePath = currentPathError || executablePath.empty()
+			? requestedObjectivePath
+			: openrepublic::runtime::ResolveApplicationDataPath(requestedObjectivePath, workingDirectory, executablePath);
 		std::error_code objectiveFileError;
 		const auto objectiveFileSize = std::filesystem::file_size(objectivePath, objectiveFileError);
 		if (objectiveFileError || objectiveFileSize > 64 * 1024)
@@ -969,8 +984,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		if (nativeObjectiveSet->id == "coal_demo") nativeCoalDemoArgumentSeen = true;
 		else if (nativeObjectiveSet->id == "construction_sites_demo") nativeConstructionSitesArgumentSeen = true;
 	}
-	if (nativeContentCatalogArgumentSeen && (nativeCoalDemoArgumentSeen || nativeConstructionSitesArgumentSeen))
-		return LogNativeEconomyStartupError("--native-catalog-from-content cannot be combined with synthetic coal-demo or construction-site catalogs");
+	if (nativeContentCatalogArgumentSeen && (nativeCoalDemoArgumentSeen || nativeConstructionSitesArgumentSeen || nativeTownDemoArgumentSeen))
+		return LogNativeEconomyStartupError("--native-catalog-from-content cannot be combined with synthetic demo catalogs");
 	if (ambientTrafficArgumentSeen && !nativeEconomyArgumentSeen)
 		return LogNativeEconomyStartupError("--ambient-traffic requires --native-economy");
 	if (nativeTerrainArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
@@ -1043,8 +1058,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		{
 			economyCheckpoint->catalog = std::make_unique<openrepublic::economy::Catalog>(
 				nativeCoalDemoArgumentSeen ? openrepublic::economy::MakeSyntheticCoalCatalog() :
-				(nativeConstructionSitesArgumentSeen ? openrepublic::economy::MakeSyntheticConstructionCatalog()
-				                                    : openrepublic::economy::MakeSyntheticCatalog()));
+				(nativeConstructionSitesArgumentSeen ? openrepublic::economy::MakeSyntheticConstructionCatalog() :
+				 (nativeTownDemoArgumentSeen ? openrepublic::economy::MakeSyntheticTownCatalog()
+				                             : openrepublic::economy::MakeSyntheticCatalog())));
 		}
 		economyCheckpoint->world = std::make_unique<openrepublic::economy::World>(
 			*economyCheckpoint->catalog, 64, 64);
