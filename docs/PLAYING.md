@@ -23,6 +23,11 @@ The exact executable subdirectory can vary by generator. The launch examples bel
 
 ## Playable demos
 
+For the shortest route into the current native desktop modes, use the
+[Play now quick start](PLAY_NOW.md). `--play coal`, `--play sites`, and `--play town`
+are convenience presets for those existing features; they do not change legacy
+commands that omit `--play`.
+
 ### Native sandbox
 
 ```powershell
