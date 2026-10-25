@@ -34,8 +34,11 @@ namespace openrepublic::runtime
 					[&](const auto& building) { return TypeMatches(building, catalog, objective.buildingType) && building.constructionSite; }));
 			if (objective.metric == ObjectiveMetric::ConstructionSitesComplete)
 				return static_cast<std::uint64_t>(std::count_if(snapshot.buildings.begin(), snapshot.buildings.end(),
-					[&](const auto& building) { return TypeMatches(building, catalog, objective.buildingType) &&
-						building.constructionState == 2; }));
+					[&](const auto& building) {
+						const auto* type = catalog.BuildingType(building.type);
+						return type != nullptr && TypeMatches(building, catalog, objective.buildingType) &&
+							type->constructionWorkTicks > 0 && building.constructionState == 2;
+					}));
 			if (objective.metric == ObjectiveMetric::BuildingCountAtLeast)
 				return static_cast<std::uint64_t>(std::count_if(snapshot.buildings.begin(), snapshot.buildings.end(),
 					[&](const auto& building) { return TypeMatches(building, catalog, objective.buildingType); }));
