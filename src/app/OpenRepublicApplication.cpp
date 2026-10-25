@@ -1874,7 +1874,9 @@ namespace openrepublic
 						[this] { QueueNativeOrderChange(false); }, {},
 						[this] { QueueNativeUtilityConnection(true); },
 						[this] { QueueNativeUtilityConnection(false); },
-						[this] { UpdateRegionStatus(); } }, false);
+						[this] { UpdateRegionStatus(); },
+						[this] { QueueNativeDispatch(); } }, false,
+						regionCatalogImportOptions.syntheticRegionFleetCount > 0);
 					nativeToolsReady = true;
 					RefreshNativeHaulChoices();
 				}
@@ -2011,6 +2013,22 @@ namespace openrepublic
 			if (nativeEconomyCheckpointMode && nativeEconomyPresentationValid)
 				nativeEconomyScene.UpdateVehicleMotion(previewWorld,
 					nativeEconomyRunning ? nativeEconomyRunClock.InterpolationAlpha() : 1.0);
+			else if (mapPlacement && regionVehicleTransform &&
+				regionCatalogImportOptions.syntheticRegionFleetCount > 0)
+			{
+				const auto terrainTransform = openrepublic::content::MakeMapTerrainTransform(mapPlacement->metadata);
+				nativeEconomyScene.UpdateVehicleMotion(previewWorld, 1.0,
+					[this, terrainTransform](double localX, double localZ) {
+						double height = 0.0;
+						const double worldX = localX + mapPlacement->placement.X();
+						const double worldZ = localZ + mapPlacement->placement.Z();
+						openrepublic::content::SampleTerrainHeight(mapPlacement->heightmap, terrainTransform,
+							std::clamp(worldX, terrainTransform.originX, terrainTransform.originX + terrainTransform.sizeX),
+							std::clamp(worldZ, terrainTransform.originZ, terrainTransform.originZ + terrainTransform.sizeZ),
+							height, nullptr);
+						return height;
+					});
+			}
 			if (nativeEconomyCheckpointMode && nativeEconomyPresentationValid && nativeCameraFollow &&
 				regionEconomySnapshot && renderPath && renderPath->camera)
 			{
@@ -2779,6 +2797,29 @@ namespace openrepublic
 			}
 			nativeEconomyPresentationValid = true;
 		}
+		else if (mapPlacement && regionEconomyWorld &&
+			regionCatalogImportOptions.syntheticRegionFleetCount > 0)
+		{
+			runtime::NativeEconomyTransform transform;
+			const double localOriginX = regionEconomyImport.originX - mapPlacement->placement.X();
+			const double localOriginZ = regionEconomyImport.originZ - mapPlacement->placement.Z();
+			if (!runtime::BuildImportedRegionVehicleTransform(localOriginX, localOriginZ,
+				regionEconomyImport.cellSizeMeters, transform))
+			{
+				uiNotice = "Imported fleet vehicle transform could not match the region importer cell grid.";
+				regionVehicleTransform.reset();
+				return;
+			}
+			std::string vehicleError;
+			if (!nativeEconomyScene.SyncVehiclesOnly(previewWorld, regionEconomyWorld->Snapshot(),
+				regionEconomyWorld->GetCatalog(), transform, vehicleError))
+			{
+				uiNotice = "Imported region vehicle presentation failed: " + vehicleError;
+				regionVehicleTransform.reset();
+				return;
+			}
+			regionVehicleTransform = transform;
+		}
 
 		std::unordered_map<std::uint64_t, openrepublic::economy::BuildingId> buildingBySource;
 		buildingBySource.reserve(regionEconomyImport.placedSourceBuildings.size());
@@ -2836,7 +2877,8 @@ namespace openrepublic
 			centerX = mapPlacement->placement.X();
 			centerZ = mapPlacement->placement.Z();
 		}
-		if (nativeEconomyCheckpointMode) return;
+		if (nativeEconomyCheckpointMode ||
+			(mapPlacement && regionCatalogImportOptions.syntheticRegionFleetCount > 0)) return;
 		while (regionTruckEntities.size() < regionEconomySnapshot->vehicles.size())
 		{
 			wi::ecs::Entity truck = wi::ecs::INVALID_ENTITY;
@@ -3025,7 +3067,16 @@ namespace openrepublic
 		const auto snapshot = world->Snapshot();
 		nativeEconomyTools.RefreshOrders(snapshot, world->GetCatalog());
 		nativeEconomyTools.RefreshRoads(snapshot);
-		nativeEconomyTools.RefreshDispatchChoices(snapshot, world->GetCatalog());
+		std::vector<economy::BuildingId> importedBuildings;
+		const std::vector<economy::BuildingId>* dispatchBuildings = nullptr;
+		if (mapPlacement && regionCatalogImportOptions.syntheticRegionFleetCount > 0)
+		{
+			importedBuildings.reserve(regionEconomyImport.placedSourceBuildings.size());
+			for (const auto& identity : regionEconomyImport.placedSourceBuildings)
+				importedBuildings.push_back(identity.buildingId);
+			dispatchBuildings = &importedBuildings;
+		}
+		nativeEconomyTools.RefreshDispatchChoices(snapshot, world->GetCatalog(), dispatchBuildings);
 		if (regionHaulSourceId && std::none_of(snapshot.buildings.begin(), snapshot.buildings.end(),
 			[&](const auto& b) { return b.id == *regionHaulSourceId; })) regionHaulSourceId.reset();
 		nativeEconomyTools.RefreshHaulChoices(snapshot, world->GetCatalog(),
