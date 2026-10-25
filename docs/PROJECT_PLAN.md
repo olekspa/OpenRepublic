@@ -2,6 +2,8 @@
 
 Latest consolidated status and handoff: [HANDOFF_2026-10-24.md](HANDOFF_2026-10-24.md).
 
+**Native terrain presentation (25 October 2026):** the opt-in `--native-terrain` desktop mode draws a deterministic synthetic heightfield, lake, terrain-levelled building pads, and terrain-following roads and vehicles. The 0.22 placement gradient is OpenRepublic presentation policy; WRSR terrain, slope rules, and visual parity remain UNKNOWN. See [DESKTOP_TERRAIN.md](DESKTOP_TERRAIN.md) and the terrain entry in [REVERSE_ENGINEERING_LEDGER.md](REVERSE_ENGINEERING_LEDGER.md).
+
 **Construction profile increment (23 October 2026):** ordered cost/work/recipe
 declarations and opaque station rows now have a bounded source profile and an
 aggregate-only inspection target. All 488 named local definitions extract;

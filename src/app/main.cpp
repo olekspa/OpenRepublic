@@ -269,6 +269,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool nativeEconomyArgumentSeen = false;
 	bool nativeConstructionSitesArgumentSeen = false;
 	bool nativeCoalDemoArgumentSeen = false;
+	bool nativeTerrainArgumentSeen = false;
 	std::string nativeEconomyArgumentError;
 	std::vector<std::wstring> economyCheckpointIncompatibleOptions;
 	std::string economyCheckpointArgumentError;
@@ -322,6 +323,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				// Opt-in synthetic catalog with planks/bricks and `build` requirements (requires --native-economy).
 				nativeConstructionSitesArgumentSeen = true;
 			}
+			else if (argument == L"--native-terrain") nativeTerrainArgumentSeen = true;
 			else if (argument == L"--native-coal-demo") nativeCoalDemoArgumentSeen = true;
 			else if (argument == L"--scene-probe" && i + 1 < argumentCount)
 			{
@@ -857,6 +859,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	if (nativeCoalDemoArgumentSeen && !nativeEconomyArgumentSeen)
 		return LogNativeEconomyStartupError("--native-coal-demo requires --native-economy");
+	if (nativeTerrainArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
+		return LogNativeEconomyStartupError("--native-terrain requires --native-economy or --economy-checkpoint");
 	if ((nativeEconomyArgumentSeen || economyCheckpointArgumentSeen) && !economyCheckpointIncompatibleOptions.empty())
 	{
 		std::string conflicts = nativeEconomyArgumentSeen
@@ -1288,6 +1292,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	if (economyCheckpoint)
 	{
 		application.SetEconomyCheckpoint(std::move(*economyCheckpoint), nativeEconomyArgumentSeen);
+		application.SetNativeTerrainEnabled(nativeTerrainArgumentSeen);
 	}
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));
