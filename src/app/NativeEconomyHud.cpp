@@ -1,4 +1,5 @@
 #include "NativeEconomyHud.h"
+#include "openrepublic/runtime/panel_layout.h"
 
 #include <algorithm>
 #include <sstream>
@@ -92,16 +93,25 @@ namespace openrepublic::preview
 		eventLog_.SetText(log.str());
 	}
 
-	void NativeEconomyHud::Layout(float width, float height, float top)
+	void NativeEconomyHud::Layout(float width, float height, float top, bool modalPanelOpen)
 	{
 		if (!created_) return;
+		eventLog_.SetVisible(!modalPanelOpen);
 		const float available = std::max(240.0f, width - 36.0f);
-		const float topBarWidth = std::min(620.0f, available);
-		topBar_.SetPos(XMFLOAT2(18, top)); topBar_.SetSize(XMFLOAT2(topBarWidth, 32));
-		overviewButton_.SetPos(XMFLOAT2(18.0f + topBarWidth + 8.0f, top));
-		resourceTicker_.SetPos(XMFLOAT2(18, top + 34.0f)); resourceTicker_.SetSize(XMFLOAT2(std::min(620.0f, available), 48));
-		const float logWidth = std::min(280.0f, std::max(200.0f, width - 36.0f));
-		eventLog_.SetPos(XMFLOAT2(std::max(18.0f, width - logWidth - 18.0f), std::max(top + 90.0f, height - 170.0f)));
-		eventLog_.SetSize(XMFLOAT2(logWidth, 150));
+		const float topBarWidth = std::min(620.0f, std::max(80.0f, available - 158.0f));
+		const float logWidth = std::min(300.0f, std::max(200.0f, width * 0.28f));
+		const auto layout = runtime::LayoutPanels(width, height, 1.0f, {
+			{"toolbar-status", {18.0f, top, topBarWidth, 32.0f}, runtime::PanelDock::Top, 100, true, false},
+			{"overview-button", {18.0f + topBarWidth + 8.0f, top, 150.0f, 30.0f}, runtime::PanelDock::Top, 95, true, false},
+			{"resources", {18.0f, top + 34.0f, std::min(620.0f, available), 48.0f}, runtime::PanelDock::Top, 90, true, true},
+			{"events", {std::max(18.0f, width - logWidth - 18.0f), std::max(top + 90.0f, height - 170.0f), logWidth, 150.0f}, runtime::PanelDock::Bottom, 50, !modalPanelOpen, true},
+		});
+		for (const auto& panel : layout.panels) if (panel.visible) {
+			const XMFLOAT2 pos(panel.rect.x, panel.rect.y), size(panel.rect.width, panel.rect.height);
+			if (panel.id == "toolbar-status") { topBar_.SetPos(pos); topBar_.SetSize(size); }
+			else if (panel.id == "overview-button") overviewButton_.SetPos(pos);
+			else if (panel.id == "resources") { resourceTicker_.SetPos(pos); resourceTicker_.SetSize(size); }
+			else if (panel.id == "events") { eventLog_.SetPos(pos); eventLog_.SetSize(size); }
+		}
 	}
 }

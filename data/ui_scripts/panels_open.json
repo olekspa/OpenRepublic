@@ -1,0 +1,7 @@
+{
+  "actions": [
+    { "frame": 1, "action": "button", "label": "Game" },
+    { "frame": 2, "action": "button", "label": "Overview" },
+    { "frame": 480, "action": "screenshot", "path": "panels_open.png" }
+  ]
+}

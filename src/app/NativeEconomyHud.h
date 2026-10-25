@@ -15,7 +15,7 @@ namespace openrepublic::preview
 		void Update(const economy::WorldSnapshot& snapshot, const economy::Catalog& catalog,
 			bool running, std::uint32_t speed, const economy::UtilityDiagnostics& utilities,
 			const std::string& hoveredObject);
-		void Layout(float width, float height, float top = 96.0f);
+		void Layout(float width, float height, float top = 96.0f, bool modalPanelOpen = false);
 		void SetOverviewActive(bool active) { overviewButton_.SetText(active ? "Return to map view" : "Overview map"); }
 		void ResetHistory() noexcept { events_.Reset(); }
 	private:
