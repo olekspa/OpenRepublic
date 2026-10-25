@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "commuter_town",
+  "name": "Commuter town: route-enabled distant workplace",
+  "description": "OpenRepublic synthetic transit fixture. A four-resident home and four-worker mine are separated by ten road cells; two ordered bus stops and one four-seat bus make the distant workforce eligible.",
+  "catalog": "openrepublic-economy 1\nutility power\nresource ore\ntransit threshold 4 transfer 1\nbuilding home 1 1\n  housing 4\nend\nbuilding bus_stop 1 1\n  station\nend\nbuilding mine 1 1\n  workers 4\n  store ore 100\n  recipe extract every 1 out ore:4\nend\nvehicle bus capacity 4 speed 2\n",
+  "roads": [
+    {"a":{"x":1,"z":1},"b":{"x":2,"z":1}},
+    {"a":{"x":2,"z":1},"b":{"x":3,"z":1}},
+    {"a":{"x":3,"z":1},"b":{"x":4,"z":1}},
+    {"a":{"x":4,"z":1},"b":{"x":5,"z":1}},
+    {"a":{"x":5,"z":1},"b":{"x":6,"z":1}},
+    {"a":{"x":6,"z":1},"b":{"x":7,"z":1}},
+    {"a":{"x":7,"z":1},"b":{"x":8,"z":1}},
+    {"a":{"x":8,"z":1},"b":{"x":9,"z":1}},
+    {"a":{"x":9,"z":1},"b":{"x":10,"z":1}},
+    {"a":{"x":10,"z":1},"b":{"x":11,"z":1}}
+  ],
+  "buildings": [
+    {"type":"home","x":1,"z":2},
+    {"type":"bus_stop","x":2,"z":2},
+    {"type":"bus_stop","x":10,"z":2},
+    {"type":"mine","x":11,"z":2}
+  ],
+  "transitRoute": {"stops":[1,2],"busType":"bus"},
+  "score": {"metric":"combined_multi_objective","objectives":["fedResidents","workersAssigned","workersRequired"]}
+}

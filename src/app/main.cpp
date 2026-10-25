@@ -250,6 +250,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool nativeEconomyArgumentSeen = false;
 	bool nativeConstructionSitesArgumentSeen = false;
 	bool nativeCoalDemoArgumentSeen = false;
+	bool ambientTrafficArgumentSeen = false;
 	bool nativeTerrainArgumentSeen = false;
 	bool nativeContentCatalogArgumentSeen = false;
 	std::filesystem::path nativeContentCatalogPath;
@@ -325,6 +326,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				}
 				nativeContentCatalogPath = arguments[++i];
 			}
+			else if (argument == L"--ambient-traffic") ambientTrafficArgumentSeen = true;
 			else if (argument == L"--scene-probe" && i + 1 < argumentCount)
 			{
 				sceneProbePath = arguments[++i];
@@ -885,6 +887,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		return LogNativeEconomyStartupError("--native-catalog-from-content requires --native-economy");
 	if (nativeContentCatalogArgumentSeen && (nativeCoalDemoArgumentSeen || nativeConstructionSitesArgumentSeen))
 		return LogNativeEconomyStartupError("--native-catalog-from-content cannot be combined with synthetic coal-demo or construction-site catalogs");
+	if (ambientTrafficArgumentSeen && !nativeEconomyArgumentSeen)
+		return LogNativeEconomyStartupError("--ambient-traffic requires --native-economy");
 	if (nativeTerrainArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
 		return LogNativeEconomyStartupError("--native-terrain requires --native-economy or --economy-checkpoint");
 	if ((nativeEconomyArgumentSeen || economyCheckpointArgumentSeen) && !economyCheckpointIncompatibleOptions.empty())
@@ -1397,6 +1401,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		showcaseVegetationWind, showcaseGrassLayer);
 	application.SetTerrainProbePath(std::move(terrainProbePath));
 	application.SetTerrainProbeTransform(std::move(terrainProbeTransform), std::move(terrainProbeTransformError));
+	application.SetAmbientTraffic(ambientTrafficArgumentSeen);
 
 	WNDCLASSEXW windowClass{};
 	windowClass.cbSize = sizeof(windowClass);

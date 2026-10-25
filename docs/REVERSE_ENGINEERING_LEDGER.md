@@ -665,3 +665,5 @@ Evidence labels below apply to static analysis of the installed SOVIET64 build c
 **UNKNOWN (source content semantics and parity):** rate conversion keeps existing inferred time-base and capacity rules. The current supported building-definition parser does not expose a verified real footprint field, so imported types retain the configured 4 by 4 OpenRepublic fallback. No local WRSR files or runtime outcomes were used to verify this feature. See [REAL_CATALOG_SANDBOX.md](REAL_CATALOG_SANDBOX.md).
 
 **VERIFIED (Release source/build tests):** headless build and client `OpenRepublic` target/default build completed with zero compiler errors; CTest passed 67/67 headless and 93/93 client. The desktop app was not launched, so graphical behavior and real-content startup remain unverified.
+
+**VERIFIED (post-merge Release build):** after merging the local `main` branch, the headless build and client target/default build again completed with zero compiler errors; CTest passed 95/95 headless and 96/96 client. This includes unrelated merged transit and ambient-traffic work. No desktop or original-game runtime was launched.

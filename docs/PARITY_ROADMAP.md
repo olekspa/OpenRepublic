@@ -39,7 +39,7 @@ foundation for the corresponding gameplay system.
 
 | Area | Current foundation / boundary | Next acceptance gate |
 |---|---|---|
-| Passenger transit and commuting | Synthetic residents and staffing; no validated commuting or passenger-service behavior. | Establish one passenger path, stop/access identity, travel and staffing timing with build-matched evidence, then a reproducible route fixture. |
+| Passenger transit and commuting | Opt-in OpenRepublic synthetic bus loops, route-gated distant staffing, and the `commuter_town` fixture ([TRANSIT.md](TRANSIT.md)). | Build-matched WRSR stop/access identity, travel, passenger, and staffing evidence remains UNKNOWN; do not treat the synthetic fixture as parity evidence. |
 | Rail, ships, aircraft and other transport | Bounded network/content readers and road-based synthetic hauling; vehicle/service parity UNKNOWN. | Audit supported transport modes, schedules, depots, cargo rules and routing; implement one explicit mode at a time. |
 | Citizen needs, education, health and services | Synthetic housing/food/workforce only; original needs, demographics and service access UNKNOWN. | Evidence-backed need/service contract and owned fixture including unavailable services and recovery. |
 | Water, sewage, heating, waste and pollution | Finite synthetic utility networks; some content declarations retained. Original capacities, topology and consequences UNKNOWN. | Trace declarations and consumers before mapping them into separate native models and failure cases. |
