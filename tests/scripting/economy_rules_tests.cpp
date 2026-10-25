@@ -82,7 +82,6 @@ int main() {
         "utility power\n"
         "trade food buy 8 sell 4\n"
         "food food 1 every 3\n"
-        "citizens\n"
         "building homes 1 1\n"
         "  housing 5\n"
         "  store food 20\n"
@@ -102,7 +101,18 @@ int main() {
         "end\n"
         "vehicle truck capacity 20 speed 2\n";
     Check(economy::ParseCatalogText(optInSource, optInBase, optInParse),
-          "catalog with citizens, population, food, trade and utility declarations parses");
+          "catalog with population, food, trade and utility declarations parses");
+
+    economy::Catalog citizensBase;
+    Check(economy::ParseCatalogText(
+              "openrepublic-economy 1\nresource food\nfood food 1 every 3\ncitizens\n"
+              "building home 1 1\n housing 2\n store food 8\nend\n",
+              citizensBase, optInParse), "citizen catalog parses for Lua metadata preservation");
+    economy::Catalog citizensUntuned;
+    Check(scripting::EconomyRules::ApplyText("return { schema_version = 1 }", citizensBase,
+                                             citizensUntuned, &error) &&
+              economy::WriteCatalogText(citizensUntuned) == economy::WriteCatalogText(citizensBase),
+          "empty Lua tuning preserves the opt-in citizens declaration");
 
     economy::Catalog optInUntuned;
     Check(scripting::EconomyRules::ApplyText("return { schema_version = 1 }", optInBase, optInUntuned, &error) &&
