@@ -12,6 +12,12 @@ struct UiScriptAction {
     std::string action;
     std::string label;
     std::string path;
+    std::string entry;
+    std::string type;
+    std::string widget;
+    std::string text;
+    std::int32_t x{}, z{}, x2{}, z2{};
+    std::uint64_t ticks{};
 };
 
 struct UiScript {

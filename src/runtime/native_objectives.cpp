@@ -112,8 +112,8 @@ namespace openrepublic::runtime
 	NativeObjectiveSet BuiltinGrowthTownObjectives()
 	{
 		return { "growth_town", "Grow a town", {
-			{ "population", "Reach 100 residents", "Provide housing and services to grow the population.", ObjectiveMetric::PopulationAtLeast, "", "", 100 },
-			{ "housing", "Build three homes", "Place three residential buildings.", ObjectiveMetric::BuildingCountAtLeast, "residential_building", "", 3 }
+			{ "population", "Reach four residents", "Provide housing, heat, and food to grow the population.", ObjectiveMetric::PopulationAtLeast, "", "", 4 },
+			{ "housing", "Build three homes", "Place three homes.", ObjectiveMetric::BuildingCountAtLeast, "home", "", 3 }
 		} };
 	}
 }

@@ -1,0 +1,15 @@
+{
+    "actions":  [
+                    {
+                        "frame":  300,
+                        "action":  "screenshot",
+                        "path":  "campaign_trade_and_logistics_smoke-final.png"
+                    },
+                    {
+                        "frame":  301,
+                        "action":  "assert_text",
+                        "widget":  "NativeObjectivesChecklist",
+                        "text":  "2/2 complete"
+                    }
+                ]
+}

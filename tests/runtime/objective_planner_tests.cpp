@@ -27,7 +27,12 @@ int main()
 	completed.buildings.back().type = type->id;
 	completed.buildings.back().constructionSite = true;
 	const auto next = runtime::NextObjectivePlannerCommand(completed, catalog, objectives);
-	if (!next || next->a == first->a)
+	if (!next || next->kind != runtime::PlannerCommandKind::BuildRoad || next->roads.empty())
+		return std::cerr << "planner must connect a placed building access cell to a road\n", EXIT_FAILURE;
+	for (const auto& edge : next->roads)
+		completed.roads.push_back({ static_cast<economy::RoadId>(completed.roads.size() + 1), edge.first, edge.second, true });
+	const auto subsequent = runtime::NextObjectivePlannerCommand(completed, catalog, objectives);
+	if (!subsequent || subsequent->kind != runtime::PlannerCommandKind::PlaceConstructionSite || subsequent->a == first->a)
 		return std::cerr << "planner must avoid occupied footprints while satisfying remaining count\n", EXIT_FAILURE;
 	std::cout << "Objective planner checks passed\n";
 	return EXIT_SUCCESS;

@@ -52,7 +52,7 @@ private:
     }
     bool Object(UiScriptAction& item, std::string& error) {
         if (!Take('{')) return Fail("expected action object", error);
-        bool haveFrame=false, haveAction=false;
+        bool haveFrame=false, haveAction=false, haveX=false, haveZ=false, haveX2=false, haveZ2=false, haveTicks=false;
         for (;;) {
             std::string key; if (!String(key)) return Fail("expected action property", error);
             if (!Take(':')) return Fail("expected ':' after property", error);
@@ -66,13 +66,45 @@ private:
             } else if(key=="action") { if(!String(item.action)) return Fail("action must be a string",error); haveAction=true; }
             else if(key=="label") { if(!String(item.label)) return Fail("label must be a string",error); }
             else if(key=="path") { if(!String(item.path)) return Fail("path must be a string",error); }
+            else if(key=="entry") { if(!String(item.entry)) return Fail("entry must be a string",error); }
+            else if(key=="type") { if(!String(item.type)) return Fail("type must be a string",error); }
+            else if(key=="widget") { if(!String(item.widget)) return Fail("widget must be a string",error); }
+            else if(key=="text") { if(!String(item.text)) return Fail("text must be a string",error); }
+            else if(key=="x") { if(!Signed(item.x)) return Fail("x must be an integer",error); haveX=true; }
+            else if(key=="z") { if(!Signed(item.z)) return Fail("z must be an integer",error); haveZ=true; }
+            else if(key=="x2") { if(!Signed(item.x2)) return Fail("x2 must be an integer",error); haveX2=true; }
+            else if(key=="z2") { if(!Signed(item.z2)) return Fail("z2 must be an integer",error); haveZ2=true; }
+            else if(key=="ticks") { if(!Unsigned(item.ticks)) return Fail("ticks must be a positive integer",error); haveTicks=true; }
             else return Fail("unsupported action property",error);
             Skip(); if(Take('}')) break; if(!Take(',')) return Fail("expected ',' or '}'",error);
         }
-        if(!haveFrame || !haveAction || (item.action!="button" && item.action!="screenshot") ||
-            (item.action=="button" && item.label.empty()) || (item.action=="screenshot" && item.path.empty()))
+        const bool valid = item.action == "button" ? !item.label.empty() :
+            item.action == "screenshot" ? !item.path.empty() :
+            item.action == "select" ? !item.label.empty() && !item.entry.empty() :
+            item.action == "place_building" ? !item.type.empty() && haveX && haveZ :
+            item.action == "build_road" ? haveX && haveZ && haveX2 && haveZ2 :
+            item.action == "click_cell" ? haveX && haveZ :
+            item.action == "wait_ticks" ? haveTicks && item.ticks > 0 :
+            item.action == "assert_text" ? !item.widget.empty() && !item.text.empty() : false;
+        if(!haveFrame || !haveAction || !valid)
             return Fail("action requires frame and a valid action payload",error);
         return true;
+    }
+    bool Integer(std::int32_t& out) {
+        Skip(); const auto start = position_;
+        if (position_ < input_.size() && input_[position_] == '-') ++position_;
+        while(position_ < input_.size() && input_[position_] >= '0' && input_[position_] <= '9') ++position_;
+        if (start == position_) return false;
+        const auto parsed = std::from_chars(input_.data()+start, input_.data()+position_, out);
+        return parsed.ec == std::errc{};
+    }
+    bool Signed(std::int32_t& out) { return Integer(out); }
+    bool Unsigned(std::uint64_t& out) {
+        Skip(); const auto start = position_;
+        while(position_ < input_.size() && input_[position_] >= '0' && input_[position_] <= '9') ++position_;
+        if (start == position_) return false;
+        const auto parsed = std::from_chars(input_.data()+start, input_.data()+position_, out);
+        return parsed.ec == std::errc{};
     }
     bool Fail(const char* message, std::string& error) { error=message; return false; }
     std::string_view input_; std::size_t position_{};

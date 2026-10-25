@@ -7,7 +7,8 @@
     { "frame": 120, "action": "screenshot", "path": "autoplay-coal-final-middle.png" },
     { "frame": 121, "action": "button", "label": "Overview" },
     { "frame": 122, "action": "button", "label": "Game" },
-    { "frame": 242, "action": "screenshot", "path": "autoplay-coal-final-end.png" }
+    { "frame": 242, "action": "screenshot", "path": "autoplay-coal-final-end.png" },
+    { "frame": 243, "action": "assert_text", "widget": "NativeObjectivesChecklist", "text": "4/4 complete" }
   ]
 }
 
