@@ -283,6 +283,8 @@ namespace openrepublic
 		wi::gui::Button regionHaulSourceButton;
 		wi::gui::Button regionHaulButton;
 		wi::gui::Button nativeFrameButton;
+		wi::gui::Button nativeCameraFollowButton;
+		bool nativeCameraFollow = false;
 		wi::gui::Button nativeStepManyButton;
 		wi::gui::Button nativeRunPauseButton;
 		bool nativeEconomyRunning = false;

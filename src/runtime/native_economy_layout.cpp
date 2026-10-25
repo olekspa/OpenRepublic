@@ -49,6 +49,18 @@ double BuildingHeight(std::uint32_t width, std::uint32_t depth) noexcept {
 
 } // namespace
 
+double NativeVehicleDisplayScale(double modelLength, double targetCellFraction) noexcept {
+    if (!std::isfinite(modelLength) || modelLength <= 0.0 ||
+        !std::isfinite(targetCellFraction) || targetCellFraction <= 0.0) return 0.0;
+    return NativeEconomyTransform::DisplayUnitsPerCell * targetCellFraction / modelLength;
+}
+
+double NativeEconomyCameraDistance(double spanX, double spanZ, double distanceScale) noexcept {
+    if (!std::isfinite(spanX) || !std::isfinite(spanZ) || !std::isfinite(distanceScale) ||
+        spanX < 0.0 || spanZ < 0.0 || distanceScale <= 0.0) return 0.0;
+    return std::max(16.0, std::max(spanX, spanZ) * 1.5) * distanceScale;
+}
+
 NativePoint NativeEconomyTransform::CellCenter(Cell cell) const noexcept {
     return {(static_cast<double>(cell.x) + 0.5 - centerCellX) * DisplayUnitsPerCell,
             (static_cast<double>(cell.z) + 0.5 - centerCellZ) * DisplayUnitsPerCell};
@@ -282,7 +294,7 @@ bool BuildNativeEconomyScenePlan(const economy::WorldSnapshot &snapshot,
     if (!std::isfinite(spanX) || !std::isfinite(spanZ)) {
         return Fail("native scene span exceeds finite display coordinates", error);
     }
-    plan.cameraDistance = std::max(16.0, std::max(spanX, spanZ) * 1.5);
+    plan.cameraDistance = NativeEconomyCameraDistance(spanX, spanZ);
     if (!std::isfinite(plan.cameraDistance)) {
         return Fail("native scene camera distance exceeds finite coordinates", error);
     }

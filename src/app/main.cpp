@@ -1353,7 +1353,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		windowClass.lpszClassName,
 		L"OpenRepublic | WASD/Arrows move, Space/Ctrl rise/lower, wheel zoom, click select, Esc clear",
 		WS_OVERLAPPEDWINDOW,
-		CW_USEDEFAULT, CW_USEDEFAULT, 1280, 800,
+		CW_USEDEFAULT, CW_USEDEFAULT,
+		nativeEconomyArgumentSeen ? 1600 : 1280,
+		nativeEconomyArgumentSeen ? 1000 : 800,
 		nullptr, nullptr, instance, nullptr
 	);
 	if (window == nullptr)

@@ -24,6 +24,14 @@ struct NativeVehicleMotion {
     bool moving{};
 };
 
+/** Presentation scale for the procedural vehicle mesh, sized to a fraction of a cell. */
+double NativeVehicleDisplayScale(double modelLength,
+                                 double targetCellFraction = 0.75) noexcept;
+
+/** Camera distance policy for a compact desktop economy view. */
+double NativeEconomyCameraDistance(double spanX, double spanZ,
+                                   double distanceScale = 1.0) noexcept;
+
 /** Interpolates within one cell step; jumps larger than one cell snap to current.
  *  yaw is radians about +Y with +Z as forward. Stationary samples retain lastYaw.
  *  Wheel rotation is traveled display distance divided by the supplied wheel radius. */

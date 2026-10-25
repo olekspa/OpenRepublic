@@ -22,5 +22,7 @@ namespace openrepublic::procgeo
 	// cargo load can be animated/toggled as a separate presentation node.
 	Mesh MakeCargoTruckBody(std::uint32_t colorSeed);
 	Mesh MakeVehicleWheel();
+	Mesh MakeCoalHeap();
+	Mesh MakeVehicleIdLabel(std::uint64_t vehicleId);
 	float VehicleLength(VehicleKind kind);
 }
