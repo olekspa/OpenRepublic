@@ -85,6 +85,7 @@ namespace openrepublic::preview
 		gui.AddWidget(&buildingType_);
 		gui.AddWidget(&place_);
 		gui.AddWidget(&road_);
+		gui.AddWidget(&placeStation_); gui.AddWidget(&rail_);
 		gui.AddWidget(&cancel_);
 		gui.AddWidget(&remove_);
 		gui.AddWidget(&resource_);
@@ -100,16 +101,19 @@ namespace openrepublic::preview
 		gui.AddWidget(&dispatchVehicle_); gui.AddWidget(&dispatchSource_); gui.AddWidget(&dispatchDestination_);
 		gui.AddWidget(&dispatchResource_); gui.AddWidget(&dispatchAmount_);
 		gui.AddWidget(&dispatch_); gui.AddWidget(&buyCoal_); gui.AddWidget(&autoRun_);
+		gui.AddWidget(&trainType_); gui.AddWidget(&trainSource_); gui.AddWidget(&trainDestination_);
+		gui.AddWidget(&trainResource_); gui.AddWidget(&dispatchTrain_);
 	}
 
 	void NativeEconomyTools::Create(wi::gui::GUI& gui, const economy::Catalog& catalog, Callbacks callbacks,
-		bool nativeConstruction, bool dispatchControls)
+		bool nativeConstruction, bool dispatchControls, bool railControls)
 	{
 		if (gui_ != nullptr)
 		{
 			gui_->RemoveWidget(&buildingType_);
 			gui_->RemoveWidget(&place_);
 			gui_->RemoveWidget(&road_);
+			gui_->RemoveWidget(&placeStation_); gui_->RemoveWidget(&rail_);
 			gui_->RemoveWidget(&cancel_);
 			gui_->RemoveWidget(&remove_);
 			gui_->RemoveWidget(&resource_);
@@ -125,12 +129,15 @@ namespace openrepublic::preview
 			gui_->RemoveWidget(&dispatchVehicle_); gui_->RemoveWidget(&dispatchSource_); gui_->RemoveWidget(&dispatchDestination_);
 			gui_->RemoveWidget(&dispatchResource_); gui_->RemoveWidget(&dispatchAmount_);
 			gui_->RemoveWidget(&dispatch_); gui_->RemoveWidget(&buyCoal_); gui_->RemoveWidget(&autoRun_);
+			gui_->RemoveWidget(&trainType_); gui_->RemoveWidget(&trainSource_); gui_->RemoveWidget(&trainDestination_);
+			gui_->RemoveWidget(&trainResource_); gui_->RemoveWidget(&dispatchTrain_);
 		}
 
 		gui_ = &gui;
 		callbacks_ = std::move(callbacks);
 		nativeConstruction_ = nativeConstruction;
 		dispatchControls_ = dispatchControls;
+		railControls_ = railControls;
 		haulResources_.clear();
 		haveHaulResources_ = false;
 		haveOrderRefresh_ = false;
@@ -148,6 +155,19 @@ namespace openrepublic::preview
 		buyCoal_.OnClick([this](const wi::gui::EventArgs&) { if (callbacks_.buyCoal) callbacks_.buyCoal(); });
 		autoRun_.Create("NativeAutoRunLogistics"); autoRun_.SetText("Auto-run logistics: off"); StyleButton(autoRun_);
 		autoRun_.OnClick([this](const wi::gui::EventArgs&) { autoRunEnabled_ = !autoRunEnabled_; SetAutoRun(autoRunEnabled_); if (callbacks_.toggleAutoRun) callbacks_.toggleAutoRun(); });
+		trainType_.Create("NativeRailTrainType"); trainSource_.Create("NativeRailSource");
+		trainDestination_.Create("NativeRailDestination"); trainResource_.Create("NativeRailResource");
+		for (auto* combo : { &trainType_, &trainSource_, &trainDestination_, &trainResource_ }) StyleCombo(*combo);
+		dispatchTrain_.Create("NativeRailDispatchTrain"); dispatchTrain_.SetText("Dispatch train");
+		dispatchTrain_.SetTooltip("Queue a synthetic rail haul between the selected station buildings."); StyleButton(dispatchTrain_);
+		dispatchTrain_.OnClick([this](const wi::gui::EventArgs&) { if (callbacks_.dispatchTrain) callbacks_.dispatchTrain(); });
+		for (wi::gui::Widget* widget : { static_cast<wi::gui::Widget*>(&trainType_), static_cast<wi::gui::Widget*>(&trainSource_),
+			static_cast<wi::gui::Widget*>(&trainDestination_), static_cast<wi::gui::Widget*>(&trainResource_),
+			static_cast<wi::gui::Widget*>(&dispatchTrain_) })
+		{
+			widget->SetVisible(railControls_);
+			widget->SetEnabled(railControls_);
+		}
 
 		buildingType_.Create("NativeEconomyBuildingType");
 		buildingType_.ClearItems();
@@ -204,6 +224,12 @@ namespace openrepublic::preview
 		road_.OnClick([this](const wi::gui::EventArgs&) {
 			if (callbacks_.road) callbacks_.road();
 		});
+		placeStation_.Create("NativeEconomyPlaceRailStation"); placeStation_.SetText("Place station");
+		placeStation_.SetTooltip("Place the synthetic rail station building."); StyleButton(placeStation_);
+		placeStation_.OnClick([this](const wi::gui::EventArgs&) { if (callbacks_.placeStation) callbacks_.placeStation(); });
+		rail_.Create("NativeEconomyBuildRail"); rail_.SetText("Build rail");
+		rail_.SetTooltip("Select two station access cells in one row or column to build connected rail segments."); StyleButton(rail_);
+		rail_.OnClick([this](const wi::gui::EventArgs&) { if (callbacks_.rail) callbacks_.rail(); });
 
 		cancel_.Create("NativeEconomyCancelTool");
 		cancel_.SetText("Cancel");
@@ -329,6 +355,11 @@ namespace openrepublic::preview
 			widget->SetVisible(nativeConstruction_);
 			widget->SetEnabled(nativeConstruction_);
 		}
+		for (wi::gui::Widget* widget : { static_cast<wi::gui::Widget*>(&placeStation_), static_cast<wi::gui::Widget*>(&rail_) })
+		{
+			widget->SetVisible(railControls_);
+			widget->SetEnabled(railControls_);
+		}
 		const std::array<wi::gui::Widget*, 5> logisticsControls = {
 			&resource_, &vehicleType_, &order_, &retargetOrder_, &cancelOrder_
 		};
@@ -396,6 +427,12 @@ namespace openrepublic::preview
 			};
 			const std::array<float, 5> constructionWidths = { 180.0f, 120.0f, 110.0f, 100.0f, 140.0f };
 			y = layoutRow(y, constructionWidgets, constructionWidths, constructionWidgets.size()) + kRowGap;
+			if (railControls_)
+			{
+				const std::array<wi::gui::Widget*, 5> railTools = { &placeStation_, &rail_, nullptr, nullptr, nullptr };
+				const std::array<float, 5> railWidths = { 120.0f, 110.0f, 0.0f, 0.0f, 0.0f };
+				y = layoutRow(y, railTools, railWidths, 2) + kRowGap;
+			}
 		}
 
 		const std::array<wi::gui::Widget*, 5> haulWidgets = {
@@ -416,6 +453,15 @@ namespace openrepublic::preview
 			const std::array<wi::gui::Widget*, 5> dispatchButtons = { &dispatch_, &buyCoal_, &autoRun_, nullptr, nullptr };
 			const std::array<float, 5> dispatchButtonWidths = { 110.0f, 110.0f, 200.0f, 0.0f, 0.0f };
 			y = layoutRow(y + kRowGap, dispatchButtons, dispatchButtonWidths, 3);
+		}
+		if (railControls_)
+		{
+			const std::array<wi::gui::Widget*, 5> trainWidgets = { &trainType_, &trainSource_, &trainDestination_, &trainResource_, nullptr };
+			const std::array<float, 5> trainWidths = { 160.0f, 180.0f, 180.0f, 150.0f, 0.0f };
+			y = layoutRow(y + kRowGap, trainWidgets, trainWidths, 4);
+			const std::array<wi::gui::Widget*, 5> trainButtons = { &dispatchTrain_, nullptr, nullptr, nullptr, nullptr };
+			const std::array<float, 5> trainButtonWidths = { 130.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+			y = layoutRow(y + kRowGap, trainButtons, trainButtonWidths, 1);
 		}
 		if (hasUtilityResources_)
 		{
@@ -500,6 +546,16 @@ namespace openrepublic::preview
 		for (const auto& r : catalog.Resources()) if (!r.utility) resources.emplace_back(r.name,r.id);
 		rebuild(dispatchVehicle_,vehicles,pv,dispatchVehicleIds_); rebuild(dispatchSource_,buildings,ps,dispatchSourceIds_);
 		rebuild(dispatchDestination_,buildings,pd,dispatchDestinationIds_); rebuild(dispatchResource_,resources,pr,dispatchResourceIds_);
+		const auto tt=selected(trainType_), ts=selected(trainSource_), td=selected(trainDestination_), tr=selected(trainResource_);
+		std::vector<std::pair<std::string,std::uint64_t>> trains, stations;
+		for (const auto& type : catalog.VehicleTypes()) if (type.railOnly) trains.emplace_back(type.name,type.id);
+		for (const auto& building : snapshot.buildings) {
+			if (allowedBuildings && std::find(allowedBuildings->begin(),allowedBuildings->end(),building.id)==allowedBuildings->end()) continue;
+			const auto* type=catalog.BuildingType(building.type);
+			if (type && type->station) stations.emplace_back(type->name+" #"+std::to_string(building.id),building.id);
+		}
+		rebuild(trainType_,trains,tt,trainTypeIds_); rebuild(trainSource_,stations,ts,trainSourceIds_);
+		rebuild(trainDestination_,stations,td,trainDestinationIds_); rebuild(trainResource_,resources,tr,trainResourceIds_);
 	}
 	void NativeEconomyTools::SetAutoRun(bool enabled) { autoRunEnabled_=enabled; autoRun_.SetText(enabled ? "Auto-run logistics: on" : "Auto-run logistics: off"); }
 	void NativeEconomyTools::SetCoalDemoControls(bool enabled) {
@@ -661,6 +717,10 @@ namespace openrepublic::preview
 	economy::BuildingId NativeEconomyTools::SelectedDispatchDestination() const noexcept { return SelectedId(dispatchDestination_, economy::BuildingId{}); }
 	economy::ResourceId NativeEconomyTools::SelectedDispatchResource() const noexcept { return SelectedId(dispatchResource_, economy::InvalidResourceId); }
 	std::uint64_t NativeEconomyTools::SelectedDispatchAmount() const noexcept { return SelectedId(dispatchAmount_, std::uint64_t{}); }
+	economy::VehicleTypeId NativeEconomyTools::SelectedTrainType() const noexcept { return SelectedId(trainType_, economy::InvalidVehicleTypeId); }
+	economy::BuildingId NativeEconomyTools::SelectedTrainSource() const noexcept { return SelectedId(trainSource_, economy::BuildingId{}); }
+	economy::BuildingId NativeEconomyTools::SelectedTrainDestination() const noexcept { return SelectedId(trainDestination_, economy::BuildingId{}); }
+	economy::ResourceId NativeEconomyTools::SelectedTrainResource() const noexcept { return SelectedId(trainResource_, economy::InvalidResourceId); }
 
 	bool NativeEconomyTools::HasActiveInput() const noexcept
 	{
@@ -671,7 +731,9 @@ namespace openrepublic::preview
 			active(remove_) || active(resource_) || active(vehicleType_) || active(order_) || active(retargetOrder_) || active(cancelOrder_) ||
 			active(roadChoice_) || active(toggleRoad_) || active(utilityResource_) ||
 			active(connectUtility_) || active(disconnectUtility_) || active(dispatchVehicle_) || active(dispatchSource_) ||
-			active(dispatchDestination_) || active(dispatchResource_) || active(dispatchAmount_) || active(dispatch_) || active(buyCoal_) || active(autoRun_);
+			active(dispatchDestination_) || active(dispatchResource_) || active(dispatchAmount_) || active(dispatch_) || active(buyCoal_) || active(autoRun_) ||
+			active(placeStation_) || active(rail_) || active(trainType_) || active(trainSource_) || active(trainDestination_) ||
+			active(trainResource_) || active(dispatchTrain_);
 	}
 
 	bool NativeEconomyTools::PointerOnControls(XMFLOAT2 pointer) const noexcept
@@ -686,6 +748,9 @@ namespace openrepublic::preview
 			WidgetContains(utilityResource_, pointer) || WidgetContains(connectUtility_, pointer) ||
 			WidgetContains(disconnectUtility_, pointer) || WidgetContains(dispatchVehicle_, pointer) || WidgetContains(dispatchSource_, pointer) ||
 			WidgetContains(dispatchDestination_, pointer) || WidgetContains(dispatchResource_, pointer) || WidgetContains(dispatchAmount_, pointer) ||
-			WidgetContains(dispatch_, pointer) || WidgetContains(buyCoal_, pointer) || WidgetContains(autoRun_, pointer);
+			WidgetContains(dispatch_, pointer) || WidgetContains(buyCoal_, pointer) || WidgetContains(autoRun_, pointer) ||
+			WidgetContains(placeStation_, pointer) || WidgetContains(rail_, pointer) || WidgetContains(trainType_, pointer) ||
+			WidgetContains(trainSource_, pointer) || WidgetContains(trainDestination_, pointer) || WidgetContains(trainResource_, pointer) ||
+			WidgetContains(dispatchTrain_, pointer);
 	}
 }

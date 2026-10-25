@@ -23,6 +23,8 @@ namespace openrepublic::preview
 		{
 			std::function<void()> place;
 			std::function<void()> road;
+			std::function<void()> placeStation;
+			std::function<void()> rail;
 			std::function<void()> cancel;
 			std::function<void()> remove;
 			std::function<void()> retargetOrder;
@@ -32,12 +34,13 @@ namespace openrepublic::preview
 			std::function<void()> disconnectUtility;
 			std::function<void()> utilitySelectionChanged;
 			std::function<void()> dispatchTruck;
+			std::function<void()> dispatchTrain;
 			std::function<void()> buyCoal;
 			std::function<void()> toggleAutoRun;
 		};
 
 		void Create(wi::gui::GUI& gui, const economy::Catalog& catalog, Callbacks callbacks,
-			bool nativeConstruction = true, bool dispatchControls = true);
+			bool nativeConstruction = true, bool dispatchControls = true, bool railControls = false);
 
 		/** Positions the construction and haul rows below the caller's top row.
 		 *  Returns the y-coordinate available for the next status/control row. */
@@ -70,6 +73,10 @@ namespace openrepublic::preview
 		economy::BuildingId SelectedDispatchDestination() const noexcept;
 		economy::ResourceId SelectedDispatchResource() const noexcept;
 		std::uint64_t SelectedDispatchAmount() const noexcept;
+		economy::VehicleTypeId SelectedTrainType() const noexcept;
+		economy::BuildingId SelectedTrainSource() const noexcept;
+		economy::BuildingId SelectedTrainDestination() const noexcept;
+		economy::ResourceId SelectedTrainResource() const noexcept;
 
 		/** True while a dropdown or other toolbar widget is actively capturing input. */
 		bool HasActiveInput() const noexcept;
@@ -92,8 +99,10 @@ namespace openrepublic::preview
 		wi::gui::ComboBox roadChoice_;
 		wi::gui::ComboBox utilityResource_;
 		wi::gui::ComboBox dispatchVehicle_, dispatchSource_, dispatchDestination_, dispatchResource_, dispatchAmount_;
+		wi::gui::ComboBox trainType_, trainSource_, trainDestination_, trainResource_;
 		wi::gui::Button place_;
 		wi::gui::Button road_;
+		wi::gui::Button placeStation_, rail_;
 		wi::gui::Button cancel_;
 		wi::gui::Button remove_;
 		wi::gui::Button retargetOrder_;
@@ -102,7 +111,9 @@ namespace openrepublic::preview
 		wi::gui::Button connectUtility_;
 		wi::gui::Button disconnectUtility_;
 		wi::gui::Button dispatch_, buyCoal_, autoRun_;
+		wi::gui::Button dispatchTrain_;
 		std::vector<std::uint64_t> dispatchVehicleIds_, dispatchSourceIds_, dispatchDestinationIds_, dispatchResourceIds_;
+		std::vector<std::uint64_t> trainTypeIds_, trainSourceIds_, trainDestinationIds_, trainResourceIds_;
 		bool autoRunEnabled_ = false;
 		std::vector<economy::ResourceId> haulResources_;
 		std::vector<economy::OrderId> orderIds_;
@@ -114,5 +125,6 @@ namespace openrepublic::preview
 		bool hasLayout_ = false;
 		bool nativeConstruction_ = true;
 		bool dispatchControls_ = true;
+		bool railControls_ = false;
 	};
 }

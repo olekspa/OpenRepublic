@@ -66,6 +66,7 @@ namespace openrepublic
 		void SetNativeTrafficPolish(bool enabled) noexcept { nativeEconomyScene.SetTrafficPolish(enabled); }
 		void SetDarkSceneLighting(bool dark) noexcept { nativeEconomyScene.SetDarkLighting(dark); }
 		void SetNativeTerrainEnabled(bool enabled);
+		void SetNativeRailEnabled(bool enabled) noexcept { nativeRailEnabled = enabled; }
 		void SetNativeObjectives(openrepublic::runtime::NativeObjectiveSet objectiveSet);
 		void SetCampaignProgress(openrepublic::runtime::CampaignDefinition campaign,
 			openrepublic::runtime::CampaignProgress progress, std::string missionId,
@@ -130,6 +131,9 @@ namespace openrepublic
 		void QueueRegionHaul();
 		void BeginNativeBuildingPlacement();
 		void BeginNativeRoadPlacement();
+		void BeginNativeStationPlacement();
+		void QueueNativeRailBuild();
+		void QueueNativeTrainDispatch();
 		void CancelNativeConstruction();
 		void QueueNativeRemoval();
 		void QueueNativeConstruction(economy::Cell cell);
@@ -239,6 +243,7 @@ namespace openrepublic
 		bool syntheticRegionFixtureMode = false;
 		bool nativeEconomyCheckpointMode = false;
 		bool nativeTerrainEnabled = false;
+		bool nativeRailEnabled = false;
 		bool nativeEconomyPresentationValid = false;
 		double syntheticRegionCenterX = 0.0;
 		double syntheticRegionCenterZ = 0.0;
