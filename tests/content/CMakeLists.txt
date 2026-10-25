@@ -136,6 +136,12 @@ target_link_libraries(OpenRepublicRoadNetworkTests PRIVATE OpenRepublicContent)
 target_compile_features(OpenRepublicRoadNetworkTests PRIVATE cxx_std_17)
 add_test(NAME OpenRepublicRoadNetworkTests COMMAND OpenRepublicRoadNetworkTests)
 
+add_executable(OpenRepublicBoundedReaderRobustnessTests bounded_reader_robustness_tests.cpp)
+target_link_libraries(OpenRepublicBoundedReaderRobustnessTests PRIVATE OpenRepublicContent OpenRepublicCompat)
+target_include_directories(OpenRepublicBoundedReaderRobustnessTests PRIVATE "${PROJECT_SOURCE_DIR}/src/content")
+target_compile_features(OpenRepublicBoundedReaderRobustnessTests PRIVATE cxx_std_17)
+add_test(NAME OpenRepublicBoundedReaderRobustnessTests COMMAND OpenRepublicBoundedReaderRobustnessTests)
+
 add_executable(OpenRepublicLinearNetworkTests
     linear_network_tests.cpp
 )
