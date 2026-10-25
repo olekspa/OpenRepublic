@@ -82,6 +82,7 @@ int main() {
   const auto legacySummary = Response(observer, Request("legacy-summary", "summary"));
   ok &= Check(legacySummary["ok"] && legacySummary["result"]["population"].is_null() &&
                   legacySummary["result"]["workers"].is_null() &&
+                  legacySummary["result"]["workersAssigned"].is_null() &&
                   legacySummary["result"]["workersRequired"].is_null(),
               "catalogs without population declarations preserve unavailable summary fields");
 
@@ -226,8 +227,9 @@ int main() {
     ok &= Check(populationSummary["ok"] &&
                     populationSummary["result"]["population"] == "20" &&
                     populationSummary["result"]["workers"] == "10" &&
+                    populationSummary["result"]["workersAssigned"] == "10" &&
                     populationSummary["result"]["workersRequired"] == "10",
-                "protocol v0 summary exposes population and worker totals as decimal strings");
+                "protocol v0 summary exposes population and additive assigned/required worker totals as decimal strings");
   }
   {
     economy::CatalogBuilder builder; economy::Catalog depotCatalog; economy::CatalogErrorInfo error;
