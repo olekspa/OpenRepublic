@@ -144,6 +144,23 @@ class ScenarioLoaderTests(unittest.TestCase):
             with self.assertRaisesRegex(scenario_score.ScenarioError, "adjacent rail edge"):
                 scenario_score.load_scenario(path)
 
+
+    def test_commuter_town_declares_transit_route_and_workforce_score(self):
+        scenario = scenario_score.resolve_scenario("commuter_town")
+        self.assertEqual(scenario["transitRoute"], {"stops": [1, 2], "busType": "bus"})
+        self.assertEqual(scenario["score"]["objectives"],
+                         ["fedResidents", "workersAssigned", "workersRequired"])
+        self.assertIn("transit threshold 4 transfer 1", scenario["catalog"])
+
+    def test_transit_route_rejects_non_station_building(self):
+        scenario = scenario_score.resolve_scenario("commuter_town")
+        scenario["transitRoute"]["stops"] = [0, 2]
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "bad_transit.json"
+            path.write_text(json.dumps(scenario), encoding="utf-8")
+            with self.assertRaisesRegex(scenario_score.ScenarioError, "station building"):
+                scenario_score.load_scenario(path)
+
     def test_thriving_town_uses_opt_in_happy_residents_score(self):
         scenario = scenario_score.resolve_scenario("thriving_town")
         self.assertEqual(scenario["score"]["metric"], "happy_residents")
@@ -154,6 +171,7 @@ class ScenarioLoaderTests(unittest.TestCase):
         score = scenario_score.score_record(scenario, world, {"resources": [], "buildingTypes": []}, 10, summary)
         self.assertEqual(score["scoreBreakdown"]["happyResidents"], 3)
         self.assertEqual(score["scoreBreakdown"]["happiness"], 75)
+
 
     def test_combined_score_receipt_is_multi_objective_and_deterministic(self):
         scenario = scenario_score.resolve_scenario("growth_town")

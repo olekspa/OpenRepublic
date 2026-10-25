@@ -58,6 +58,7 @@ struct RecipeDef {
     std::vector<std::uint8_t> seasonalOutputDeclared;
 };
 struct CalendarDef { std::uint32_t ticksPerDay{}, startYear{}, startDay{}; };
+struct TransitDef { std::uint64_t roadDistanceThreshold{}, transferDistance{}; bool declared{}; };
 struct FoodDef {
     ResourceId resource{InvalidResourceId};
     std::uint64_t amount{};
@@ -137,6 +138,7 @@ public:
     const FoodDef &Food() const noexcept;
     bool CitizensEnabled() const noexcept;
     const CalendarDef &Calendar() const noexcept;
+    const TransitDef &Transit() const noexcept;
     /** Looks up an exact resource name without modifying the immutable catalog. */
     bool FindResource(std::string_view name, ResourceId &id) const noexcept;
     /** Looks up an exact building type name without modifying the immutable catalog. */
@@ -158,6 +160,7 @@ private:
     FoodDef food_;
     bool citizensEnabled_{};
     CalendarDef calendar_;
+    TransitDef transit_;
 };
 
 class CatalogBuilder final {
@@ -193,6 +196,7 @@ public:
                  CatalogErrorInfo &error);
     bool EnableCitizens(CatalogErrorInfo &error);
     bool SetCalendar(const CalendarDef &calendar, CatalogErrorInfo &error);
+    bool SetTransit(const TransitDef &transit, CatalogErrorInfo &error);
     bool SetSeasonalOutput(BuildingTypeId building, std::string_view recipe,
                            std::string_view season, std::uint32_t percent, CatalogErrorInfo &error);
     /** Resolves a resource name and adds its storage slot. */
@@ -411,6 +415,15 @@ struct UtilityConnectionSnapshot {
     BuildingId a{};
     BuildingId b{};
 };
+struct TransitRouteSnapshot {
+    std::vector<BuildingId> orderedStops;
+    VehicleTypeId busType{InvalidVehicleTypeId};
+    std::uint32_t stopIndex{};
+    std::uint64_t passengers{}, seats{};
+    std::uint8_t phase{};
+    std::uint32_t dwellRemaining{};
+    Cell busCell{};
+};
 /** Exact unsigned amount used by utility diagnostics; decimal formatting is portable to MSVC. */
 struct UtilityAmount {
     std::uint64_t low{};
@@ -447,6 +460,7 @@ struct WorldSnapshot {
     std::vector<VehicleSnapshot> vehicles;
     std::vector<HaulOrderSnapshot> orders;
     std::vector<UtilityConnectionSnapshot> utilityConnections;
+    std::vector<TransitRouteSnapshot> transitRoutes;
     std::uint64_t treasury{};
     std::uint64_t population{};
     std::uint64_t happyResidents{};
@@ -529,6 +543,7 @@ public:
     CommandId DisconnectUtility(ResourceId resource, BuildingId a, BuildingId b);
     CommandId TradeExport(BuildingId building, ResourceId resource, std::uint64_t amount, std::uint64_t rateCap);
     CommandId TradeImport(BuildingId building, ResourceId resource, std::uint64_t amount, std::uint64_t rateCap);
+    CommandId CreateTransitRoute(const std::vector<BuildingId>& orderedStops, VehicleTypeId busType);
     /** Swaps in a tuned catalog of identical structure (names, ids, recipe and storage layout) between ticks.
      *  Rejects the swap, leaving the world untouched, if the structure differs or building inventory
      *  or onboard cargo would exceed a reduced capacity. Population opt-ins and food-resource

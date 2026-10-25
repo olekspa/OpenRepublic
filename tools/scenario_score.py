@@ -74,7 +74,7 @@ def load_scenario(path):
         raise ScenarioError(f"invalid scenario JSON: {error}") from error
 
     _object(scenario, "scenario", ("schemaVersion", "id", "name", "description", "roads", "buildings", "score"),
-            ("catalog", "utilityConnections", "controllerScript", "rails"))
+            ("catalog", "utilityConnections", "controllerScript", "rails", "transitRoute"))
     _integer(scenario["schemaVersion"], "schemaVersion", 1, 1)
     if not isinstance(scenario["id"], str) or not re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*", scenario["id"]):
         raise ScenarioError("id must be a lowercase underscore-separated identifier")
@@ -152,6 +152,28 @@ def load_scenario(path):
         seen_connections.add(edge)
     if len(scenario["roads"]) + len(rails) + len(scenario["buildings"]) + len(connections) > MAX_SETUP_COMMANDS:
         raise ScenarioError(f"setup may contain at most {MAX_SETUP_COMMANDS} commands")
+    transit_route = scenario.get("transitRoute")
+    if transit_route is not None:
+        _object(transit_route, "transitRoute", ("stops", "busType"))
+        stops = transit_route["stops"]
+        if not isinstance(stops, list) or len(stops) < 2:
+            raise ScenarioError("transitRoute.stops must contain at least two building indexes")
+        for index, stop in enumerate(stops):
+            _integer(stop, f"transitRoute.stops[{index}]", 0, len(scenario["buildings"]) - 1)
+        if len(set(stops)) != len(stops):
+            raise ScenarioError("transitRoute stops must be unique")
+        bus_type = transit_route["busType"]
+        if not isinstance(bus_type, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", bus_type):
+            raise ScenarioError("transitRoute.busType must be a catalog vehicle name")
+        if "catalog" not in scenario or not re.search(r"(?m)^transit threshold \d+ transfer \d+\s*$", scenario["catalog"]):
+            raise ScenarioError("transitRoute requires transit rules in its synthetic catalog")
+        if not re.search(rf"(?m)^vehicle\s+{re.escape(bus_type)}\s+", scenario["catalog"]):
+            raise ScenarioError("transitRoute busType must name a catalog vehicle")
+        station_types = set(re.findall(
+            r"(?ms)^building\s+([a-z][a-z0-9_]*)\s+[^\n]+\n(?:(?!^end$).)*?^\s+station\s*$",
+            scenario["catalog"]))
+        if any(scenario["buildings"][index]["type"] not in station_types for index in stops):
+            raise ScenarioError("transitRoute stops must reference declared station building types")
     _object(scenario["score"], "score", ("metric",),
             ("objectives", "amount", "roadSource", "roadDestination", "railSource", "railDestination",
              "comparisonTicks"))
@@ -196,7 +218,7 @@ def load_scenario(path):
     if metric == "happy_residents" and ("catalog" not in scenario or not re.search(r"(?m)^citizens\s*$", scenario["catalog"])):
         raise ScenarioError("happy_residents requires a catalog with the opt-in citizens rule")
     if metric == "combined_multi_objective":
-        allowed = {"fedResidents", "completedSites", "treasury", "throughputUnits", "unmetDemandUnits", "storedNonRawUnits"}
+        allowed = {"fedResidents", "workersAssigned", "workersRequired", "completedSites", "treasury", "throughputUnits", "unmetDemandUnits", "storedNonRawUnits"}
         objectives = scenario["score"].get("objectives")
         if "catalog" not in scenario or not isinstance(objectives, list) or not objectives or \
                 any(not isinstance(item, str) or item not in allowed for item in objectives) or \
@@ -211,6 +233,8 @@ def load_scenario(path):
             raise ScenarioError("treasury objective requires a trade price in the catalog")
         if "fedResidents" in objectives and not re.search(r"(?m)^(food |\s+housing )", scenario["catalog"]):
             raise ScenarioError("fedResidents objective requires a population food or housing declaration")
+        if any(key in objectives for key in ("workersAssigned", "workersRequired")) and not re.search(r"(?m)^\s+workers \d+\s*$", scenario["catalog"]):
+            raise ScenarioError("worker objectives require workers in the catalog")
     return scenario
 
 
@@ -272,6 +296,18 @@ def _seed(host, scenario):
         for handle in link_handles:
             if autopilot._poll_terminal(host, handle) != "accepted":
                 raise RuntimeError(f"scenario utility link {handle} was rejected")
+    route = scenario.get("transitRoute")
+    if route:
+        world = autopilot._world(host)
+        ids = [int(building["id"]) for building in world["buildings"][-len(scenario["buildings"]):]]
+        result = host.call("submit", revision=world["revision"], command={
+            "kind": "create_transit_route", "stops": [ids[index] for index in route["stops"]],
+            "busType": route["busType"]})
+        if result.get("errorCode") != "none" or result.get("state") != "queued" or not result.get("handle"):
+            raise RuntimeError(f"scenario transit route was not queued: {result}")
+        autopilot._step(host, 1)
+        if autopilot._poll_terminal(host, result["handle"]) != "accepted":
+            raise RuntimeError(f"scenario transit route {result['handle']} was rejected")
 
 
 def seed_scenario(host, scenario):
@@ -430,6 +466,13 @@ def score_record(scenario, world, catalog, controller_ticks, summary=None):
             if summary is None or summary.get("population") is None:
                 raise RuntimeError("population summary is required for the fedResidents objective")
             breakdown["fedResidents"] = int(summary["population"])
+        if "workersAssigned" in objectives or "workersRequired" in objectives:
+            if summary is None or summary.get("workersAssigned") is None:
+                raise RuntimeError("workforce summary is required for worker objectives")
+            if "workersAssigned" in objectives:
+                breakdown["workersAssigned"] = int(summary["workersAssigned"])
+            if "workersRequired" in objectives:
+                breakdown["workersRequired"] = int(summary["workersRequired"])
         if "completedSites" in objectives:
             sites = []
             for expected in scenario["buildings"]:
@@ -470,7 +513,8 @@ def score_record(scenario, world, catalog, controller_ticks, summary=None):
         "schemaVersion": 1, "scenarioId": scenario["id"], "scenarioHash": scenario_hash,
         "metric": scenario["score"]["metric"], "controllerTicks": controller_ticks,
         "setupTicks": (1 if scenario["roads"] or scenario["buildings"] else 0) +
-                      (1 if scenario.get("utilityConnections") else 0),
+                      (1 if scenario.get("utilityConnections") else 0) +
+                      (1 if scenario.get("transitRoute") else 0),
         "tick": int(world["tick"]), "stateHash": str(world["stateHash"]),
         "scoreMicroUnits": score_micro_units, "scoreUnits": score_micro_units / 1_000_000,
         "buildings": len(world["buildings"]), "roads": len(world["roads"]),
@@ -507,7 +551,8 @@ def score_context(host, scenario, world):
             networks.extend(page.get("networks", []))
         world["utilityDiagnostics"] = {"available": True, "networks": networks}
     summary = None
-    if metric == "happy_residents" or (metric == "combined_multi_objective" and "fedResidents" in objectives):
+    if metric == "happy_residents" or (metric == "combined_multi_objective" and any(
+            field in objectives for field in ("fedResidents", "workersAssigned", "workersRequired"))):
         summary = host.call("summary")
         autopilot._check_error(summary, "summary")
     return summary

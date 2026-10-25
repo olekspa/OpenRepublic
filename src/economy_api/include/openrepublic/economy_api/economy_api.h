@@ -29,7 +29,7 @@ enum class Action : std::uint8_t {
     BuildRoad, SetRoadEnabled, SetBuildingEnabled, CreateHaulOrder, DispatchTruck, CancelHaulOrder,
     PollCommand, ReadEvents, RetargetHaulOrder, ExportCheckpoint, CompactCommandHistory,
     ConnectUtility, DisconnectUtility, QueryUtilityDiagnostics, TradeExport, TradeImport, PlaceConstructionSite,
-    BuildRail
+    BuildRail, CreateTransitRoute
 };
 struct Permissions {
     bool query{true};
@@ -159,6 +159,15 @@ struct UtilityNetworkDiagnosticView {
     std::string generated, requested, consumed, unused;
     std::uint64_t starvedRecipes{};
 };
+struct TransitRouteView {
+    std::vector<economy::BuildingId> orderedStops;
+    std::string busType;
+    std::uint32_t stopIndex{};
+    std::uint64_t passengers{}, seats{};
+    std::uint8_t phase{};
+    std::uint32_t dwellRemaining{};
+    economy::Cell busCell{};
+};
 struct WorldView {
     std::uint32_t apiVersion{ApiVersion};
     std::uint64_t revision{}, tick{}, stateHash{};
@@ -170,6 +179,7 @@ struct WorldView {
     std::vector<VehicleView> vehicles;
     std::vector<OrderView> orders;
     std::vector<UtilityConnectionView> utilityConnections;
+    std::vector<TransitRouteView> transitRoutes;
     economy::CommandHistorySnapshot commandHistory;
 };
 struct WorldQuery {
@@ -290,6 +300,9 @@ public:
     Submission BuildRoad(std::uint64_t revision, economy::Cell a, economy::Cell b);
     /** Queues an axis-aligned rail segment after checking the expected revision. */
     Submission BuildRail(std::uint64_t revision, economy::Cell a, economy::Cell b);
+    /** Queues an OpenRepublic synthetic passenger bus loop through ordered station building IDs. */
+    Submission CreateTransitRoute(std::uint64_t revision,
+        const std::vector<economy::BuildingId>& orderedStops, const std::string& busType);
     /** Queues road enablement after checking the expected revision. */
     Submission SetRoadEnabled(std::uint64_t revision, economy::RoadId id, bool enabled);
     /** Queues building enablement after checking the expected revision. */

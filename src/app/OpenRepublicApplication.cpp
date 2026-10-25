@@ -557,6 +557,7 @@ namespace openrepublic
 		const XMFLOAT3 sunDirection(std::sin(yaw) * std::cos(elevation), std::sin(elevation), std::cos(yaw) * std::cos(elevation));
 		const float warmth = std::clamp((static_cast<float>(look.sunElevationDegrees) - 4.0f) / 46.0f, 0.0f, 1.0f);
 		const XMFLOAT3 sunColor(1.0f, 0.66f + 0.30f * warmth, 0.46f + 0.46f * warmth);
+		nativeEconomyScene.SetDarkLighting(look.sunElevationDegrees <= 3.0f);
 		if (wi::scene::TransformComponent* sunTransform = previewWorld.transforms.GetComponent(showcaseSunEntity))
 		{
 			sunTransform->ClearTransform();

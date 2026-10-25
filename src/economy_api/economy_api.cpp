@@ -84,6 +84,11 @@ WorldView MakeWorld(const economy::Catalog& c, const economy::WorldSnapshot& s) 
         const auto* r = c.Resource(x.resource);
         v.utilityConnections.push_back({r ? r->name : "", x.a, x.b});
     }
+    for (const auto& x : s.transitRoutes) {
+        const auto* type = c.VehicleType(x.busType);
+        v.transitRoutes.push_back({x.orderedStops, type ? type->name : "",
+            x.stopIndex, x.passengers, x.seats, x.phase, x.dwellRemaining, x.busCell});
+    }
     return v;
 }
 }
@@ -110,7 +115,7 @@ Capabilities EconomyApi::DiscoverCapabilities() const {
         Action::QueryUtilityDiagnostics};
     if (permissions_.control && permissions_.query) {
         c.actions.insert(c.actions.end(), {Action::Step, Action::PlaceBuilding, Action::RemoveBuilding,
-            Action::BuildRoad, Action::BuildRail, Action::SetRoadEnabled, Action::SetBuildingEnabled,
+            Action::BuildRoad, Action::BuildRail, Action::CreateTransitRoute, Action::SetRoadEnabled, Action::SetBuildingEnabled,
             Action::CreateHaulOrder, Action::DispatchTruck, Action::CancelHaulOrder, Action::RetargetHaulOrder,
             Action::CompactCommandHistory, Action::ConnectUtility, Action::DisconnectUtility,
             Action::TradeExport, Action::TradeImport, Action::PlaceConstructionSite});
@@ -440,6 +445,17 @@ Submission EconomyApi::BuildRail(std::uint64_t revision, economy::Cell a, econom
     if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
         return {ErrorCode::CommandHandleExhausted, 0, {}};
     return Submit(revision, world_->BuildRail(a, b));
+}
+Submission EconomyApi::CreateTransitRoute(std::uint64_t revision,
+    const std::vector<economy::BuildingId>& stops, const std::string& busType) {
+    if (!Allowed(true)) return {ErrorCode::PermissionDenied, 0, {}};
+    if (world_->Revision() != revision) return {ErrorCode::StaleRevision, 0, {}};
+    economy::VehicleTypeId vehicle{};
+    if (!catalog_->FindVehicleType(busType, vehicle) || stops.size() < 2 || stops.size() > 256)
+        return {ErrorCode::InvalidArgument, 0, {}};
+    if (nextHandle_ == 0 || nextHandle_ == UINT64_MAX)
+        return {ErrorCode::CommandHandleExhausted, 0, {}};
+    return Submit(revision, world_->CreateTransitRoute(stops, vehicle));
 }
 Submission EconomyApi::SetRoadEnabled(std::uint64_t revision, economy::RoadId id, bool enabled) {
     if (!Allowed(true)) {

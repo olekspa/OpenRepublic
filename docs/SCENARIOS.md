@@ -32,6 +32,7 @@ They do not contain game data.
 | `coal_to_heat_logistics` | Same trade/depot/plant loop with an expanded 2,000-unit heat store | At a 1,500-tick horizon, the bounded baseline cadence scores 148 heat units; per-tick replanning dispatches returned trucks sooner and scores 272. See the logistics challenge receipt below. |
 | `rail_vs_road` | Independent 20-edge road and rail routes, two producer/destination pairs, and one train | The scorer moves 1,000 grain units by truck and train, records destination arrival ticks, and requires the rail run to finish first. See [RAIL.md](RAIL.md) for synthetic-rule boundaries and the explicit-transfer limitation. |
 | `water_for_brewery` | Water tower linked to two breweries | The tower generates 4 water units per tick for 6 units of brewery demand; stable recipe order lets the first brewery consume 3 while the second remains short, exposing both throughput and unmet demand. |
+| `commuter_town` | Distant home and mine, two bus stops, one four-seat bus | Opt-in synthetic transit route connects the home and workplace; the combined score reports fed residents and assigned/required workers. |
 
 The building coordinates are origins on the host grid. Each building's access
 cell is one cell north (`x`, `z - 1`); the fixtures place that cell on a road.
