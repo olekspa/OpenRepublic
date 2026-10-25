@@ -178,8 +178,8 @@ def load_scenario(path):
             ("objectives", "amount", "roadSource", "roadDestination", "railSource", "railDestination",
              "comparisonTicks"))
     metric = scenario["score"]["metric"]
-    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites", "combined_multi_objective", "heat_units", "rail_vs_road"):
-        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, completed_construction_sites, combined_multi_objective, heat_units, or rail_vs_road")
+    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites", "combined_multi_objective", "heat_units", "rail_vs_road", "happy_residents"):
+        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, completed_construction_sites, combined_multi_objective, heat_units, rail_vs_road, or happy_residents")
     script = scenario.get("controllerScript", [])
     if not isinstance(script, list) or len(script) > 32:
         raise ScenarioError("controllerScript must contain at most 32 commands")
@@ -191,8 +191,8 @@ def load_scenario(path):
                                          ("amount", "roadSource", "roadDestination", "railSource", "railDestination",
                                           "comparisonTicks")):
         raise ScenarioError("rail_vs_road score fields require metric rail_vs_road")
-    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites", "combined_multi_objective", "heat_units", "rail_vs_road"):
-        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, completed_construction_sites, combined_multi_objective, heat_units, or rail_vs_road")
+    if metric not in ("stored_non_raw_units", "utility_multi_objective", "completed_construction_sites", "combined_multi_objective", "heat_units", "rail_vs_road", "happy_residents"):
+        raise ScenarioError("score.metric must be stored_non_raw_units, utility_multi_objective, completed_construction_sites, combined_multi_objective, heat_units, rail_vs_road, or happy_residents")
     if metric == "rail_vs_road":
         _object(scenario["score"], "score",
                 ("metric", "amount", "roadSource", "roadDestination", "railSource", "railDestination"),
@@ -215,6 +215,8 @@ def load_scenario(path):
     if metric == "completed_construction_sites":
         if "catalog" not in scenario or not any(b.get("constructionSite") is True for b in scenario["buildings"]):
             raise ScenarioError("completed_construction_sites scenarios must include a catalog and at least one construction site")
+    if metric == "happy_residents" and ("catalog" not in scenario or not re.search(r"(?m)^citizens\s*$", scenario["catalog"])):
+        raise ScenarioError("happy_residents requires a catalog with the opt-in citizens rule")
     if metric == "combined_multi_objective":
         allowed = {"fedResidents", "workersAssigned", "workersRequired", "completedSites", "treasury", "throughputUnits", "unmetDemandUnits", "storedNonRawUnits"}
         objectives = scenario["score"].get("objectives")
@@ -398,6 +400,14 @@ def score_record(scenario, world, catalog, controller_ticks, summary=None):
                             for building in world["buildings"]
                             for item in building["inventory"] if item["resource"] not in raw)
     breakdown = None
+    if scenario["score"]["metric"] == "happy_residents":
+        if summary is None or summary.get("happyResidents") is None:
+            raise RuntimeError("citizen summary is required for happy_residents scoring")
+        happy = int(summary["happyResidents"])
+        score_micro_units = happy * 1_000_000
+        breakdown = {"happyResidents": happy, "happiness": int(summary["happiness"]),
+                     "population": int(summary["population"]),
+                     "scoreDefinition": "number of residents supported by the authored synthetic needs model"}
     if scenario["score"]["metric"] == "heat_units":
         heat = sum(int(item["amount"]) for building in world["buildings"] for item in building["inventory"] if item["resource"] == "heat")
         score_micro_units = heat * 1_000_000
@@ -512,7 +522,7 @@ def score_record(scenario, world, catalog, controller_ticks, summary=None):
     }
     if breakdown is not None:
         stable["scoreBreakdown"] = breakdown
-        if scenario["score"]["metric"] in ("utility_multi_objective", "completed_construction_sites", "combined_multi_objective"):
+        if scenario["score"]["metric"] in ("utility_multi_objective", "completed_construction_sites", "combined_multi_objective", "happy_residents"):
             stable.pop("scoreMicroUnits")
             stable.pop("scoreUnits")
         if scenario["score"]["metric"] == "completed_construction_sites":
@@ -541,8 +551,8 @@ def score_context(host, scenario, world):
             networks.extend(page.get("networks", []))
         world["utilityDiagnostics"] = {"available": True, "networks": networks}
     summary = None
-    if metric == "combined_multi_objective" and any(
-            field in objectives for field in ("fedResidents", "workersAssigned", "workersRequired")):
+    if metric == "happy_residents" or (metric == "combined_multi_objective" and any(
+            field in objectives for field in ("fedResidents", "workersAssigned", "workersRequired"))):
         summary = host.call("summary")
         autopilot._check_error(summary, "summary")
     return summary

@@ -8,6 +8,12 @@ state are implemented in the economy. The controller API and JSONL command are
 additive; `commuter_town` is an authored score fixture. WRSR passenger and
 commuting parity remain **UNKNOWN**; see [TRANSIT.md](TRANSIT.md).
 
+**Citizen needs increment (25 October 2026):** the opt-in synthetic `citizens`
+catalog rule adds deterministic need happiness, migration, and happiness-scaled
+workforce availability; `thriving_town` scores happy residents. Headless Release
+CTest passes **82/82** and the scenario reaches 4 happy residents at 500 ticks.
+See [CITIZENS.md](CITIZENS.md). WRSR parity remains UNKNOWN.
+
 **Native desktop save slots:** named user-data saves, bounded metadata listing,
 three rotating simulation-time autosaves, new-game catalog choices, and a
 load/quit flow are documented in [DESKTOP_SAVES.md](DESKTOP_SAVES.md). The

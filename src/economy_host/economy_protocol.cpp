@@ -861,6 +861,9 @@ std::string Dispatcher::HandleLine(std::string_view line) {
                     ? Json(std::to_string(summary.workersAssigned)) : Json(nullptr)},
                {"workersRequired", summary.workforceEnabled
                     ? Json(std::to_string(summary.workersRequired)) : Json(nullptr)},
+               {"happiness", summary.citizensEnabled ? Json(summary.happiness) : Json(nullptr)},
+               {"happyResidents", summary.citizensEnabled
+                    ? Json(std::to_string(summary.happyResidents)) : Json(nullptr)},
                {"stock", stock},
                {"unservedInputs", unserved}, {"vehicles", summary.vehicles},
                {"text", summary.text},

@@ -22,6 +22,9 @@ struct SummaryConstructionSite { economy::BuildingId building{}; std::string bui
 struct EconomySummary {
     std::uint64_t tick{};
     std::uint64_t population{};
+    std::uint64_t happyResidents{};
+    std::uint32_t happiness{};
+    bool citizensEnabled{};
     std::uint64_t workersAssigned{};
     std::uint64_t workersRequired{};
     bool populationEnabled{};

@@ -19,9 +19,9 @@ OpenRepublic interfaces; they make no compatibility claim about WRSR.
 The additive read-only `summary` method is available to observer and controller
 roles. It returns a deterministic text summary and JSON fields for tick, stock
 totals by non-utility catalog resource, the top five currently stalled missing
-recipe inputs, and vehicle count. Population and worker counts are `null` in
-JSON and marked `unavailable` in text because the current economy snapshot has
-no such fields. Missing inputs are reported as held inventory versus the
+recipe inputs, and vehicle count. Population and worker counts are available
+when the catalog declares population/workforce rules; otherwise they are `null`
+in JSON and marked `unavailable` in text. Missing inputs are reported as held inventory versus the
 recipe's per-cycle input amount; this is an OpenRepublic diagnostic, not a
 claim about original-game workforce or shortage semantics.
 
@@ -478,6 +478,11 @@ a stock-change rate, not a production-only measurement; deliveries, consumption,
 trade and other inventory changes contribute. Rates are omitted until a prior
 tick snapshot is available. Population/workforce and construction figures are
 OpenRepublic snapshot/catalog values; no WRSR parity is implied.
+
+When a catalog declares the opt-in `citizens` rule, summaries also expose
+`happiness` (0..100) and `happyResidents` (an unsigned decimal string in JSON).
+Both fields are `null` without that opt-in. These synthetic values are described
+in [CITIZENS.md](CITIZENS.md); they do not assert WRSR behavior.
 
 `OpenRepublic.exe --native-economy [--economy-pipe-name <name>]` starts an empty
 64x64 OpenRepublic-authored economy with the synthetic catalog and exact native-ID

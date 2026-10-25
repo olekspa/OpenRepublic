@@ -136,6 +136,7 @@ public:
     /** Returns vehicle types in dense immutable ID order. */
     const std::vector<VehicleTypeDef> &VehicleTypes() const noexcept;
     const FoodDef &Food() const noexcept;
+    bool CitizensEnabled() const noexcept;
     const CalendarDef &Calendar() const noexcept;
     const TransitDef &Transit() const noexcept;
     /** Looks up an exact resource name without modifying the immutable catalog. */
@@ -157,6 +158,7 @@ private:
     std::vector<BuildingTypeDef> buildingTypes_;
     std::vector<VehicleTypeDef> vehicleTypes_;
     FoodDef food_;
+    bool citizensEnabled_{};
     CalendarDef calendar_;
     TransitDef transit_;
 };
@@ -192,6 +194,7 @@ public:
                          std::uint32_t workTicks, CatalogErrorInfo &error);
     bool SetFood(ResourceId resource, std::uint64_t amount, std::uint32_t intervalTicks,
                  CatalogErrorInfo &error);
+    bool EnableCitizens(CatalogErrorInfo &error);
     bool SetCalendar(const CalendarDef &calendar, CatalogErrorInfo &error);
     bool SetTransit(const TransitDef &transit, CatalogErrorInfo &error);
     bool SetSeasonalOutput(BuildingTypeId building, std::string_view recipe,
@@ -460,6 +463,8 @@ struct WorldSnapshot {
     std::vector<TransitRouteSnapshot> transitRoutes;
     std::uint64_t treasury{};
     std::uint64_t population{};
+    std::uint64_t happyResidents{};
+    std::uint32_t happiness{};
     std::uint64_t workersAssigned{};
     std::uint64_t workersRequired{};
     std::uint32_t calendarYear{}, calendarDay{}, calendarMonth{};
