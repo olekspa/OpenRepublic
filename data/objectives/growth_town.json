@@ -1,0 +1,8 @@
+{
+  "id": "growth_town",
+  "title": "Grow a town",
+  "objectives": [
+    { "id": "population", "title": "Reach 100 residents", "hint": "Provide housing and services to grow the population.", "metric": "population_at_least", "target": 100 },
+    { "id": "housing", "title": "Build three homes", "hint": "Place three residential buildings.", "metric": "building_count_at_least", "building_type": "residential_building", "target": 3 }
+  ]
+}
