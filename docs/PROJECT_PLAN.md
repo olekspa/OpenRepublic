@@ -8,6 +8,10 @@ workforce availability; `thriving_town` scores happy residents. Headless Release
 CTest passes **82/82** and the scenario reaches 4 happy residents at 500 ticks.
 See [CITIZENS.md](CITIZENS.md). WRSR parity remains UNKNOWN.
 
+**Native desktop save slots:** named user-data saves, bounded metadata listing,
+three rotating simulation-time autosaves, new-game catalog choices, and a
+load/quit flow are documented in [DESKTOP_SAVES.md](DESKTOP_SAVES.md). The
+feature uses OpenRepublic checkpoints only; WRSR save compatibility is UNKNOWN.
 **Native terrain presentation (25 October 2026):** the opt-in `--native-terrain` desktop mode draws a deterministic synthetic heightfield, lake, terrain-levelled building pads, and terrain-following roads and vehicles. The 0.22 placement gradient is OpenRepublic presentation policy; WRSR terrain, slope rules, and visual parity remain UNKNOWN. See [DESKTOP_TERRAIN.md](DESKTOP_TERRAIN.md) and the terrain entry in [REVERSE_ENGINEERING_LEDGER.md](REVERSE_ENGINEERING_LEDGER.md).
 
 **Construction profile increment (23 October 2026):** ordered cost/work/recipe
