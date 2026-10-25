@@ -144,6 +144,17 @@ class ScenarioLoaderTests(unittest.TestCase):
             with self.assertRaisesRegex(scenario_score.ScenarioError, "adjacent rail edge"):
                 scenario_score.load_scenario(path)
 
+    def test_thriving_town_uses_opt_in_happy_residents_score(self):
+        scenario = scenario_score.resolve_scenario("thriving_town")
+        self.assertEqual(scenario["score"]["metric"], "happy_residents")
+        self.assertIn("citizens\n", scenario["catalog"])
+        summary = {"happyResidents": "3", "happiness": 75, "population": "4"}
+        world = {"tick": 12, "stateHash": "synthetic", "buildings": [],
+                 "roads": [], "orders": [], "vehicles": []}
+        score = scenario_score.score_record(scenario, world, {"resources": [], "buildingTypes": []}, 10, summary)
+        self.assertEqual(score["scoreBreakdown"]["happyResidents"], 3)
+        self.assertEqual(score["scoreBreakdown"]["happiness"], 75)
+
     def test_combined_score_receipt_is_multi_objective_and_deterministic(self):
         scenario = scenario_score.resolve_scenario("growth_town")
         world = {"tick": 10, "stateHash": "stable-state", "treasury": "7", "buildings": [

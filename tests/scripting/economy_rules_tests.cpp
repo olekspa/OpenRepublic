@@ -82,6 +82,7 @@ int main() {
         "utility power\n"
         "trade food buy 8 sell 4\n"
         "food food 1 every 3\n"
+        "citizens\n"
         "building homes 1 1\n"
         "  housing 5\n"
         "  store food 20\n"
@@ -101,12 +102,12 @@ int main() {
         "end\n"
         "vehicle truck capacity 20 speed 2\n";
     Check(economy::ParseCatalogText(optInSource, optInBase, optInParse),
-          "catalog with population, food, trade and utility declarations parses");
+          "catalog with citizens, population, food, trade and utility declarations parses");
 
     economy::Catalog optInUntuned;
     Check(scripting::EconomyRules::ApplyText("return { schema_version = 1 }", optInBase, optInUntuned, &error) &&
               economy::WriteCatalogText(optInUntuned) == economy::WriteCatalogText(optInBase),
-          "empty Lua tuning preserves canonical population, food, trade-price, trade-post and utility metadata");
+          "empty Lua tuning preserves canonical citizens, population, food, trade-price, trade-post and utility metadata");
 
     economy::Catalog optInTuned;
     const char *optInTuning =

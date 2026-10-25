@@ -25,6 +25,8 @@ int main()
 	now.tick = 14;
 	now.treasury = 99;
 	now.population = 12;
+	now.happyResidents = 9;
+	now.happiness = 75;
 	now.workersAssigned = 3;
 	now.workersRequired = 7;
 	now.buildings.push_back({});
@@ -42,6 +44,8 @@ int main()
 	now.orders.back().cargo = 6;
 	const auto overview = openrepublic::runtime::BuildEconomyOverview(now, catalog, before);
 	Check(overview.tick == 14 && overview.treasury == 99, "tick and treasury copied");
+	Check(overview.happyResidents == 9 && overview.happiness == 75 && !overview.citizensAvailable,
+		"citizen summary values copy while catalog opt-in remains explicit");
 	Check(overview.truckCount == 1 && overview.activeHauls.size() == 1, "truck and haul included");
 	Check(overview.activeHauls.front().id == 8 && overview.activeHauls.front().cargo == 6, "haul details copied");
 	Check(overview.constructionSites.size() == 1 && overview.constructionSites.front().progress == 0.5,
