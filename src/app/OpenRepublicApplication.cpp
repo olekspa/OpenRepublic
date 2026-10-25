@@ -32,10 +32,12 @@
 
 #include <windows.h>
 #include <commdlg.h>
+#include <shellapi.h>
 #include "openrepublic/runtime/checkpoint_file.h"
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <array>
 #include <atomic>
 #include <cctype>
@@ -443,9 +445,24 @@ namespace openrepublic
 		if (nativeObjectiveSet && nativeEconomyCheckpoint.world)
 			nativeObjectiveBaseline = economy::SaveWorld(*nativeEconomyCheckpoint.world);
 		nativeEconomyCheckpointMode = nativeEconomyCheckpoint.catalog && nativeEconomyCheckpoint.world;
+		nativeSaveDirectory = runtime::DefaultSaveDirectory();
+		nativeSavedRevision = nativeEconomyCheckpointMode ? nativeEconomyCheckpoint.world->Snapshot().revision : 0;
+		nextNativeAutosaveTick = nativeEconomyCheckpointMode ? nativeEconomyCheckpoint.world->Snapshot().tick + 2400 : 2400;
+		std::vector<runtime::SaveSlotInfo> slots;
+		std::string slotsError;
+		if (runtime::ListSaveSlots(nativeSaveDirectory, slots, slotsError))
+		{
+			std::uint64_t oldest = std::numeric_limits<std::uint64_t>::max();
+			for (const auto& slot : slots)
+			{
+				if (slot.name.rfind("autosave-", 0) != 0) continue;
+				const auto suffix = slot.name.substr(9);
+				try { const auto number = static_cast<std::size_t>(std::stoul(suffix)); if (number >= 1 && number <= 3 && slot.savedAtUnixSeconds <= oldest) { oldest = slot.savedAtUnixSeconds; nextNativeAutosaveSlot = number % 3; } } catch (...) {}
+			}
+		}
 		nativeCoalDemo = false; nativeCoalAutoRun = false;
 		coalDemoBorder = coalDemoDepot = coalDemoStorage = coalDemoPlant = 0; coalDemoResource = coalDemoGrain = economy::InvalidResourceId;
-		if (nativeEconomyCheckpointMode && nativeEconomyFreshWorld) {
+		if (nativeEconomyCheckpointMode) {
 			auto& catalog = *nativeEconomyCheckpoint.catalog;
 			auto& world = *nativeEconomyCheckpoint.world;
 			economy::BuildingTypeId ignored{};
@@ -1762,12 +1779,11 @@ namespace openrepublic
 					});
 					gui.AddWidget(&nativeOverviewButton);
 					nativeSaveButton.Create("NativeEconomySaveCheckpointButton");
-					nativeSaveButton.SetText("Save checkpoint");
+					nativeSaveButton.SetText("Save game slot");
 					StyleButton(nativeSaveButton);
 					nativeSaveButton.SetSize(XMFLOAT2(132, 28));
-					nativeSaveButton.SetTooltip("Pause and save a native checkpoint to a new file. Existing files are never overwritten.");
+					nativeSaveButton.SetTooltip("Pause and save the native game in the user-data save directory.");
 					nativeSaveButton.OnClick([this](const wi::gui::EventArgs&) { SaveNativeCheckpoint(); });
-					gui.AddWidget(&nativeSaveButton);
 					if (nativeObjectiveSet)
 					{
 						nativeObjectiveRestartButton.Create("NativeObjectivesRestartButton");
@@ -1781,6 +1797,53 @@ namespace openrepublic
 						nativeObjectiveLabel.SetSize(XMFLOAT2(540, 142));
 						nativeObjectiveLabel.SetText(nativeObjectiveSet->title);
 						gui.AddWidget(&nativeObjectiveLabel);
+					}
+					gui.AddWidget(&nativeSaveButton); nativeSaveButton.SetVisible(false);
+					nativeQuitButton.Create("NativeEconomyQuitButton");
+					nativeQuitButton.SetText("Quit game"); StyleButton(nativeQuitButton); nativeQuitButton.SetSize(XMFLOAT2(132, 28));
+					nativeQuitButton.SetTooltip("Close the current game. Unsaved changes prompt first.");
+					nativeQuitButton.OnClick([this](const wi::gui::EventArgs&) { PostMessageW(window, WM_CLOSE, 0, 0); });
+					gui.AddWidget(&nativeQuitButton); nativeQuitButton.SetVisible(false);
+					nativeGameMenuButton.Create("NativeEconomyGameMenuButton");
+					nativeGameMenuButton.SetText("Game");
+					StyleButton(nativeGameMenuButton);
+					nativeGameMenuButton.SetSize(XMFLOAT2(132, 28));
+					nativeGameMenuButton.OnClick([this](const wi::gui::EventArgs&) {
+						nativeGameMenuExpanded = !nativeGameMenuExpanded;
+						if (nativeGameMenuExpanded) RefreshNativeSaveSlots();
+						UpdateRegionStatus();
+					});
+					gui.AddWidget(&nativeGameMenuButton);
+					const std::array<const char*, 3> newGameLabels{{"New sandbox", "New coal demo", "New construction game"}};
+					const std::array<const wchar_t*, 3> newGameArguments{{L"--native-economy", L"--native-economy --native-coal-demo", L"--native-economy --native-construction-sites"}};
+					for (std::size_t i = 0; i < nativeNewGameButtons.size(); ++i)
+					{
+						auto& button = nativeNewGameButtons[i];
+						button.Create("NativeEconomyNewGame" + std::to_string(i));
+						button.SetText(newGameLabels[i]); StyleButton(button); button.SetSize(XMFLOAT2(190, 28));
+						button.OnClick([this, args = std::wstring(newGameArguments[i])](const wi::gui::EventArgs&) { StartNativeNewGame(args.c_str()); });
+						gui.AddWidget(&button); button.SetVisible(false);
+					}
+					for (std::size_t i = 0; i < nativeSaveSlotButtons.size(); ++i)
+					{
+						auto& button = nativeSaveSlotButtons[i];
+						button.Create("NativeEconomySaveSlot" + std::to_string(i));
+						StyleButton(button); button.SetSize(XMFLOAT2(500, 28));
+						button.OnClick([this, i](const wi::gui::EventArgs&) { LoadNativeSaveSlot(i); });
+						gui.AddWidget(&button); button.SetVisible(false);
+					}
+					for (std::size_t i = 0; i < nativeSavePageButtons.size(); ++i)
+					{
+						auto& button = nativeSavePageButtons[i];
+						button.Create("NativeEconomySavePage" + std::to_string(i));
+						button.SetText(i == 0 ? "Previous saves" : "More saves"); StyleButton(button); button.SetSize(XMFLOAT2(132, 28));
+						button.OnClick([this, i](const wi::gui::EventArgs&) {
+							const std::size_t pageSize = nativeSaveSlotButtons.size();
+							if (i == 0) nativeSaveSlotOffset = nativeSaveSlotOffset >= pageSize ? nativeSaveSlotOffset - pageSize : 0;
+							else if (nativeSaveSlotOffset + pageSize < nativeSaveSlots.size()) nativeSaveSlotOffset += pageSize;
+							RefreshNativeSaveSlots(); UpdateRegionStatus();
+						});
+						gui.AddWidget(&button); button.SetVisible(false);
 					}
 				}
 				if (nativeEconomyCheckpointMode)
@@ -1832,7 +1895,9 @@ namespace openrepublic
 						[this] { QueueNativeOrderChange(false); }, {},
 						[this] { QueueNativeUtilityConnection(true); },
 						[this] { QueueNativeUtilityConnection(false); },
-						[this] { UpdateRegionStatus(); } }, false);
+						[this] { UpdateRegionStatus(); },
+						[this] { QueueNativeDispatch(); } }, false,
+						regionCatalogImportOptions.syntheticRegionFleetCount > 0);
 					nativeToolsReady = true;
 					RefreshNativeHaulChoices();
 				}
@@ -1891,6 +1956,7 @@ namespace openrepublic
 		}
 		UpdateSceneControl(dt);
 		UpdateNativeCoalAutomation();
+		UpdateNativeAutosave();
 		if (mapRegionPreview && mapRegionDynamicLod && renderPath != nullptr && renderPath->camera != nullptr)
 		{
 			buildingLodController.Update(previewWorld, renderPath->camera->Eye);
@@ -1968,6 +2034,22 @@ namespace openrepublic
 			if (nativeEconomyCheckpointMode && nativeEconomyPresentationValid)
 				nativeEconomyScene.UpdateVehicleMotion(previewWorld,
 					nativeEconomyRunning ? nativeEconomyRunClock.InterpolationAlpha() : 1.0);
+			else if (mapPlacement && regionVehicleTransform &&
+				regionCatalogImportOptions.syntheticRegionFleetCount > 0)
+			{
+				const auto terrainTransform = openrepublic::content::MakeMapTerrainTransform(mapPlacement->metadata);
+				nativeEconomyScene.UpdateVehicleMotion(previewWorld, 1.0,
+					[this, terrainTransform](double localX, double localZ) {
+						double height = 0.0;
+						const double worldX = localX + mapPlacement->placement.X();
+						const double worldZ = localZ + mapPlacement->placement.Z();
+						openrepublic::content::SampleTerrainHeight(mapPlacement->heightmap, terrainTransform,
+							std::clamp(worldX, terrainTransform.originX, terrainTransform.originX + terrainTransform.sizeX),
+							std::clamp(worldZ, terrainTransform.originZ, terrainTransform.originZ + terrainTransform.sizeZ),
+							height, nullptr);
+						return height;
+					});
+			}
 			if (nativeEconomyCheckpointMode && nativeEconomyPresentationValid && nativeCameraFollow &&
 				regionEconomySnapshot && renderPath && renderPath->camera)
 			{
@@ -2326,6 +2408,12 @@ namespace openrepublic
 			RefreshNativeHaulChoices();
 		}
 		text << regionWorldStatus;
+		if (nativeGameMenuExpanded)
+		{
+			text << "\nGame menu: new sandbox, coal demo, construction game; autosave every 10 simulation minutes (3 rotating slots).";
+			text << "\nSelect a listed save slot to load it.";
+			if (nativeSaveSlots.empty()) text << "\nNo valid save slots found in the user-data save directory.";
+		}
 		const auto* overviewWorld = ActiveOwnedEconomyWorld();
 		std::optional<openrepublic::runtime::EconomyOverview> overview;
 		if (nativeToolsReady && overviewWorld)
@@ -2746,6 +2834,29 @@ namespace openrepublic
 			}
 			nativeEconomyPresentationValid = true;
 		}
+		else if (mapPlacement && regionEconomyWorld &&
+			regionCatalogImportOptions.syntheticRegionFleetCount > 0)
+		{
+			runtime::NativeEconomyTransform transform;
+			const double localOriginX = regionEconomyImport.originX - mapPlacement->placement.X();
+			const double localOriginZ = regionEconomyImport.originZ - mapPlacement->placement.Z();
+			if (!runtime::BuildImportedRegionVehicleTransform(localOriginX, localOriginZ,
+				regionEconomyImport.cellSizeMeters, transform))
+			{
+				uiNotice = "Imported fleet vehicle transform could not match the region importer cell grid.";
+				regionVehicleTransform.reset();
+				return;
+			}
+			std::string vehicleError;
+			if (!nativeEconomyScene.SyncVehiclesOnly(previewWorld, regionEconomyWorld->Snapshot(),
+				regionEconomyWorld->GetCatalog(), transform, vehicleError))
+			{
+				uiNotice = "Imported region vehicle presentation failed: " + vehicleError;
+				regionVehicleTransform.reset();
+				return;
+			}
+			regionVehicleTransform = transform;
+		}
 
 		std::unordered_map<std::uint64_t, openrepublic::economy::BuildingId> buildingBySource;
 		buildingBySource.reserve(regionEconomyImport.placedSourceBuildings.size());
@@ -2803,7 +2914,8 @@ namespace openrepublic
 			centerX = mapPlacement->placement.X();
 			centerZ = mapPlacement->placement.Z();
 		}
-		if (nativeEconomyCheckpointMode) return;
+		if (nativeEconomyCheckpointMode ||
+			(mapPlacement && regionCatalogImportOptions.syntheticRegionFleetCount > 0)) return;
 		while (regionTruckEntities.size() < regionEconomySnapshot->vehicles.size())
 		{
 			wi::ecs::Entity truck = wi::ecs::INVALID_ENTITY;
@@ -2910,18 +3022,44 @@ namespace openrepublic
 		float x = 18.0f, y = 18.0f;
 		for (auto* button : { &regionStepOneButton, &regionStepButton, &regionToggleButton,
 			&regionHaulSourceButton, &regionHaulButton, &nativeFrameButton, &nativeCameraFollowButton, &nativeStepManyButton, &nativeRunPauseButton,
-			&nativeDetailsButton, &nativeOverviewButton, &nativeSaveButton, &nativeObjectiveRestartButton })
+			&nativeDetailsButton, &nativeOverviewButton, &nativeGameMenuButton, &nativeObjectiveRestartButton })
 		{
 			if (!nativeObjectiveSet && button == &nativeObjectiveRestartButton) continue;
-			if (!nativeEconomyCheckpointMode && (button == &nativeFrameButton || button == &nativeCameraFollowButton || button == &nativeStepManyButton ||
-				button == &nativeRunPauseButton || button == &nativeSaveButton)) continue;
+			if (!nativeEconomyCheckpointMode) continue;
 			if (x > 18.0f && x + 132.0f > width - 18.0f) { x = 18.0f; y += 34.0f; }
 			button->SetPos(XMFLOAT2(x, y));
 			x += 138.0f;
 		}
 		nativeStatusTop = nativeEconomyTools.Layout(width, y + 36.0f);
 		if (nativeObjectiveSet)
+		{
 			nativeObjectiveLabel.SetPos(XMFLOAT2(18.0f, nativeStatusTop + 6.0f));
+			nativeObjectiveLabel.SetVisible(!nativeGameMenuExpanded);
+		}
+		float menuY = nativeStatusTop + 8.0f;
+		for (auto& button : nativeNewGameButtons)
+		{
+			button.SetVisible(nativeGameMenuExpanded);
+			button.SetPos(XMFLOAT2(18.0f, menuY));
+			menuY += 32.0f;
+		}
+		nativeSaveButton.SetVisible(nativeGameMenuExpanded);
+		nativeSaveButton.SetPos(XMFLOAT2(18.0f, menuY));
+		nativeQuitButton.SetVisible(nativeGameMenuExpanded);
+		nativeQuitButton.SetPos(XMFLOAT2(18.0f, menuY + 32.0f));
+		menuY += 64.0f;
+		for (auto& button : nativeSaveSlotButtons)
+		{
+			button.SetVisible(nativeGameMenuExpanded && !nativeSaveSlots.empty());
+			button.SetPos(XMFLOAT2(218.0f, menuY));
+			menuY += 32.0f;
+		}
+		for (std::size_t i = 0; i < nativeSavePageButtons.size(); ++i)
+		{
+			nativeSavePageButtons[i].SetVisible(nativeGameMenuExpanded &&
+				(i == 0 ? nativeSaveSlotOffset > 0 : nativeSaveSlotOffset + nativeSaveSlotButtons.size() < nativeSaveSlots.size()));
+			nativeSavePageButtons[i].SetPos(XMFLOAT2(18.0f + 138.0f * static_cast<float>(i), menuY));
+		}
 	}
 
 	void OpenRepublicApplication::RestartNativeObjectives()
@@ -2999,7 +3137,16 @@ namespace openrepublic
 		const auto snapshot = world->Snapshot();
 		nativeEconomyTools.RefreshOrders(snapshot, world->GetCatalog());
 		nativeEconomyTools.RefreshRoads(snapshot);
-		nativeEconomyTools.RefreshDispatchChoices(snapshot, world->GetCatalog());
+		std::vector<economy::BuildingId> importedBuildings;
+		const std::vector<economy::BuildingId>* dispatchBuildings = nullptr;
+		if (mapPlacement && regionCatalogImportOptions.syntheticRegionFleetCount > 0)
+		{
+			importedBuildings.reserve(regionEconomyImport.placedSourceBuildings.size());
+			for (const auto& identity : regionEconomyImport.placedSourceBuildings)
+				importedBuildings.push_back(identity.buildingId);
+			dispatchBuildings = &importedBuildings;
+		}
+		nativeEconomyTools.RefreshDispatchChoices(snapshot, world->GetCatalog(), dispatchBuildings);
 		if (regionHaulSourceId && std::none_of(snapshot.buildings.begin(), snapshot.buildings.end(),
 			[&](const auto& b) { return b.id == *regionHaulSourceId; })) regionHaulSourceId.reset();
 		nativeEconomyTools.RefreshHaulChoices(snapshot, world->GetCatalog(),
@@ -3028,18 +3175,22 @@ namespace openrepublic
 			UpdateRegionStatus();
 			return;
 		}
+		std::error_code directoryError;
+		std::filesystem::create_directories(nativeSaveDirectory, directoryError);
+		if (directoryError) { uiNotice = "Could not create save directory: " + directoryError.message(); UpdateRegionStatus(); return; }
 		std::array<wchar_t, 32768> path{};
-		const std::wstring initial = L"republic-" + std::to_wstring(checkpoint.tick) + L".checkpoint";
+		const std::wstring initial = L"republic-" + std::to_wstring(checkpoint.tick) + L".orsave";
 		std::copy(initial.begin(), initial.end(), path.begin());
 		OPENFILENAMEW dialog{};
 		dialog.lStructSize = sizeof(dialog);
 		dialog.hwndOwner = window;
-		dialog.lpstrFilter = L"OpenRepublic checkpoint\0*.checkpoint\0All files\0*.*\0\0";
+		dialog.lpstrFilter = L"OpenRepublic save slots\0*.orsave\0All files\0*.*\0\0";
 		dialog.lpstrFile = path.data();
 		dialog.nMaxFile = static_cast<DWORD>(path.size());
-		dialog.lpstrDefExt = L"checkpoint";
-		dialog.lpstrTitle = L"Save native checkpoint to a new file";
-		dialog.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST;
+		dialog.lpstrInitialDir = nativeSaveDirectory.c_str();
+		dialog.lpstrDefExt = L"orsave";
+		dialog.lpstrTitle = L"Save game slot";
+		dialog.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
 		if (!GetSaveFileNameW(&dialog))
 		{
 			const auto error = CommDlgExtendedError();
@@ -3049,14 +3200,144 @@ namespace openrepublic
 		else
 		{
 			std::string error;
-			if (runtime::WriteCheckpointFileExclusive(std::filesystem::path(path.data()), checkpoint.text, error))
+			const auto chosen = std::filesystem::path(path.data());
+			std::wstring chosenParent = chosen.parent_path().lexically_normal().native();
+			std::wstring saveParent = nativeSaveDirectory.lexically_normal().native();
+			if (_wcsicmp(chosenParent.c_str(), saveParent.c_str()) != 0)
 			{
-				std::string displayPath;
-				wi::helper::StringConvert(std::wstring(path.data()), displayPath);
-				uiNotice = "Saved native checkpoint at tick " + std::to_string(checkpoint.tick) + " to " + displayPath;
+				uiNotice = "Save slots must stay in the OpenRepublic user-data save directory.";
 			}
-			else uiNotice = "Checkpoint file was not saved: " + error;
+			else if (!runtime::WriteSaveSlot(nativeSaveDirectory, chosen.stem().string(), checkpoint.text,
+				static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count()),
+				checkpoint.tick, current.world.buildings.size(), error))
+			{
+				uiNotice = "Game slot was not saved: " + error;
+			}
+			else
+			{
+				nativeSavedRevision = current.world.revision;
+				uiNotice = "Saved game at tick " + std::to_string(checkpoint.tick) + " in slot " + chosen.stem().string();
+				RefreshNativeSaveSlots();
+			}
 		}
+		UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::RefreshNativeSaveSlots()
+	{
+		std::string error;
+		nativeSaveSlots.clear();
+		if (!runtime::ListSaveSlots(nativeSaveDirectory, nativeSaveSlots, error))
+		{
+			uiNotice = "Could not list save slots: " + error;
+			return;
+		}
+		if (nativeSaveSlotOffset >= nativeSaveSlots.size())
+			nativeSaveSlotOffset = nativeSaveSlots.empty() ? 0 : ((nativeSaveSlots.size() - 1) / nativeSaveSlotButtons.size()) * nativeSaveSlotButtons.size();
+		for (std::size_t i = 0; i < nativeSaveSlotButtons.size(); ++i)
+		{
+			auto& button = nativeSaveSlotButtons[i];
+			const auto slotIndex = nativeSaveSlotOffset + i;
+			if (slotIndex >= nativeSaveSlots.size()) { button.SetVisible(false); continue; }
+			const auto& slot = nativeSaveSlots[slotIndex];
+			std::string label = "Load: " + slot.name;
+			if (slot.savedAtUnixSeconds != 0 && slot.savedAtUnixSeconds <= static_cast<std::uint64_t>(std::numeric_limits<std::time_t>::max()))
+			{
+				const std::time_t stamp = static_cast<std::time_t>(slot.savedAtUnixSeconds);
+				std::tm local{};
+				localtime_s(&local, &stamp);
+				char date[32]{};
+				std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M", &local);
+				label += " | " + std::string(date);
+				if (slot.hasMetadata) label += " | tick " + std::to_string(slot.tick) +
+					" | buildings " + std::to_string(slot.buildingCount);
+			}
+			button.SetText(label);
+			button.SetVisible(true);
+		}
+		nativeSavePageButtons[0].SetVisible(nativeGameMenuExpanded && nativeSaveSlotOffset > 0);
+		nativeSavePageButtons[1].SetVisible(nativeGameMenuExpanded && nativeSaveSlotOffset + nativeSaveSlotButtons.size() < nativeSaveSlots.size());
+	}
+
+	bool OpenRepublicApplication::LaunchNativeSession(const std::wstring& arguments)
+	{
+		std::array<wchar_t, 32768> executable{};
+		const DWORD length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+		if (length == 0 || length >= executable.size()) { uiNotice = "Could not locate OpenRepublic.exe."; return false; }
+		const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", executable.data(),
+			arguments.c_str(), std::filesystem::path(executable.data()).parent_path().c_str(), SW_SHOWNORMAL));
+		if (result <= 32) { uiNotice = "Could not start the requested game session (Windows error " + std::to_string(result) + ")."; return false; }
+		nativeAllowClose = true;
+		PostMessageW(window, WM_CLOSE, 0, 0);
+		return true;
+	}
+
+	void OpenRepublicApplication::StartNativeNewGame(const wchar_t* arguments)
+	{
+		if (!ConfirmQuit()) return;
+		if (!LaunchNativeSession(arguments ? arguments : L"--native-economy")) UpdateRegionStatus();
+	}
+
+	void OpenRepublicApplication::LoadNativeSaveSlot(std::size_t index)
+	{
+		index += nativeSaveSlotOffset;
+		if (index >= nativeSaveSlots.size()) return;
+		std::string checkpoint;
+		std::string error;
+		if (!runtime::ReadSaveSlot(nativeSaveSlots[index].path, checkpoint, nullptr, error))
+		{
+			uiNotice = "Cannot load selected save slot: " + error;
+			UpdateRegionStatus();
+			return;
+		}
+		economy::RestoredCheckpoint candidate;
+		economy::ParseError parseError;
+		runtime::NativeEconomyScenePlan plan;
+		if (!economy::RestoreCheckpoint(checkpoint, candidate, parseError) ||
+			!runtime::BuildNativeEconomyScenePlan(candidate.world->Snapshot(), *candidate.catalog, plan, error) ||
+			!runtime::NativeEconomyPlanFitsFloatPrecision(plan, error))
+		{
+			uiNotice = "Selected slot cannot be restored in the desktop view: " +
+				(!parseError.message.empty() ? parseError.message : error);
+			UpdateRegionStatus();
+			return;
+		}
+		if (!ConfirmQuit()) return;
+		const auto path = nativeSaveSlots[index].path.wstring();
+		if (!LaunchNativeSession(L"--economy-checkpoint \"" + path + L"\"")) UpdateRegionStatus();
+	}
+
+	bool OpenRepublicApplication::ConfirmQuit()
+	{
+		if (nativeAllowClose || !nativeEconomyCheckpointMode || !nativeEconomyCheckpoint.world) return true;
+		const bool unsaved = nativeEconomyCheckpoint.world->Snapshot().revision != nativeSavedRevision;
+		if (!unsaved) return true;
+		return MessageBoxW(window, L"This game has unsaved changes. Quit without saving?", L"OpenRepublic",
+			MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) == IDYES;
+	}
+
+	void OpenRepublicApplication::UpdateNativeAutosave()
+	{
+		if (!nativeEconomyCheckpointMode || !nativeEconomyCheckpoint.world) return;
+		const auto snapshot = nativeEconomyCheckpoint.world->Snapshot();
+		if (snapshot.tick < nextNativeAutosaveTick) return;
+		while (nextNativeAutosaveTick <= snapshot.tick) nextNativeAutosaveTick += 2400; // 10 simulation minutes at 4 ticks/second.
+		std::string checkpoint;
+		economy::ParseError parseError;
+		std::string error;
+		if (!economy::SaveCheckpoint(*nativeEconomyCheckpoint.world, checkpoint, parseError))
+		{
+			uiNotice = "Autosave failed: " + parseError.message;
+			UpdateRegionStatus();
+			return;
+		}
+		const auto now = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+		if (runtime::WriteAutosave(nativeSaveDirectory, checkpoint, now, snapshot.tick, snapshot.buildings.size(), nextNativeAutosaveSlot, error))
+		{
+			nativeSavedRevision = snapshot.revision;
+			uiNotice = "Autosaved game at tick " + std::to_string(snapshot.tick) + " (10 simulation minutes; three rotating slots).";
+		}
+		else uiNotice = "Autosave failed: " + error;
 		UpdateRegionStatus();
 	}
 

@@ -73,8 +73,9 @@ fleet exists.
 `--region-synthetic-fleet N` adds an OpenRepublic-authored 1x1 depot with `N`
 default trucks to app-owned `--map-region` economy mode. `N` is bounded from 1
 to 16. The depot is placed beside a free imported road cell nearest the region
-grid center. The ordinary region dispatch controls can then dispatch its owned
-trucks between imported economy buildings. This option requires
+grid center. With the option enabled, the region toolbar can dispatch its owned
+trucks between imported economy buildings; see [REGION_PLAY.md](REGION_PLAY.md)
+for the setup, coordinate mapping, controls, and evidence boundaries. This option requires
 `--map-package`, `--map-region`, and `--content-root`; it is unavailable in
 external-host, synthetic-fixture, capture, and native-sandbox modes.
 

@@ -115,6 +115,53 @@ int main() {
     check(!foodWorld.ReplaceCatalog(original, reloadError), "removing food opt-in rejects");
     check(SaveWorld(foodWorld) == foodBefore && &foodWorld.GetCatalog() == &foodCatalog,
           "food binding rejection preserves world and catalog");
+
+    Catalog citizenCatalog;
+    const std::string citizenText =
+        "openrepublic-economy 1\nresource bread\nutility heat\n"
+        "food bread 1 every 2\ncitizens\n"
+        "building home 1 1\n housing 4\n recipe warmth every 1 in heat:1\n end\n"
+        "building bakery 1 1\n store bread 16\n recipe bake every 1 out bread:1\n end\n"
+        "building boiler 1 1\n recipe heat every 1 out heat:2\n end\n"
+        "building mine 1 1\n workers 2\n end\n";
+    check(ParseCatalogText(citizenText, citizenCatalog, parse), "citizen needs catalog parses");
+    check(citizenCatalog.CitizensEnabled() && WriteCatalogText(citizenCatalog).find("citizens\n") != std::string::npos,
+          "citizen opt-in round trips through catalog text");
+    World citizens(citizenCatalog, 8, 8);
+    BuildingTypeId home{}, bakery{}, boiler{}, mine{};
+    ResourceId heat{};
+    citizenCatalog.FindResource("heat", heat);
+    citizenCatalog.FindBuildingType("home", home);
+    citizenCatalog.FindBuildingType("bakery", bakery);
+    citizenCatalog.FindBuildingType("boiler", boiler);
+    citizenCatalog.FindBuildingType("mine", mine);
+    citizens.PlaceBuilding(home, {1, 2});
+    citizens.PlaceBuilding(bakery, {3, 2});
+    citizens.PlaceBuilding(boiler, {5, 2});
+    citizens.PlaceBuilding(mine, {7, 2});
+    check(citizens.Step(1).accepted, "citizen needs buildings place");
+    const auto placed = citizens.Snapshot();
+    check(citizens.ConnectUtility(heat, placed.buildings[0].id, placed.buildings[2].id) != 0,
+          "citizen housing heat connection queues");
+    citizens.Step(1);
+    citizens.Step(8);
+    auto thriving = citizens.Snapshot();
+    check(thriving.population > 1 && thriving.happiness == 100 && thriving.happyResidents == thriving.population,
+          "food and connected heat support happy residents and immigration");
+    check(thriving.workersAssigned > 0, "happy residents remain available for jobs");
+    const auto citizenSave = SaveWorld(citizens);
+    check(citizenSave.find("WORLD 6") != std::string::npos && citizenSave.find("POP ") != std::string::npos,
+          "citizen state persists through opt-in population records");
+    World citizenRestored(citizenCatalog, 8, 8);
+    check(LoadWorld(citizenSave, citizenCatalog, citizenRestored, loadError) &&
+          citizenRestored.Snapshot().stateHash == thriving.stateHash,
+          "citizen save restores exact deterministic state");
+    citizens.SetBuildingEnabled(thriving.buildings[2].id, false);
+    citizens.Step(2);
+    const auto cold = citizens.Snapshot();
+    check(cold.population < thriving.population && cold.happiness < thriving.happiness &&
+          cold.workersAssigned <= thriving.workersAssigned,
+          "missing heat lowers happiness and available workforce");
     if (failures) return EXIT_FAILURE;
     std::cout << "OpenRepublic synthetic population tests passed\n";
     return EXIT_SUCCESS;

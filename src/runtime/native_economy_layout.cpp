@@ -66,6 +66,20 @@ NativePoint NativeEconomyTransform::CellCenter(Cell cell) const noexcept {
             (static_cast<double>(cell.z) + 0.5 - centerCellZ) * DisplayUnitsPerCell};
 }
 
+bool BuildImportedRegionVehicleTransform(double originX, double originZ,
+                                         double cellSizeMeters,
+                                         NativeEconomyTransform &outTransform) noexcept {
+    if (!std::isfinite(originX) || !std::isfinite(originZ) ||
+        !std::isfinite(cellSizeMeters) || cellSizeMeters <= 0.0 ||
+        cellSizeMeters != NativeEconomyTransform::DisplayUnitsPerCell) return false;
+    NativeEconomyTransform transform;
+    transform.centerCellX = -originX / cellSizeMeters;
+    transform.centerCellZ = -originZ / cellSizeMeters;
+    if (!std::isfinite(transform.centerCellX) || !std::isfinite(transform.centerCellZ)) return false;
+    outTransform = transform;
+    return true;
+}
+
 NativeVehicleMotion InterpolateNativeVehicleMotion(
     Cell previous, Cell current, double alpha, double lastYawRadians,
     const NativeEconomyTransform &transform, double wheelRadiusDisplayUnits) noexcept {

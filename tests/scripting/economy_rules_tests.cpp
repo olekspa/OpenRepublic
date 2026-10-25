@@ -103,10 +103,21 @@ int main() {
     Check(economy::ParseCatalogText(optInSource, optInBase, optInParse),
           "catalog with population, food, trade and utility declarations parses");
 
+    economy::Catalog citizensBase;
+    Check(economy::ParseCatalogText(
+              "openrepublic-economy 1\nresource food\nfood food 1 every 3\ncitizens\n"
+              "building home 1 1\n housing 2\n store food 8\nend\n",
+              citizensBase, optInParse), "citizen catalog parses for Lua metadata preservation");
+    economy::Catalog citizensUntuned;
+    Check(scripting::EconomyRules::ApplyText("return { schema_version = 1 }", citizensBase,
+                                             citizensUntuned, &error) &&
+              economy::WriteCatalogText(citizensUntuned) == economy::WriteCatalogText(citizensBase),
+          "empty Lua tuning preserves the opt-in citizens declaration");
+
     economy::Catalog optInUntuned;
     Check(scripting::EconomyRules::ApplyText("return { schema_version = 1 }", optInBase, optInUntuned, &error) &&
               economy::WriteCatalogText(optInUntuned) == economy::WriteCatalogText(optInBase),
-          "empty Lua tuning preserves canonical population, food, trade-price, trade-post and utility metadata");
+          "empty Lua tuning preserves canonical citizens, population, food, trade-price, trade-post and utility metadata");
 
     economy::Catalog optInTuned;
     const char *optInTuning =

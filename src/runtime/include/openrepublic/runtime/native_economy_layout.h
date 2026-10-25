@@ -55,6 +55,12 @@ struct NativeEconomyTransform {
                                 std::uint32_t depth) const noexcept;
 };
 
+/** Builds the renderer transform whose cell centers match the region importer
+ * mapping: origin + (cell + 0.5) * cellSizeMeters. */
+bool BuildImportedRegionVehicleTransform(double originX, double originZ,
+                                         double cellSizeMeters,
+                                         NativeEconomyTransform &outTransform) noexcept;
+
 /** Full-size renderer input for one native building footprint. */
 struct NativeBuildingPrimitive {
     economy::BuildingId buildingId{};

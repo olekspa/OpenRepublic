@@ -35,20 +35,13 @@ std::string SystemError(const char *operation) {
 }
 }
 
-bool WriteCheckpointFileExclusive(const std::filesystem::path &path,
-                                  std::string_view checkpoint,
-                                  std::string &error) {
+namespace {
+bool PublishBytes(const std::filesystem::path &path, std::string_view checkpoint,
+                  std::string &error, bool replace, std::size_t maximumBytes) {
     error.clear();
     if (path.empty()) { error = "checkpoint path is empty"; return false; }
     if (checkpoint.empty()) { error = "checkpoint payload is empty"; return false; }
-    if (checkpoint.size() > economy::MaxCheckpointBytes) { error = "checkpoint payload exceeds the size limit"; return false; }
-    economy::RestoredCheckpoint restored;
-    economy::ParseError parseError;
-    if (!economy::RestoreCheckpoint(checkpoint, restored, parseError)) {
-        error = "checkpoint payload is invalid: " + parseError.message;
-        return false;
-    }
-
+    if (checkpoint.size() > maximumBytes) { error = "file payload exceeds the size limit"; return false; }
     const auto temp = TempPath(path);
 #ifdef _WIN32
     HANDLE file = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
@@ -66,7 +59,8 @@ bool WriteCheckpointFileExclusive(const std::filesystem::path &path,
     const DWORD writeError = GetLastError();
     CloseHandle(file);
     if (!ok) { SetLastError(writeError); error = SystemError("write checkpoint"); DeleteFileW(temp.c_str()); return false; }
-    if (!MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH)) {
+    const DWORD publishFlags = MOVEFILE_WRITE_THROUGH | (replace ? MOVEFILE_REPLACE_EXISTING : 0);
+    if (!MoveFileExW(temp.c_str(), path.c_str(), publishFlags)) {
         error = SystemError("publish checkpoint without replacement"); DeleteFileW(temp.c_str()); return false;
     }
 #else
@@ -84,15 +78,40 @@ bool WriteCheckpointFileExclusive(const std::filesystem::path &path,
     const int writeError = errno;
     ::close(fd);
     if (!ok) { errno = writeError; error = SystemError("write checkpoint"); ::unlink(temp.c_str()); return false; }
-    if (::link(temp.c_str(), path.c_str()) != 0) {
+    if ((replace ? ::rename(temp.c_str(), path.c_str()) : ::link(temp.c_str(), path.c_str())) != 0) {
         error = SystemError("publish checkpoint without replacement"); ::unlink(temp.c_str()); return false;
     }
-    ::unlink(temp.c_str());
+    if (!replace) ::unlink(temp.c_str());
     const auto parent = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
     const int dir = ::open(parent.c_str(), O_RDONLY);
     if (dir >= 0) { (void)::fsync(dir); ::close(dir); }
 #endif
     return true;
+}
+}
+
+bool WriteFileExclusive(const std::filesystem::path& path, std::string_view bytes,
+                        std::size_t maximumBytes, std::string& error) {
+    if (bytes.size() > maximumBytes) { error = "file payload exceeds the size limit"; return false; }
+    return PublishBytes(path, bytes, error, false, maximumBytes);
+}
+
+bool ReplaceFileAtomically(const std::filesystem::path& path, std::string_view bytes,
+                           std::size_t maximumBytes, std::string& error) {
+    if (bytes.size() > maximumBytes) { error = "file payload exceeds the size limit"; return false; }
+    return PublishBytes(path, bytes, error, true, maximumBytes);
+}
+
+bool WriteCheckpointFileExclusive(const std::filesystem::path &path,
+                                  std::string_view checkpoint,
+                                  std::string &error) {
+    economy::RestoredCheckpoint restored;
+    economy::ParseError parseError;
+    if (!economy::RestoreCheckpoint(checkpoint, restored, parseError)) {
+        error = "checkpoint payload is invalid: " + parseError.message;
+        return false;
+    }
+    return WriteFileExclusive(path, checkpoint, economy::MaxCheckpointBytes, error);
 }
 
 } // namespace openrepublic::runtime

@@ -3,6 +3,7 @@
 #include "openrepublic/content/building_types.h"
 #include "openrepublic/content/mtl_dependencies.h"
 #include "openrepublic/runtime/graphics_settings.h"
+#include "openrepublic/runtime/save_slots.h"
 #include "openrepublic/economy/checkpoint.h"
 #include "openrepublic/compat/storage_profile.h"
 #include "openrepublic/runtime/native_objectives.h"
@@ -49,34 +50,6 @@ namespace
 			L"--nmf-material-unlit-preview", L"--capture-preview", L"--capture-preview-zoom",
 			L"--capture-preview-elevation", L"--terrain-probe", L"--terrain-transform", L"--storage-profile", L"--utility-resource" };
 		return std::find(std::begin(incompatible), std::end(incompatible), argument) != std::end(incompatible);
-	}
-
-	bool ReadCheckpointFile(const std::filesystem::path& path, std::string& text, std::string& error)
-	{
-		std::ifstream input(path, std::ios::binary);
-		if (!input)
-		{
-			error = "could not open checkpoint file";
-			return false;
-		}
-		const std::size_t probeSize = openrepublic::economy::MaxCheckpointBytes + 1;
-		text.resize(probeSize);
-		input.read(text.data(), static_cast<std::streamsize>(probeSize));
-		const std::streamsize count = input.gcount();
-		if (input.bad() || (input.fail() && !input.eof()))
-		{
-			text.clear();
-			error = "checkpoint file read failed";
-			return false;
-		}
-		if (count < 0 || static_cast<std::size_t>(count) > openrepublic::economy::MaxCheckpointBytes)
-		{
-			text.clear();
-			error = "checkpoint file exceeds the " + std::to_string(openrepublic::economy::MaxCheckpointBytes) + " byte limit";
-			return false;
-		}
-		text.resize(static_cast<std::size_t>(count));
-		return true;
 	}
 
 	// Pre-initialization failures use stderr only. Starting the engine's async
@@ -190,6 +163,10 @@ namespace
 			return 0;
 		case WM_INPUT:
 			wi::input::rawinput::ParseMessage(reinterpret_cast<void*>(lParam));
+			return 0;
+		case WM_CLOSE:
+			if (!application.ConfirmQuit()) return 0;
+			DestroyWindow(window);
 			return 0;
 		case WM_SETFOCUS:
 			application.is_window_active = true;
@@ -969,7 +946,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		std::string checkpointText;
 		std::string readError;
-		if (!ReadCheckpointFile(economyCheckpointPath, checkpointText, readError))
+		openrepublic::runtime::SaveSlotInfo slotMetadata;
+		if (!openrepublic::runtime::ReadSaveSlot(economyCheckpointPath, checkpointText, &slotMetadata, readError))
 		{
 			return LogCheckpointStartupError(readError);
 		}
