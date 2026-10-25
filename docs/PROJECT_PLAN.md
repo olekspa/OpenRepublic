@@ -2,6 +2,11 @@
 
 Latest consolidated status and handoff: [HANDOFF_2026-10-24.md](HANDOFF_2026-10-24.md).
 
+**Native desktop save slots:** named user-data saves, bounded metadata listing,
+three rotating simulation-time autosaves, new-game catalog choices, and a
+load/quit flow are documented in [DESKTOP_SAVES.md](DESKTOP_SAVES.md). The
+feature uses OpenRepublic checkpoints only; WRSR save compatibility is UNKNOWN.
+
 **Construction profile increment (23 October 2026):** ordered cost/work/recipe
 declarations and opaque station rows now have a bounded source profile and an
 aggregate-only inspection target. All 488 named local definitions extract;
