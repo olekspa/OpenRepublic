@@ -14,9 +14,11 @@ Start the desktop objective mode with a built-in set:
 OpenRepublic.exe --native-objectives builtin:coal_demo
 ```
 
-The option initializes native economy mode. A JSON file can also be supplied by path, for example `--native-objectives data/objectives/construction_sites_demo.json`. JSON sets use the schema shown in those files; unknown metrics or malformed JSON fail startup with a diagnostic. The objective panel shows ordered completion marks, a progress bar, the first incomplete hint, and a completion banner. **Restart objectives** restores the world to the authored state captured at startup.
+Without another world option, the objective option initializes native economy mode. It can also be paired with `--economy-checkpoint <file>` to evaluate objectives on that restored world, for example for a population-enabled checkpoint. A JSON file can be supplied by path, such as `--native-objectives data/objectives/construction_sites_demo.json`. JSON sets use the schema shown in those files; unknown metrics or malformed JSON fail startup with a diagnostic. The objective panel shows ordered completion marks, a progress bar, the first incomplete hint, and a completion banner. **Restart objectives** restores the world to the state captured at startup.
 
 `delivered_at_least` is currently measured from inventory held at matching destination buildings. The snapshot does not expose durable delivery history, so this is an observable stock proxy and can decrease if production consumes the delivered resource. Goals that need historical delivery credit remain a known limitation.
+
+The growth town set requires a checkpoint whose catalog declares population and housing mechanics; the default economy catalog has no population simulation. This set evaluates those authored snapshot fields when present and does not add population rules.
 
 ## Evidence boundary
 

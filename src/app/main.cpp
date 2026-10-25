@@ -884,7 +884,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 		}
 		LocalFree(arguments);
 	}
-	if (!nativeObjectivesArgument.empty()) nativeEconomyArgumentSeen = true;
+	if (!nativeObjectivesArgument.empty() && !economyCheckpointArgumentSeen) nativeEconomyArgumentSeen = true;
 	if (!nativeEconomyArgumentError.empty())
 	{
 		return LogNativeEconomyStartupError(nativeEconomyArgumentError);
@@ -893,7 +893,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	{
 		return LogNativeEconomyStartupError("--native-economy cannot be combined with --economy-checkpoint");
 	}
-	if (nativeCoalDemoArgumentSeen && !nativeEconomyArgumentSeen)
+	if (nativeCoalDemoArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
 		return LogNativeEconomyStartupError("--native-coal-demo requires --native-economy");
 	if (!nativeObjectivesArgument.empty())
 	{
