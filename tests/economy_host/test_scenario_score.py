@@ -217,14 +217,20 @@ class ScenarioHostIntegrationTests(unittest.TestCase):
         self.assertEqual(water["unmet"], "3")
 
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
-    def test_coal_to_heat_script_uses_two_owned_trucks_and_scores_heat(self):
+    def test_coal_to_heat_baseline_replans_and_scores_at_600_and_1500_ticks(self):
         scenario = scenario_score.resolve_scenario("coal_to_heat")
-        first = scenario_score.run_scenario(HOST_EXE, scenario, 120)
-        repeated = scenario_score.run_scenario(HOST_EXE, scenario, 120)
-        self.assertEqual(first["scoreBreakdown"]["heatUnits"], 4)
+        self.assertNotIn("controllerScript", scenario)
+        first = scenario_score.run_scenario(HOST_EXE, scenario, 600, exact_ticks=True)
+        long_run = scenario_score.run_scenario(HOST_EXE, scenario, 1500, exact_ticks=True)
+        self.assertEqual(first["tick"], 601)
+        self.assertEqual(long_run["tick"], 1501)
+        self.assertGreater(first["scoreBreakdown"]["heatUnits"], 4)
+        self.assertGreaterEqual(long_run["scoreBreakdown"]["heatUnits"], first["scoreBreakdown"]["heatUnits"])
+        self.assertGreater(first["autopilot"]["accepted_depot_dispatches"], 0)
+        self.assertGreater(long_run["autopilot"]["accepted_depot_dispatches"], 0)
         self.assertEqual(len(first["scoreBreakdown"]["fleetStates"]), 2)
-        self.assertTrue(all(vehicle["parked"] for vehicle in first["scoreBreakdown"]["fleetStates"]))
-        self.assertEqual(first["scoreHash"], repeated["scoreHash"])
+        self.assertEqual(scenario_score._default_rounds(scenario, 600), 60)
+        self.assertEqual(scenario_score._default_rounds(scenario, 1500), 60)
 
     @unittest.skipUnless(HOST_EXE, "host executable argument is required")
     def test_live_jsonl_host_runs_every_fixture_and_repeats_hash(self):

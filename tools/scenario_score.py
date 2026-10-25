@@ -506,9 +506,11 @@ def score_context(host, scenario, world):
 def _default_rounds(scenario, ticks):
     """Replan construction scenarios at bounded intervals as production creates stock."""
     has_sites = any(building.get("constructionSite") is True for building in scenario["buildings"])
-    if scenario["score"]["metric"] != "completed_construction_sites" and not has_sites:
+    has_depots = isinstance(scenario.get("catalog"), str) and any(
+        line.strip() == "depot" for line in scenario["catalog"].splitlines())
+    if scenario["score"]["metric"] != "completed_construction_sites" and not has_sites and not has_depots:
         return 1
-    # Keep long runs bounded while giving production-fed sites repeated advice passes.
+    # Keep long runs bounded while replanning production or depot logistics.
     return next(rounds for rounds in range(min(ticks, 64), 0, -1) if ticks % rounds == 0)
 
 
@@ -565,7 +567,8 @@ def run_scenario(host_exe, scenario, ticks, host_args=(), exact_ticks=False, rou
             placed = set()
             totals = {"placements_accepted": 0, "retargets_queued": 0, "accepted_retargets": 0,
                       "rejected_retargets": 0, "creates_queued": 0, "accepted_creates": 0,
-                      "rejected_creates": 0}
+                      "rejected_creates": 0, "depot_dispatches_queued": 0,
+                      "accepted_depot_dispatches": 0, "rejected_depot_dispatches": 0}
             if scenario["score"]["metric"] == "combined_multi_objective":
                 totals["trade_queued"] = 0
             per_round = ticks // rounds

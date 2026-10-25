@@ -94,18 +94,32 @@ This is OpenRepublic native persistence only, not WRSR save compatibility.
 
 ## Scoreable scenario
 
-[`coal_to_heat.json`](../data/scenarios/coal_to_heat.json) is a bounded scripted
-controller fixture. Its exact command sequence is:
+[`coal_to_heat.json`](../data/scenarios/coal_to_heat.json) exercises the
+rule-based baseline over repeated planning rounds. The controller exports
+available grain, imports coal only when a recipe input is missing and the trade
+post can afford it, then dispatches a parked depot truck from a stocked source
+to the heating plant. Each round reads current fleet, inventory, and input
+advice again; an active delivery covers that destination/resource while the
+truck is busy. The source may be a trade post after import, storage, or a
+producer with stock.
 
-1. Export 4 grain at border post building 1 to earn 4 synthetic treasury units.
-2. Import 4 coal into border post building 1.
-3. Dispatch depot truck 1 from border building 1 to storage building 3.
-4. Dispatch depot truck 2 from storage building 3 to heating plant building 4.
-5. Advance the remaining requested ticks while the trucks travel, load, unload,
-   return, and the heating recipe consumes coal.
+Run the scenario for a fixed horizon with:
 
-Run it with `python tools/scenario_score.py --host <OpenRepublicEconomyHost.exe> --scenario coal_to_heat --ticks 120`. The
-scripted controller is explicit and deterministic; it does not depend on the
-baseline autopilot's haul adviser. The score is stored heat units. The receipt
-includes each owned truck's order, leg, parked state, cargo, and current cell.
-All quantities and scores are synthetic OpenRepublic values.
+```powershell
+python tools/scenario_score.py --host <OpenRepublicEconomyHost.exe> --scenario coal_to_heat --ticks 600 --exact-ticks
+python tools/scenario_score.py --host <OpenRepublicEconomyHost.exe> --scenario coal_to_heat --ticks 1500 --exact-ticks
+```
+
+Depot scenarios use repeated planning rounds (up to 64, with a divisor of the
+requested tick budget) so imports, dispatches, and returning trucks can be
+reconsidered during the run. The score is stored heat units. The receipt
+includes each owned truck's order, leg, parked state, cargo, and current cell,
+plus accepted/rejected depot dispatch counts. All quantities and scores are
+synthetic OpenRepublic values.
+
+**OBSERVED (headless Release host, 24 October 2026):** the baseline scores 98
+stored heat units at 600 requested ticks (60 planning rounds, final tick 601)
+and 100 units at 1,500 requested ticks (60 rounds, final tick 1501). It queues
+and accepts 19 and 21 depot dispatches respectively, with both trucks parked
+and empty at each final snapshot. Heat storage is capped at 100 in this fixture,
+so the longer score is storage saturation rather than continued uncapped output.

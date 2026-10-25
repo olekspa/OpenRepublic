@@ -18,3 +18,20 @@ commands go through their dedicated host methods and are validated locally
 before submission. These rules describe the synthetic OpenRepublic model only.
 
 Use the score's current value, since-start change, and previous-round change to evaluate the plan. Explain the action's intended bottleneck in `notes`. Return an empty action list only when all stall and order summaries are clear, or name the exact blocking constraints that prevent every available action.
+
+## Depot-owned trucks
+
+When `depotFleet` is present, it lists depot ownership, parked/idle status,
+current leg and remaining handling ticks, order, cargo and cell. Pair it with
+`vehicles`, `orders`, each building's inventory, and `advice.unservedInputs` /
+`inputAdvice` to re-plan on every observation. Use `dispatch_truck` with
+`vehicle`, `source`, `destination`, and `resource` (optional unsigned integer
+`amount`) only for a parked truck whose `ownerDepotId` names a catalog depot.
+Choose a stocked source that has the resource and a destination with storage
+room that currently lacks a recipe input. Sources may be producers, ordinary
+storage, or a trade post after a valid import. Never dispatch a busy truck, and
+do not issue another delivery for a destination/resource already covered by an
+active order. If a trade post can import the missing input, ensure a declared
+price, free post capacity, and enough treasury; the missing recipe input may
+belong to another building. A later round can dispatch the newly imported stock.
+These are OpenRepublic synthetic controller rules, not WRSR behavior.

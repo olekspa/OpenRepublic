@@ -213,7 +213,8 @@ def _plan(host):
 def _new_stats():
     return {"placements_accepted": 0, "retargets_queued": 0, "accepted_retargets": 0,
             "rejected_retargets": 0, "creates_queued": 0, "accepted_creates": 0,
-            "rejected_creates": 0}
+            "rejected_creates": 0, "depot_dispatches_queued": 0,
+            "accepted_depot_dispatches": 0, "rejected_depot_dispatches": 0}
 
 
 def _submit_retargets(host, plan, stats, skip_orders=()):
@@ -286,10 +287,12 @@ def _construction_site_commands(plan, world, catalog):
     return commands
 
 
-def _create_commands(plan, blocked_pairs=(), world=None, catalog=None):
+def _create_commands(plan, blocked_pairs=(), world=None, catalog=None, excluded_needs=()):
     commands = []
     seen = set()
     for need in plan["unservedInputs"]:
+        if (int(need.get("building", -1)), need.get("resource")) in excluded_needs:
+            continue
         if not need["producers"]:
             continue
         advised = need["producers"][0]["command"]
@@ -304,6 +307,62 @@ def _create_commands(plan, blocked_pairs=(), world=None, catalog=None):
             if key not in seen and key not in blocked_pairs:
                 seen.add(key)
                 commands.append(command)
+    return commands
+
+
+def _depot_dispatch_commands(plan, world, catalog):
+    """Choose parked depot trucks for advised inputs with stocked sources."""
+    if not any(building.get("depot") is True for building in catalog.get("buildingTypes", [])):
+        return []
+    buildings = {int(building["id"]): building for building in world.get("buildings", [])}
+    vehicles = [vehicle for vehicle in world.get("vehicles", [])
+                if vehicle.get("ownerDepotId") and vehicle.get("parked") is True]
+    if not vehicles:
+        return []
+
+    # An active depot delivery already covers its destination/resource until it
+    # finishes; a repeating haul order also makes another delivery unnecessary.
+    covered = {(int(order["destination"]), order["resource"])
+               for order in world.get("orders", [])}
+    dispatched = set()
+    commands = []
+    for need in plan.get("unservedInputs", []):
+        try:
+            destination_id = int(need["building"])
+            resource = need["resource"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        key = (destination_id, resource)
+        destination = buildings.get(destination_id)
+        if destination is None or not isinstance(resource, str) or key in covered or key in dispatched:
+            continue
+        sources = []
+        target_cell = destination.get("cell", {})
+        for source in buildings.values():
+            if int(source["id"]) == destination_id or source.get("constructionSite") is True:
+                continue
+            stock = next((int(item.get("amount", 0)) for item in source.get("inventory", [])
+                          if item.get("resource") == resource), 0)
+            if stock <= 0:
+                continue
+            cell = source.get("cell", {})
+            distance = abs(int(cell.get("x", 0)) - int(target_cell.get("x", 0))) + \
+                       abs(int(cell.get("z", 0)) - int(target_cell.get("z", 0)))
+            sources.append((distance, int(source["id"])))
+        if not sources:
+            continue
+        source_id = min(sources)[1]
+        source_cell = buildings[source_id].get("cell", {})
+        truck = min(vehicles, key=lambda vehicle: (
+            abs(int(vehicle.get("cell", {}).get("x", 0)) - int(source_cell.get("x", 0))) +
+            abs(int(vehicle.get("cell", {}).get("z", 0)) - int(source_cell.get("z", 0))),
+            int(vehicle["id"])))
+        vehicles.remove(truck)
+        dispatched.add(key)
+        covered.add(key)
+        commands.append({"kind": "dispatch_truck", "vehicle": int(truck["id"]),
+                         "source": source_id, "destination": destination_id,
+                         "resource": resource})
     return commands
 
 
@@ -326,6 +385,18 @@ def _queue_creates(host, commands, stats):
     return handles
 
 
+def _queue_depot_dispatches(host, commands, stats):
+    handles = []
+    for command in commands:
+        handle = _queue_single(host, command)
+        if handle is None:
+            stats["rejected_depot_dispatches"] += 1
+        else:
+            handles.append(handle)
+            stats["depot_dispatches_queued"] += 1
+    return handles
+
+
 def _trade_post_types(catalog):
     return {b["name"] for b in catalog.get("buildingTypes", []) if b.get("tradePost") is True}
 
@@ -339,6 +410,18 @@ def _trade_actions(world, catalog, direction=None):
         return []
     treasury = int(world["treasury"])
     types = {b["name"]: b for b in catalog.get("buildingTypes", [])}
+    globally_stocked = {item.get("resource") for building in world.get("buildings", [])
+                        for item in building.get("inventory", []) if int(item.get("amount", 0)) > 0}
+    missing_recipe_inputs = set()
+    for consumer in world.get("buildings", []):
+        definition = types.get(consumer.get("type"), {})
+        stock = {item.get("resource"): int(item.get("amount", 0))
+                 for item in consumer.get("inventory", [])}
+        for recipe in definition.get("recipes", []):
+            for item in recipe.get("inputs", []):
+                resource = item.get("resource")
+                if resource and stock.get(resource, 0) == 0 and resource not in globally_stocked:
+                    missing_recipe_inputs.add(resource)
     site_missing = set()
     site_reserved = {}
     for site in world.get("buildings", []):
@@ -372,8 +455,7 @@ def _trade_actions(world, catalog, direction=None):
                     "resource": resource, "amount": amount, "rateCap": amount}))
         if direction == "export":
             continue
-        needed = {i["resource"] for recipe in definition.get("recipes", [])
-                  for i in recipe.get("inputs", []) if inventory.get(i["resource"], 0) == 0}
+        needed = missing_recipe_inputs
         # A trade post may import a construction site's missing declared inputs.
         # The existing site planner can then haul that stock to the site.
         needed.update(site_missing)
@@ -432,7 +514,16 @@ def run_round(host, catalog, ticks, placed, round_number=1, count_generated=Fals
         blocked_pairs.update(refreshed_pairs)
     # Retargets are queued before creates and use the adviser revision. Exclude any
     # same-tick create that would duplicate the new source/destination/resource tuple.
-    create_handles = _queue_creates(host, _create_commands(plan, blocked_pairs, _world(host), catalog), stats) if final_tick is None or int(_world(host)["tick"]) < final_tick else []
+    dispatch_handles = []
+    dispatch_needs = set()
+    if final_tick is None or int(_world(host)["tick"]) < final_tick:
+        current_world = _world(host)
+        dispatches = _depot_dispatch_commands(plan, current_world, catalog)
+        dispatch_needs = {(int(command["destination"]), command["resource"]) for command in dispatches}
+        dispatch_handles = _queue_depot_dispatches(host, dispatches, stats)
+    create_handles = _queue_creates(
+        host, _create_commands(plan, blocked_pairs, _world(host), catalog, dispatch_needs), stats
+    ) if final_tick is None or int(_world(host)["tick"]) < final_tick else []
     trade_handles = _queue_trades(host, _world(host), catalog) if final_tick is None or int(_world(host)["tick"]) < final_tick else []
     step_ticks=ticks if final_tick is None else min(ticks,max(0,final_tick-int(_world(host)["tick"])))
     if step_ticks:
@@ -447,6 +538,11 @@ def run_round(host, catalog, ticks, placed, round_number=1, count_generated=Fals
             stats["accepted_creates"] += 1
         else:
             stats["rejected_creates"] += 1
+    for handle in dispatch_handles:
+        if _poll_terminal(host, handle) == "accepted":
+            stats["accepted_depot_dispatches"] += 1
+        else:
+            stats["rejected_depot_dispatches"] += 1
     for handle in trade_handles:
         _poll_terminal(host, handle)
     stats["trade_queued"] = len(trade_handles)

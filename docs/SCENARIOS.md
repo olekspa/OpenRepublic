@@ -27,6 +27,7 @@ They do not contain game data.
 | `growth_town` | Four-capacity home, farm→mill→bakery chain, grain exporter and market site | Residents consume bakery bread; grain exports fund imported planks and bricks, which the autopilot hauls to the market site. The receipt reports fed residents, completed sites and treasury separately. |
 | `power_and_build` | Generator, powered mine, smelter and timber-fed `power_line` site | The site produces wire after construction; the smelter requires wire, ore and connected power. The receipt reports site completion and final-tick utility throughput/deficit. The power links are explicit fixture connections; the `power_line` site is a synthetic production prerequisite. |
 | `austerity` | Grain trade post, local farm/mill/bakery chain and second mill site | Limited exports fund imports for both the trade post's flour recipe and site materials. At short horizons, the baseline can spend on inputs while the second mill remains waiting for materials; longer runs may eventually complete it. |
+| `coal_to_heat` | Grain export post, coal-import trade post, depot with two owned trucks, coal storage and heating plant | The rule-based baseline exports for treasury, imports coal for the plant's missing recipe input, then dispatches a parked depot truck from stocked inventory and replans as trucks return. Scores stored heat units. |
 | `rail_vs_road` | Independent 20-edge road and rail routes, two producer/destination pairs, and one train | The scorer moves 1,000 grain units by truck and train, records destination arrival ticks, and requires the rail run to finish first. See [RAIL.md](RAIL.md) for synthetic-rule boundaries and the explicit-transfer limitation. |
 | `water_for_brewery` | Water tower linked to two breweries | The tower generates 4 water units per tick for 6 units of brewery demand; stable recipe order lets the first brewery consume 3 while the second remains short, exposing both throughput and unmet demand. |
 
@@ -49,7 +50,7 @@ A scenario is one JSON object with these required fields:
 - Optional `catalog`: bounded synthetic catalog DSL text. Utility fixtures use this to define their own power generator and consumer recipes; it contains no game-derived data. Population fixtures may declare `housing`, `workers`, and optional `food` rules as documented in [POPULATION.md](POPULATION.md).
 - Optional `utilityConnections`: array of `{ "resource": "<declared utility>", "aBuilding": int, "bBuilding": int }`, where endpoints are zero-based indexes into the initial `buildings` array.
 - Trade catalogs may declare per-resource prices and trade-post storage. Trade commands run through the baseline controller; treasury appears in utility score breakdowns only when a catalog declares trade prices.
-- `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, `{ "metric": "utility_multi_objective" }` for utility fixtures, `{ "metric": "completed_construction_sites" }` for construction fixtures, `{ "metric": "combined_multi_objective", "objectives": [...] }` for combined fixtures, or the dedicated `rail_vs_road` comparison fields in its fixture. Supported combined fields are `fedResidents`, `completedSites`, `treasury`, `throughputUnits`, `unmetDemandUnits`, and `storedNonRawUnits`; each remains a separate objective in the score receipt.
+- `score`: `{ "metric": "stored_non_raw_units" }` for inventory fixtures, `{ "metric": "utility_multi_objective" }` for utility fixtures, `{ "metric": "completed_construction_sites" }` for construction fixtures, `{ "metric": "combined_multi_objective", "objectives": [...] }` for combined fixtures, `{ "metric": "heat_units" }` for the depot heating fixture, or the dedicated `rail_vs_road` comparison fields in its fixture. Supported combined fields are `fedResidents`, `completedSites`, `treasury`, `throughputUnits`, `unmetDemandUnits`, and `storedNonRawUnits`; each remains a separate objective in the score receipt.
 
 The loader and scorer are expected to reject malformed or unsupported scenario
 input with a diagnostic rather than silently substituting values.
@@ -171,6 +172,23 @@ baseline results, not WRSR results.
 | `unconnected_consumer` | Throughput/unmet 0/2; cost 2 | Stalled: consumer remains outside the generator network. |
 | `understaffed_mine` | Stored non-raw 0 (0 micro-units) | Scored; authored workforce cannot satisfy mine staffing. |
 | `water_for_brewery` | Throughput/unmet 3/3; cost 5 | Partial water supply: 4 generated, 6 requested, 3 consumed. |
+| Scenario | Metric | Baseline score | Final tick |
+| --- | --- | ---: | ---: |
+| `flour_oversupply` | Stored non-raw units | 0.000006 (6 micro-units) | 17 |
+| `full_chain` | Stored non-raw units | 0.000004 (4 micro-units) | 17 |
+| `grain_shortage` | Stored non-raw units | 0.000009 (9 micro-units) | 20 |
+| `road_gap` | Stored non-raw units | 0 (0 micro-units) | 17 |
+| `power_deficit` | Throughput / unmet; cost | 2 / 2; cost 5 | 18 |
+| `unconnected_consumer` | Throughput / unmet; cost | 0 / 2; cost 2 | 17 |
+| `overbuilt_generator` | Throughput / unmet; cost | 2 / 0; cost 3 | 18 |
+| `powered_chain_link_gap` | Throughput / unmet; cost | 2 / 2; cost 12 | 18 |
+| `powered_chain_road_and_link_gap` | Throughput / unmet; cost | 2 / 0; cost 7 | 18 |
+| `import_missing_input` | Stored non-raw; treasury | 0.000018 (18 micro-units); treasury 0 | 19 |
+| `export_surplus_for_power` | Throughput / unmet; cost; treasury | 1 / 0; cost 10; treasury 1 | 20 |
+| `growth_town` | Fed residents; completed sites; treasury | 2; 1/1; 28 | 17 |
+| `power_and_build` | Completed sites; power throughput / unmet | 1/1; 4 / 0 | 18 |
+| `austerity` | Completed sites; treasury; stored non-raw units | 0/1; 6; 0.000027 | 17 |
+| `coal_to_heat` | Stored heat units at 600 / 1500 requested ticks | 98 / 100 | 601 / 1501 |
 
 The 600-tick observations update the earlier short-horizon results:
 `austerity` eventually completes its second mill, while `growth_town` still
