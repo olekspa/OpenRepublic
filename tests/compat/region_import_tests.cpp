@@ -1,6 +1,7 @@
 #include "openrepublic/compat/catalog_import.h"
 #include "openrepublic/compat/region_import.h"
 
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <string>
@@ -307,5 +308,41 @@ int main() {
               duplicateAccessReport.notes.size() <= 2,
           "duplicate access-key failure preserves prior world and bounded report");
 
+    economy::CatalogBuilder fleetBuilder;
+    economy::CatalogErrorInfo fleetCatalogError;
+    economy::BuildingTypeId fleetDepotType{};
+    economy::VehicleTypeId fleetTruckType{};
+    Check(fleetBuilder.AddBuildingType("synthetic_depot", 1, 1, &fleetDepotType, fleetCatalogError) &&
+              fleetBuilder.AddVehicleType("truck", 8, 1, &fleetTruckType, fleetCatalogError) &&
+              fleetBuilder.SetDepot(fleetDepotType, true, fleetCatalogError) &&
+              fleetBuilder.AddFleet(fleetDepotType, fleetTruckType, 2, fleetCatalogError),
+          "synthetic depot test catalog declares a two-truck fleet");
+    economy::Catalog fleetCatalog;
+    Check(fleetBuilder.Build(fleetCatalog, fleetCatalogError), "synthetic depot catalog builds");
+    economy::World fleetWorld(fleetCatalog, 12, 12);
+    const auto roadCommand = fleetWorld.BuildRoad({5, 5}, {6, 5});
+    Check(roadCommand != 0 && fleetWorld.Step(1).accepted,
+          "road cells are available before synthetic depot placement");
+    economy::BuildingId fleetDepotId{};
+    std::string fleetPlacementError;
+    Check(compat::PlaceSyntheticRegionFleetDepot(fleetWorld, fleetDepotType,
+                                                 fleetDepotId, fleetPlacementError),
+          "synthetic fleet depot places beside an imported road");
+    const auto fleetSnapshot = fleetWorld.Snapshot();
+    const auto placedDepot = std::find_if(fleetSnapshot.buildings.begin(), fleetSnapshot.buildings.end(),
+        [&](const auto &building) { return building.id == fleetDepotId; });
+    const bool fleetStateValid = fleetDepotId != 0 && fleetSnapshot.vehicles.size() == 2 &&
+              placedDepot != fleetSnapshot.buildings.end() &&
+              fleetSnapshot.vehicles[0].ownerDepot == fleetDepotId &&
+              fleetSnapshot.vehicles[1].ownerDepot == fleetDepotId &&
+              fleetSnapshot.vehicles[0].cell == placedDepot->access &&
+              fleetSnapshot.vehicles[1].cell == placedDepot->access;
+    Check(fleetStateValid,
+          "placed synthetic depot spawns stable owned trucks at its road access cell");
+    if (!fleetStateValid)
+        std::cerr << "fleet receipt: depot=" << fleetDepotId << " vehicles=" << fleetSnapshot.vehicles.size()
+                  << (fleetSnapshot.vehicles.empty() ? "" : " firstDepot=" + std::to_string(fleetSnapshot.vehicles[0].ownerDepot) +
+                      " firstCell=" + std::to_string(fleetSnapshot.vehicles[0].cell.x) + "," +
+                      std::to_string(fleetSnapshot.vehicles[0].cell.z)) << " error=" << fleetPlacementError << '\n';
     return failures == 0 ? 0 : 1;
 }

@@ -17,6 +17,7 @@
 #include "openrepublic/runtime/economy_overview.h"
 #include "openrepublic/runtime/native_coal_demo.h"
 #include "openrepublic/runtime/save_slots.h"
+#include "openrepublic/runtime/native_construction.h"
 #include "openrepublic/content/terrain_dds.h"
 #include "openrepublic/sim/simulation.h"
 #include "../economy_host/economy_protocol.h"
@@ -58,6 +59,7 @@ namespace openrepublic
 			bool dynamicLod = false, float lodNearDistance = 250.0f, float lodFarDistance = 700.0f);
 		void SetSyntheticRegionFixture();
 		void SetEconomyCheckpoint(openrepublic::economy::RestoredCheckpoint checkpoint, bool freshWorld = false);
+		void SetNativeTerrainEnabled(bool enabled);
 		void SetMapShowcaseSun(float elevationDegrees, float yawOffsetDegrees);
 		void SetScenePipeName(std::wstring name);
 		void SetSceneScriptPath(std::filesystem::path path);
@@ -158,7 +160,7 @@ namespace openrepublic
 		openrepublic::economy::BuildingId coalDemoBorder{}, coalDemoDepot{}, coalDemoStorage{}, coalDemoPlant{};
 		openrepublic::economy::ResourceId coalDemoResource{};
 		openrepublic::economy::ResourceId coalDemoGrain{};
-		enum class NativeConstructionMode { None, Building, Road };
+		enum class NativeConstructionMode { None, Building, Road, Remove };
 		NativeConstructionMode nativeConstructionMode = NativeConstructionMode::None;
 		economy::BuildingTypeId nativePlacementType = economy::InvalidBuildingTypeId;
 		std::optional<economy::Cell> nativeRoadStart;
@@ -212,6 +214,7 @@ namespace openrepublic
 		bool mapRegionPreview = false;
 		bool syntheticRegionFixtureMode = false;
 		bool nativeEconomyCheckpointMode = false;
+		bool nativeTerrainEnabled = false;
 		bool nativeEconomyPresentationValid = false;
 		double syntheticRegionCenterX = 0.0;
 		double syntheticRegionCenterZ = 0.0;
@@ -310,6 +313,7 @@ namespace openrepublic
 		wi::gui::Button nativeRunPauseButton;
 		bool nativeEconomyRunning = false;
 		openrepublic::runtime::NativeEconomyClock nativeEconomyRunClock;
+		std::uint32_t nativeEconomySpeed = 1;
 		wi::gui::Label simulationStatus;
 		std::optional<openrepublic::sim::SimulationRules> pendingRules;
 		std::optional<openrepublic::sim::FacilityType> activeFacilityPlacement;

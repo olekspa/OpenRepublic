@@ -197,6 +197,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	std::string storageProfileError;
 	bool utilityResourceGiven = false;
 	std::string utilityResourceError;
+	bool syntheticRegionFleetGiven = false;
+	std::string syntheticRegionFleetError;
 	openrepublic::compat::CatalogImportOptions regionCatalogOptions;
 	std::filesystem::path mapPackage;
 	std::size_t mapBuildingIndex = 0;
@@ -246,6 +248,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	bool nativeEconomyArgumentSeen = false;
 	bool nativeConstructionSitesArgumentSeen = false;
 	bool nativeCoalDemoArgumentSeen = false;
+	bool nativeTerrainArgumentSeen = false;
 	std::string nativeEconomyArgumentError;
 	std::vector<std::wstring> economyCheckpointIncompatibleOptions;
 	std::string economyCheckpointArgumentError;
@@ -299,6 +302,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 				// Opt-in synthetic catalog with planks/bricks and `build` requirements (requires --native-economy).
 				nativeConstructionSitesArgumentSeen = true;
 			}
+			else if (argument == L"--native-terrain") nativeTerrainArgumentSeen = true;
 			else if (argument == L"--native-coal-demo") nativeCoalDemoArgumentSeen = true;
 			else if (argument == L"--scene-probe" && i + 1 < argumentCount)
 			{
@@ -336,6 +340,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 					if (!regionCatalogOptions.utilityResources.emplace(std::move(narrowName)).second)
 						utilityResourceError = "--utility-resource names must be distinct";
 				}
+			}
+			else if (argument == L"--region-synthetic-fleet")
+			{
+				if (syntheticRegionFleetGiven)
+					syntheticRegionFleetError = "--region-synthetic-fleet may only be supplied once";
+				syntheticRegionFleetGiven = true;
+				if (i + 1 >= argumentCount || std::wstring_view(arguments[i + 1]).empty() ||
+					std::wstring_view(arguments[i + 1]).rfind(L"--", 0) == 0)
+				{
+					syntheticRegionFleetError = "--region-synthetic-fleet requires a truck count from 1 to 16";
+					continue;
+				}
+				const std::wstring value = arguments[++i];
+				wchar_t* end = nullptr;
+				const unsigned long count = std::wcstoul(value.c_str(), &end, 10);
+				const bool decimalOnly = std::all_of(value.begin(), value.end(), [](wchar_t c) {
+					return c >= L'0' && c <= L'9';
+				});
+				if (!decimalOnly || end == value.c_str() || *end != L'\0' || count < 1 || count > 16)
+					syntheticRegionFleetError = "--region-synthetic-fleet requires a truck count from 1 to 16";
+				else
+					regionCatalogOptions.syntheticRegionFleetCount = static_cast<std::uint32_t>(count);
 			}
 			else if (argument == L"--storage-profile")
 			{
@@ -834,6 +860,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	}
 	if (nativeCoalDemoArgumentSeen && !nativeEconomyArgumentSeen)
 		return LogNativeEconomyStartupError("--native-coal-demo requires --native-economy");
+	if (nativeTerrainArgumentSeen && !nativeEconomyArgumentSeen && !economyCheckpointArgumentSeen)
+		return LogNativeEconomyStartupError("--native-terrain requires --native-economy or --economy-checkpoint");
 	if ((nativeEconomyArgumentSeen || economyCheckpointArgumentSeen) && !economyCheckpointIncompatibleOptions.empty())
 	{
 		std::string conflicts = nativeEconomyArgumentSeen
@@ -942,6 +970,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 			std::fprintf(stderr, "OpenRepublic storage profile startup failed: %s\n", storageProfileError.c_str());
 			return 2;
 		}
+	}
+	if (syntheticRegionFleetGiven && syntheticRegionFleetError.empty() &&
+		(mapPackage.empty() || !mapRegion || contentRoot.empty() || economyUrlArgumentSeen ||
+		 syntheticRegionFixture || nativeEconomyArgumentSeen || !nmfCapturePaths.empty() ||
+		 !mapShowcaseCapturePath.empty()))
+	{
+		syntheticRegionFleetError = "--region-synthetic-fleet requires app-owned --map-package --map-region --content-root mode";
+	}
+	if (!syntheticRegionFleetError.empty())
+	{
+		std::fprintf(stderr, "OpenRepublic fleet startup failed: %s\n", syntheticRegionFleetError.c_str());
+		return 2;
 	}
 	if (nmfCaptureArgumentError.empty() && mapBuildingModelLevelGiven && (mapPackage.empty() || !mapRegion))
 	{
@@ -1266,6 +1306,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 	if (economyCheckpoint)
 	{
 		application.SetEconomyCheckpoint(std::move(*economyCheckpoint), nativeEconomyArgumentSeen);
+		application.SetNativeTerrainEnabled(nativeTerrainArgumentSeen);
 	}
 	application.SetSceneProbePath(std::move(sceneProbePath));
 	application.SetGlbProbePath(std::move(glbProbePath));
